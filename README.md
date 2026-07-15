@@ -219,8 +219,30 @@ The crawl projection preserves crawl-record order, emits at most one recommendat
 identity, counts suppressed duplicates, and summarizes states and exclusion categories. A redirect
 target without its own crawl record does not receive a recommendation row; the excluded source
 retains a warning that the target was not independently evaluated. The engine never invents target
-eligibility. Recommendations remain internal. There is no API, XML or CSV export, manual override,
-approval workflow, or persistence layer.
+eligibility. Recommendations remain internal. There is no public recommendation API, CSV export,
+manual override, approval workflow, or persistence layer.
+
+## In-memory XML sitemap generation
+
+`SitemapXmlGenerator` consumes the immutable recommendation projection and serializes only final
+`include` recommendations. It preserves projection order, suppresses exact duplicate normalized
+URL strings while retaining the first occurrence, and reports malformed or oversized included
+values as typed non-fatal rejections. It does not re-run eligibility rules or mutate their evidence.
+
+Output uses the stable `sitemap-xml-v1` contract: UTF-8 bytes, the standard sitemap namespace, LF
+newlines, a final newline, and only `<url><loc>` elements. The generator applies the standard
+50,000-entry and 50 MiB uncompressed limits, a 2,048-character location limit, and deterministic
+splitting. Multiple documents receive `sitemap-1.xml`, `sitemap-2.xml`, and so on. An index is
+generated only when multiple documents exist and an explicit normalized public base URL is
+configured; otherwise the documents remain available with a typed blocked-index warning.
+
+Generation is entirely in memory. It does not write, publish, or submit files, and no public API
+route exposes it. `lastmod`, `changefreq`, `priority`, compression, sitemap extensions, and manual
+overrides are not implemented. Run its focused tests from the repository root with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend/tests/unit/test_sitemap_xml.py
+```
 
 ## Crawl-safety status
 
@@ -254,7 +276,7 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 
 ## Next recommended development batch
 
-The next bounded batch should add a standalone XML sitemap serializer over accepted `include`
-recommendations. It should validate sitemap limits, omit `priority` and `changefreq`, omit `lastmod`
-without trustworthy provenance, and remain separate from persistence, public APIs, manual
-overrides, and CSV audit export unless separately authorized.
+The next bounded batch should add CSV crawl and metadata audit serialization as a separate pure
+consumer of accepted crawl and recommendation evidence. File publication, persistence, public
+download APIs, background jobs, manual overrides, and sitemap submission remain separate future
+authorizations.

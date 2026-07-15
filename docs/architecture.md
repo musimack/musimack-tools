@@ -201,6 +201,36 @@ Recommendation logs use bounded URL summaries without queries and include state,
 status, and rule-set version. They never include bodies, raw HTML, credentials, cookies, or request
 headers.
 
+## In-memory XML sitemap serialization boundary
+
+`domain/sitemap_xml.py` owns immutable entries, documents, index records, rejections, warnings,
+split evidence, counters, and the generated bundle. `sitemap/limits.py` owns validated protocol
+limits and logical naming. `sitemap/xml.py` is a pure in-memory consumer of
+`SitemapRecommendationProjection`; it has no dependency on FastAPI, networking, crawl services,
+persistence, or the file system.
+
+The serializer accepts only final `include` states and preserves projection order. It does not
+re-evaluate robots, noindex, canonicals, redirects, scope, metadata, or any other eligibility
+evidence. Exact duplicate URL strings are suppressed first-occurrence-first, while impossible
+included URL values become ordered typed rejections without changing the recommendation source.
+All output records and the full effective configuration snapshot are immutable.
+
+The stable `sitemap-xml-v1` format emits deterministic UTF-8 bytes with the standard namespace,
+fixed readable indentation, LF newlines, and a final newline. URL documents contain only `loc`.
+The split algorithm measures complete encoded documents, including wrappers and escaped content,
+before accepting the next entry. Defaults enforce 50,000 URL entries and 50 MiB per URL document,
+50,000 references and 50 MiB per index, and 2,048 characters per location.
+
+One document is logically named `sitemap.xml` and has no index. Multiple documents use stable
+one-based names. With an explicit normalized `sitemap_base_url`, their ordered public locations
+form one sitemap index. Without that base, documents are still returned and index generation is
+blocked with typed evidence. Index-capacity excess is likewise explicit; recursive indexes are not
+created. Zero eligible URLs produce one valid empty URL-set document.
+
+A future publication boundary may write or serve the immutable bytes, a future persistence layer
+may retain bundle evidence, and a future submission layer may transmit published locations. None
+of those responsibilities, nor a public XML route, exists in this layer.
+
 ## Future boundaries
 
 ### Frontend
@@ -232,10 +262,11 @@ execution model.
 
 ### Exports
 
-XML sitemap and CSV audit serialization will be separate consumers of stable stored crawl results
-and recommendation projections. XML will omit `priority` and `changefreq`, and will include
-`lastmod` only with recorded trustworthy provenance. Metadata warnings remain separate from
-sitemap eligibility.
+In-memory XML sitemap serialization is now a separate consumer of recommendation projections. CSV
+audit serialization remains future work. Future publication and persistence consumers must use
+the immutable XML bundle without moving file or network behavior into the serializer. Optional
+`lastmod` remains deferred until trustworthy provenance exists; `priority` and `changefreq` are not
+planned defaults. Metadata warnings remain separate from sitemap eligibility.
 
 ## Why network access is excluded
 

@@ -469,6 +469,40 @@ crawler-specific noindex does not require review; severe parser recovery does re
 the rule-set identifier is `sitemap-eligibility-v1`. These values are internal typed configuration,
 not request-controlled API input.
 
+## Sitemap XML serialization policy
+
+The `sitemap-xml-v1` serializer consumes the completed immutable recommendation projection. Only
+final `include` recommendations serialize; `exclude`, `review`, and `indeterminate` are counted as
+skipped states rather than XML errors. Recommendation order is authoritative. The serializer does
+not re-evaluate crawl permission, indexability, canonical evidence, redirects, metadata quality,
+or scope, and it never mutates a recommendation.
+
+Exact duplicate normalized URL strings are suppressed while preserving the first occurrence.
+Trailing-slash, path-case, and query-order variants remain distinct. Each accepted location is
+limited to 2,048 characters before XML escaping and must remain a valid, already normalized HTTP
+or HTTPS absolute URL. Impossible included values receive stable typed rejections; they are never
+truncated and do not prevent other valid entries from being emitted.
+
+XML is UTF-8 with declaration `<?xml version="1.0" encoding="UTF-8"?>`, the sitemap 0.9 namespace,
+two-space structural indentation, LF newlines, and a final newline. Standard-library escaping
+protects XML text without changing the URL identity. URL documents contain only `<url><loc>`.
+There is no `lastmod`, `changefreq`, `priority`, compression, extension namespace, or inferred
+metadata. Zero eligible URLs produce one valid empty URL-set document.
+
+URL documents default to at most 50,000 entries and 52,428,800 uncompressed UTF-8 bytes. A complete
+candidate document, including declaration, wrapper, indentation, and escaped text, is measured
+before an entry is accepted. Splits occur before either limit and retain global order. An entry
+that cannot fit an otherwise empty document becomes a typed rejection.
+
+Multiple URL documents use deterministic one-based logical names. A sitemap index is generated
+only when an explicit normalized HTTP(S) `sitemap_base_url` supplies their public locations. If the
+base is absent, the URL documents remain available and a typed warning blocks the index; no host is
+guessed. Indexes have the same 50,000-reference and 52,428,800-byte defaults. Capacity excess is
+reported without omitting URL documents or creating recursive indexes.
+
+Generation remains in process memory. This policy does not authorize file writing, publication,
+download routes, persistence, or sitemap submission.
+
 ## Current limitations and deferred controls
 
 The internal orchestrator can traverse one approved site in memory through the accepted fetch and
