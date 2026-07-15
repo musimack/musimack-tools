@@ -24,6 +24,41 @@ The backend uses a `src` package layout:
 These dependencies point inward: HTTP delivery can use domain and crawler-core contracts, but
 the crawler core does not depend on FastAPI.
 
+## Safe fetch boundary
+
+The second backend batch adds an internal asynchronous GET boundary without exposing a new API:
+
+- `crawl/dns.py` defines an injectable async resolver and a system implementation that
+  deduplicates IPv4/IPv6 answers and enforces a bounded answer count.
+- `crawl/safety.py` independently evaluates scheme, credentials, hostname class, IP-literal
+  policy, effective port, and every resolved address.
+- `crawl/redirects.py` recognizes 301, 302, 303, 307, and 308 and normalizes `Location` values
+  against the current request URL.
+- `crawl/fetcher.py` coordinates scope plus safety approval, explicit HTTPX timeouts, streaming
+  byte limits, minimal transport retries, concurrency semaphores, and manual redirect handling.
+- `domain/fetching.py` owns immutable request, DNS, safety, response-header, redirect-hop,
+  result, outcome, and failure-code evidence.
+
+HTTP transport, DNS resolution, monotonic time, retry sleep, and settings are injected or
+replaceable. The fetcher has no dependency on FastAPI requests, databases, frontend schemas, or
+global mutable crawler state. A future frontier can schedule this layer but must not bypass it.
+The application logging policy keeps HTTPX's query-bearing request logger at WARNING while the
+fetcher emits query-redacted, consistently keyed application events.
+
+Redirects are intentionally manual so every target is normalized, checked against crawl scope,
+resolved again, evaluated for network safety, bounded by hop count, and recorded before another
+GET is sent. Final response bodies are retained only when fully within the configured byte
+limit; no HTML interpretation occurs.
+
+The fetcher is not exposed as a public endpoint. Publishing arbitrary URL input at the API
+layer before authentication and higher-level crawl controls would create an avoidable SSRF
+surface. `/api/health` remains the only product endpoint.
+
+Pre-request DNS validation does not prove which peer address HTTPX ultimately connects to.
+The current transport cannot cleanly pin its connection to the validated answer while
+preserving host/TLS semantics. Production use therefore requires deployment-level egress
+restrictions, and the injected resolver/transport seam is retained for future peer pinning.
+
 ## Future boundaries
 
 ### Frontend
@@ -34,10 +69,10 @@ on the FastAPI OpenAPI contract and use server-state-oriented data fetching.
 
 ### Reusable crawler core
 
-Future fetching, redirects, HTML extraction, robots evaluation, indexability analysis, and the
-crawl frontier belong behind reusable crawler-core interfaces. HTTP transport, DNS resolution,
-time, persistence, cancellation, and progress reporting should be injected so the core remains
-deterministic in tests and reusable by broken-link, metadata, canonical, redirect, inventory,
+Future HTML extraction, robots evaluation, indexability analysis, and the crawl frontier belong
+behind reusable crawler-core interfaces. The implemented fetch boundary supplies their bounded
+response and redirect evidence. Persistence, cancellation, and progress reporting should remain
+injected so the core stays reusable by broken-link, metadata, canonical, redirect, inventory,
 internal-link, image, schema, indexability, and migration-QA modules.
 
 ### Persistence
@@ -69,12 +104,13 @@ that an in-scope string is safe to request.
 
 ## Testing strategy
 
-- Unit tests cover normalization, scope decisions, settings validation, and stable evidence.
+- Unit tests cover normalization, scope, settings, DNS, address safety, streaming limits,
+  retries, redirect chains, and stable evidence.
 - FastAPI's in-process test client covers the health API.
 - An automatic test fixture blocks DNS resolution and non-loopback socket connections; Windows
   event-loop loopback plumbing remains available to the in-process test client.
-- Future HTTP behavior must use injected mock transports or explicitly controlled local fixture
-  servers, never public websites.
+- HTTP behavior uses fake resolvers and `httpx.MockTransport`; future tests may use explicitly
+  controlled local fixture servers, never public websites.
 - Ruff formatting/linting and strict MyPy run alongside Pytest.
 
 ## Development and deployment direction

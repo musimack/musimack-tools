@@ -15,13 +15,17 @@ This first implementation batch provides:
 - Deterministic, network-free URL normalization
 - Exact-host, subdomain, and explicit-approved-host scope evaluation
 - Stable scope decision evidence
+- A reusable asynchronous single-URL safe-fetch boundary
+- Injectable DNS resolution, conservative address safety, and manual redirect evidence
+- Bounded timeouts, retries, response bytes, headers, redirects, and concurrency
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
-It deliberately does **not** provide HTTP fetching, DNS resolution, redirects, `robots.txt`,
-HTML parsing, public-site crawling, background jobs, persistence, XML/CSV exports,
+It deliberately does **not** provide a crawl frontier, link discovery, `robots.txt`, HTML
+parsing, public-site crawling, background jobs, persistence, XML/CSV exports,
 authentication, frontend application code, browser automation, or Docker configuration.
-There is no live crawling in this repository.
+There is no whole-site crawler and no public arbitrary-fetch API in this repository. Safe fetch
+is available only as an internal Python boundary exercised by deterministic tests.
 
 ## Repository layout
 
@@ -55,6 +59,11 @@ The lock file installs the tested runtime and development dependency graph. The 
 installs the local package in editable mode without re-resolving dependencies. `.venv/` is
 excluded from Git.
 
+When a dependency change is approved, update the exact declaration in `backend/pyproject.toml`,
+install the reviewed environment, regenerate `backend/requirements.lock` from
+`python -m pip freeze --exclude-editable`, and run the complete validation sequence plus
+`python -m pip check`. Do not update unrelated dependencies opportunistically.
+
 ## Development server
 
 ```powershell
@@ -70,7 +79,8 @@ Then request `http://127.0.0.1:8000/api/health`. The response is:
 }
 ```
 
-The server is a local API process only. It does not crawl or contact websites.
+The server exposes health only. It does not expose the internal fetcher and does not crawl or
+contact websites in response to API input.
 
 ## Individual quality commands
 
@@ -98,6 +108,8 @@ python -m ruff format --check backend
 python -m ruff check backend
 python -m mypy --config-file backend\pyproject.toml backend\src backend\tests
 python -m pytest -c backend\pyproject.toml backend\tests
+python -m pip check
+python -c "from musimack_tools.main import app; print(app.title)"
 ```
 
 The test suite installs an automatic DNS and socket guard. It permits only loopback plumbing
@@ -120,17 +132,22 @@ live crawling is authorized.
 
 ## Crawl-safety status
 
-URL normalization and scope evaluation are pure, network-free policy primitives. A URL being
-in scope is **not** authorization to request it. DNS and connected-address checks, SSRF
-protections, redirect validation, robots behavior, response limits, enforced rate limits, and
-bounded worker execution remain deferred and must precede any live crawler.
+URL scope and network safety are separate approvals. The internal fetch boundary rejects local
+hostnames, IP literals, unsafe or mixed DNS answers, and unapproved ports; manually revalidates
+every redirect; disables environment proxies; and streams responses under hard byte and time
+limits. It retains typed evidence but does not parse bodies.
+
+Pre-resolution does not pin the HTTP connection to a validated address because `httpx` does not
+expose the connected peer cleanly at this boundary. DNS could change between validation and
+connection. Live deployment must therefore add network-level egress restrictions, and the
+resolver/transport boundary remains injectable for future address-pinning work. A URL being in
+scope is still **not** sufficient authorization to request it.
 
 See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contract.
 
 ## Next recommended development batch
 
-The next batch should design and test the network-safety boundary before adding general HTTP
-fetching: address classification, DNS-resolution injection, redirect-target revalidation,
-timeouts, response-size limits, an identifiable user-agent contact reference, and bounded
-per-host/global controls. It should continue to use mocks and local fixture servers; public
-site crawling should remain separately authorized.
+The next batch should build HTML response and metadata extraction as a pure consumer of
+successful bounded fetch evidence, without adding a crawl frontier. Title, description,
+canonical, link, robots, sitemap, persistence, and public API work remain separately authorized.
+Tests should continue to use fake DNS and mocked or local-only transports.
