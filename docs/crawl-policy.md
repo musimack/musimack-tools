@@ -153,16 +153,102 @@ remains possible between validation and connection. Production deployment must a
 firewall restrictions; future transport work may pin validated answers while retaining correct
 Host and TLS behavior.
 
+## HTML parse policy
+
+HTML extraction consumes a completed bounded `FetchResult`; it never performs DNS, HTTP, script
+execution, or browser automation. Fetch and parse evidence remain separate and immutable.
+Failed fetches, truncated bodies, missing or empty bodies, and non-2xx responses are skipped with
+typed reasons rather than treated as successful page metadata.
+
+### Content type and encoding
+
+Declared media types are compared case-insensitively without parameters. `text/html` and
+`application/xhtml+xml` are parsed. JSON, non-XHTML XML, PDF, image, CSS, JavaScript, and plain
+text are skipped. A missing or `application/octet-stream` media type may be inferred as HTML
+only when the first 1,024 bytes start with a structural HTML signature.
+
+Decoding precedence is:
+
+1. a valid HTTP `charset` parameter;
+2. UTF-8, UTF-16, or UTF-32 byte-order mark;
+3. `<meta charset>` in the first 4,096 bytes;
+4. `<meta http-equiv="content-type">` in the same bounded prefix; then
+5. Windows-1252 fallback.
+
+Invalid declarations remain warnings and allow the next source to be considered. Strict
+decoding is attempted first; replacement characters and their warning are recorded when bytes
+cannot be decoded strictly. Beautiful Soup with lxml recovers malformed real-world HTML, and
+observable recovery is reported.
+
+### Metadata and base URLs
+
+Title and description text is entity-decoded, descendant text is combined where applicable,
+whitespace runs collapse to one space, and edges are trimmed. Every observation is retained.
+The first observation is the deterministic selected text. Review warnings use initial title
+thresholds of 15–60 characters and description thresholds of 70–160 characters. These are not
+hard SEO rules and never decide sitemap eligibility.
+
+Canonical `rel` is a case-insensitive token. Every raw href and normalization result is retained.
+Relative canonicals resolve through the effective base; a canonical is selected only when all
+valid candidates normalize to one target. Canonical values are never fetched or treated as
+authoritative by the parser.
+
+The first valid `<base href>` is effective. Empty, unsupported, credential-bearing, and malformed
+values remain warning evidence; a later valid value may become effective after earlier invalid
+values. All base elements remain in document order. Base resolution never changes the fetched
+document identity and never initiates a request.
+
+### Meta robots and links
+
+Crawler-named meta records such as `robots` and `googlebot` remain separate. Directive names are
+case-normalized; raw content and tokens remain available. Known directives include `index`,
+`noindex`, `follow`, `nofollow`, `none`, `noarchive`, `nosnippet`, `noimageindex`, `notranslate`,
+`max-snippet`, `max-image-preview`, `max-video-preview`, and `unavailable_after`. Unknown,
+invalid, empty, and conflicting tokens are warnings only. X-Robots-Tag and final indexability
+precedence are deferred.
+
+Only navigable `<a href>` and `<area href>` observations are extracted. Resource attributes on
+images, scripts, stylesheets, media, and CSS are excluded. HTTP(S), relative, root-relative,
+parent-relative, query-only, and fragment-only references use the accepted normalizer. Other
+schemes remain raw evidence and are not HTTP destinations; `javascript:` receives an explicit
+warning and is never executed. Anchor text combines descendant text, decodes entities, and
+normalizes whitespace without borrowing nested image alt text. Repeated links remain in document
+order and are not queued or globally deduplicated. When supplied, an existing scope policy adds
+scope evidence but does not authorize or perform a request.
+
+### Stable HTML warning codes
+
+- Document and decoding: `non_html_content`, `missing_body`, `empty_body`,
+  `http_error_response`, `response_truncated`, `media_type_inferred`, `invalid_charset`,
+  `encoding_declaration_ignored`, `decode_replacement_used`, `parser_recovery_used`.
+- Title: `missing_title`, `empty_title`, `multiple_titles`, `conflicting_titles`, `short_title`,
+  `long_title`.
+- Description: `missing_meta_description`, `empty_meta_description`,
+  `multiple_meta_descriptions`, `conflicting_meta_descriptions`, `short_meta_description`,
+  `long_meta_description`.
+- Canonical: `missing_canonical`, `empty_canonical`, `multiple_canonicals`,
+  `conflicting_canonicals`, `invalid_canonical`, `cross_host_canonical`,
+  `canonical_url_differs`, `canonical_origin_differs`.
+- Robots: `empty_meta_robots`, `conflicting_meta_robots`,
+  `unknown_meta_robots_directive`, `invalid_meta_robots_directive`.
+- Base: `multiple_base_elements`, `empty_base_href`, `invalid_base_href`,
+  `cross_host_base_href`, `base_origin_differs`.
+- Links: `empty_link_href`, `invalid_link_href`, `javascript_link`,
+  `unsupported_link_scheme`.
+
+Every warning has a severity and controlled explanation plus an occurrence index and bounded,
+query-free observed value where practical. Warnings do not contain response bodies, headers,
+credentials, or full sensitive query strings.
+
 ## Current limitations and deferred controls
 
-The current fetcher handles one starting URL and bounded redirects only. The following remain
-deferred:
+The current fetcher and parser handle one starting URL, bounded redirects, and one retained HTML
+document only. The following remain deferred:
 
 - connected-peer verification and DNS-answer pinning
 - deployment-level egress enforcement
-- `robots.txt`, meta robots, and X-Robots-Tag handling
+- `robots.txt`, X-Robots-Tag interpretation, and final robots precedence
 - crawl-frontier rate scheduling beyond request concurrency bounds
-- HTML and metadata extraction
 - canonical, duplicate, indexability, and sitemap decisions
 - background jobs, persistence, progress, cancellation, XML, and CSV
 

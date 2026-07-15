@@ -5,7 +5,7 @@ tools. Its first planned module is the **Sitemap Generator and Metadata Crawler*
 eventually crawl approved websites, collect response and page metadata, explain sitemap
 recommendations, support human overrides, and export XML and CSV results.
 
-## Current foundation scope
+## Current backend scope
 
 This first implementation batch provides:
 
@@ -18,14 +18,18 @@ This first implementation batch provides:
 - A reusable asynchronous single-URL safe-fetch boundary
 - Injectable DNS resolution, conservative address safety, and manual redirect evidence
 - Bounded timeouts, retries, response bytes, headers, redirects, and concurrency
+- Deterministic HTML content gating and character decoding
+- Typed title, meta-description, canonical, base, meta robots, and navigable-link evidence
+- Stable parse warnings that preserve duplicate and conflicting observations
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
-It deliberately does **not** provide a crawl frontier, link discovery, `robots.txt`, HTML
-parsing, public-site crawling, background jobs, persistence, XML/CSV exports,
+It deliberately does **not** provide a crawl frontier, link queueing, `robots.txt`, X-Robots-Tag
+interpretation, sitemap decisions, public-site crawling, background jobs, persistence, XML/CSV exports,
 authentication, frontend application code, browser automation, or Docker configuration.
 There is no whole-site crawler and no public arbitrary-fetch API in this repository. Safe fetch
-is available only as an internal Python boundary exercised by deterministic tests.
+and HTML parsing are internal Python boundaries exercised by deterministic tests. The parser
+consumes already-retained bounded response evidence and cannot make a network request.
 
 ## Repository layout
 
@@ -79,8 +83,8 @@ Then request `http://127.0.0.1:8000/api/health`. The response is:
 }
 ```
 
-The server exposes health only. It does not expose the internal fetcher and does not crawl or
-contact websites in response to API input.
+The server exposes health only. It does not expose the internal fetcher or parser and does not
+crawl or contact websites in response to API input.
 
 ## Individual quality commands
 
@@ -143,11 +147,26 @@ connection. Live deployment must therefore add network-level egress restrictions
 resolver/transport boundary remains injectable for future address-pinning work. A URL being in
 scope is still **not** sufficient authorization to request it.
 
+## HTML metadata extraction
+
+`HtmlMetadataParser` accepts one completed `FetchResult`. It parses only successful,
+non-truncated HTML evidence and never fetches links, canonicals, or base URLs. It extracts all
+observed titles and descriptions, canonical candidates, crawler-named meta robots records, the
+first valid base URL, and document-order `<a>`/`<area>` links. Conflicting observations remain
+visible rather than being silently discarded.
+
+Visible text is entity-decoded, whitespace-collapsed, and trimmed. Initial review thresholds
+are title under 15 or over 60 characters and description under 70 or over 160 characters.
+These warnings are metadata evidence only; they do not decide sitemap eligibility or page
+indexability. Encoding selection uses HTTP charset, then BOM, then a declaration in the first
+4,096 body bytes, then Windows-1252 fallback. See
+[docs/crawl-policy.md](docs/crawl-policy.md) for the complete contract.
+
 See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contract.
 
 ## Next recommended development batch
 
-The next batch should build HTML response and metadata extraction as a pure consumer of
-successful bounded fetch evidence, without adding a crawl frontier. Title, description,
-canonical, link, robots, sitemap, persistence, and public API work remain separately authorized.
-Tests should continue to use fake DNS and mocked or local-only transports.
+The next bounded batch should evaluate page indexability as a pure evidence layer over HTTP
+status, canonical evidence, meta robots, and retained X-Robots-Tag headers. It should keep
+metadata quality warnings separate from sitemap eligibility and must not add a crawl frontier,
+public arbitrary-URL endpoint, persistence, or exports without separate authorization.

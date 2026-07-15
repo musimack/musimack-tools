@@ -19,7 +19,7 @@ The backend uses a `src` package layout:
 - `api` owns HTTP delivery contracts.
 - `core` owns typed process configuration.
 - `domain` owns framework-independent value objects and evidence types.
-- `crawl` owns network-free normalization and scope policy.
+- `crawl` owns normalization, scope, safe fetching, and pure HTML extraction services.
 
 These dependencies point inward: HTTP delivery can use domain and crawler-core contracts, but
 the crawler core does not depend on FastAPI.
@@ -59,6 +59,33 @@ The current transport cannot cleanly pin its connection to the validated answer 
 preserving host/TLS semantics. Production use therefore requires deployment-level egress
 restrictions, and the injected resolver/transport seam is retained for future peer pinning.
 
+## HTML extraction boundary
+
+The third backend batch adds a synchronous, network-free parsing boundary after fetching:
+
+- `domain/html.py` defines immutable parse outcomes, encoding evidence, text and URL
+  observations, canonical/base evidence, robots directives, link records, and warnings.
+- `crawl/html.py` gates response evidence, selects and records character decoding, invokes
+  Beautiful Soup with lxml, extracts metadata, resolves URL references through the accepted
+  normalizer, and optionally evaluates links through an existing scope policy.
+
+`HtmlMetadataParser` consumes one completed `FetchResult`; it does not import the fetcher, DNS,
+FastAPI, persistence, or frontend state. Failed, truncated, empty, non-success, and clearly
+non-HTML responses receive typed skipped outcomes. Successful parsing does not mutate the fetch
+evidence or perform another request.
+
+All title, description, canonical, and base observations remain available in document order.
+A canonical is selected only when all valid normalized candidates agree. The first valid base
+element becomes effective for subsequent canonical and link resolution; invalid earlier bases
+remain evidence and do not prevent a later valid base from becoming effective. Link records are
+returned in document order without global deduplication or queueing.
+
+Warnings are stable evidence with severity, safe observed context, and an occurrence index when
+practical. Metadata quality thresholds are review aids, never indexability or sitemap decisions.
+The parser emits query-free summaries only and is intentionally not exposed through FastAPI.
+A future crawl frontier may pass each successful bounded fetch into this layer, but must own
+scheduling, deduplication, and admission separately.
+
 ## Future boundaries
 
 ### Frontend
@@ -69,11 +96,11 @@ on the FastAPI OpenAPI contract and use server-state-oriented data fetching.
 
 ### Reusable crawler core
 
-Future HTML extraction, robots evaluation, indexability analysis, and the crawl frontier belong
-behind reusable crawler-core interfaces. The implemented fetch boundary supplies their bounded
-response and redirect evidence. Persistence, cancellation, and progress reporting should remain
-injected so the core stays reusable by broken-link, metadata, canonical, redirect, inventory,
-internal-link, image, schema, indexability, and migration-QA modules.
+Future robots evaluation, indexability analysis, and the crawl frontier belong behind reusable
+crawler-core interfaces. The implemented fetch and HTML boundaries supply bounded response,
+redirect, metadata, and link evidence. Persistence, cancellation, and progress reporting should
+remain injected so the core stays reusable by broken-link, metadata, canonical, redirect,
+inventory, internal-link, image, schema, indexability, and migration-QA modules.
 
 ### Persistence
 
@@ -105,12 +132,14 @@ that an in-scope string is safe to request.
 ## Testing strategy
 
 - Unit tests cover normalization, scope, settings, DNS, address safety, streaming limits,
-  retries, redirect chains, and stable evidence.
+  retries, redirect chains, content gating, decoding, malformed HTML, metadata conflicts,
+  base/canonical resolution, robots tokens, links, and stable evidence.
 - FastAPI's in-process test client covers the health API.
 - An automatic test fixture blocks DNS resolution and non-loopback socket connections; Windows
   event-loop loopback plumbing remains available to the in-process test client.
 - HTTP behavior uses fake resolvers and `httpx.MockTransport`; future tests may use explicitly
   controlled local fixture servers, never public websites.
+- HTML parser tests use inline bytes and strings only. The parser has no network dependency.
 - Ruff formatting/linting and strict MyPy run alongside Pytest.
 
 ## Development and deployment direction
