@@ -503,6 +503,56 @@ reported without omitting URL documents or creating recursive indexes.
 Generation remains in process memory. This policy does not authorize file writing, publication,
 download routes, persistence, or sitemap submission.
 
+## Local sitemap publication policy
+
+Publication consumes accepted XML bundle bytes unchanged and therefore cannot alter eligibility,
+ordering, XML content, split points, or index blockage. The orchestration service preserves XML
+warnings and rejections alongside publication planning and execution results.
+
+An explicit absolute local output root is required. Relative roots, `.git` paths, regular files,
+and roots containing symbolic-link or Windows junction components are rejected. A missing root is
+blocked unless `create_output_directory` is explicitly enabled; dry run reports that intended
+creation without performing it. Logical package names must be single safe filenames. Empty names,
+path separators, traversal, POSIX absolute paths, Windows drive-qualified paths, UNC paths, null
+bytes, reserved device names, duplicate names, and case-normalized collisions are rejected.
+Targets that are directories or link-like paths are blocked.
+
+`fail_if_exists` is the default. Planning reports every existing package target in deterministic
+order and execution writes nothing. `overwrite` permits atomic replacement of planned files only;
+unrelated files remain untouched. No-clobber finalization creates a hard link from the secure
+same-directory temporary file to the absent final name. A target appearing after preflight is never
+replaced. Unsupported hard links, hard-link permission denial, and other finalization failures are
+reported as `no_clobber_finalization_unsupported`,
+`no_clobber_finalization_permission_denied`, and `no_clobber_finalization_failed`; all fail safely
+without an overwrite fallback. Temporary cleanup failure remains `cleanup_failed`.
+`replace_only_if_changed` is deferred.
+
+Dry run uses the same manifest and publication plan as real execution. It validates roots,
+filenames, containment, target types, and conflicts; returns intended target paths, exact bytes,
+hashes, counts, and manifest content; and creates no directory, temporary file, or final file.
+
+Real execution creates a secure unpredictable temporary file in the final target directory, writes
+the exact immutable bytes, flushes and `fsync`s them, then performs a same-filesystem atomic final
+operation. Each published file is read back and verified against its planned byte count and
+SHA-256. Temporary files are cleaned on success and controlled failure. Atomicity is guaranteed per
+file, not for the package as a whole. A later failure yields `partially_failed` evidence and leaves
+earlier completed files in place; it never deletes user files as rollback.
+
+Symbolic-link and junction roots, ancestors, and targets are rejected using the link kinds exposed
+by the standard library. Capability-dependent symlink tests catch only recognized errors from the
+minimal link-creation probe; publication errors cannot become skips. Windows junction tests use
+temporary local directories and run independently of symlink privilege. Other reparse-point kinds
+not identified as a symlink or junction remain outside the claimed application-level guarantee.
+
+The `sitemap-publication-manifest-v1` JSON manifest is UTF-8, sorted-key, two-space-indented,
+LF-terminated, and deterministic. It records the XML and recommendation versions, counts, index
+presence or blockage, conflict policy, and ordered XML file media types, entry counts, byte counts,
+and lowercase SHA-256 hashes. It contains no timestamps, machine identity, username, absolute local
+path, or its own recursive hash. The publication result carries the manifest hash separately.
+
+This local publication policy does not authorize an API, download delivery, remote upload, sitemap
+submission, persistence, scheduling, or export history.
+
 ## Current limitations and deferred controls
 
 The internal orchestrator can traverse one approved site in memory through the accepted fetch and

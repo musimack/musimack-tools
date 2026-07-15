@@ -244,6 +244,75 @@ overrides are not implemented. Run its focused tests from the repository root wi
 .\.venv\Scripts\python.exe -m pytest backend/tests/unit/test_sitemap_xml.py
 ```
 
+## Internal sitemap export publication
+
+`SitemapPublicationService` composes an accepted recommendation projection, `sitemap-xml-v1`
+generation, deterministic `sitemap-publication-manifest-v1` packaging, and optional local
+publication under the `sitemap-publication-v1` service contract. It remains an internal Python
+boundary; no FastAPI route, download endpoint, CLI, background job, or submission integration is
+added.
+
+Publication requires an explicit absolute `pathlib.Path`. The default `fail_if_exists` policy
+preflights every target and writes nothing if any package filename already exists. `overwrite`
+atomically replaces only planned package files and leaves unrelated directory contents untouched.
+Logical names must be safe simple filenames: traversal, separators, absolute paths, Windows drive
+paths, UNC paths, reserved device names, case-normalized collisions, target symlinks, and output
+roots containing links or `.git` are rejected. Output-directory creation is disabled unless
+explicitly enabled.
+
+`fail_if_exists` finalizes each temporary file with a same-filesystem hard link, providing
+no-clobber behavior even if another process creates the target after preflight. A competing target
+is preserved and reported as `target_exists`. Unsupported hard links, permission denial, and other
+no-clobber failures return `no_clobber_finalization_unsupported`,
+`no_clobber_finalization_permission_denied`, or `no_clobber_finalization_failed` and never fall
+back to replacement. Because the temporary file is created in the target directory, ordinary
+finalization stays on one filesystem. Cleanup failure remains separately typed as `cleanup_failed`.
+
+Each XML payload has an exact byte count and lowercase SHA-256 hash. The deterministic UTF-8 JSON
+manifest lists URL documents first and the optional sitemap index last; the manifest excludes
+itself and contains no timestamp, machine identity, or absolute export path. Its own SHA-256 is
+returned separately. Dry run performs the same generation, manifest, path, and conflict planning
+without creating directories, temporary files, or final files.
+
+Internal usage with an already-created `projection` is:
+
+```python
+from pathlib import Path
+
+from musimack_tools.domain.sitemap_orchestration import SitemapOrchestrationRequest
+from musimack_tools.domain.sitemap_publication import (
+    PublicationMode,
+    SitemapPublicationConfiguration,
+)
+from musimack_tools.sitemap.limits import SitemapXmlConfiguration
+from musimack_tools.sitemap.service import SitemapPublicationService
+
+request = SitemapOrchestrationRequest(
+    recommendation_projection=projection,
+    xml_configuration=SitemapXmlConfiguration(),
+    publication_configuration=SitemapPublicationConfiguration(
+        output_root=Path("C:/sitemap-exports"),
+        mode=PublicationMode.DRY_RUN,
+    ),
+)
+result = SitemapPublicationService().execute(request)
+```
+
+Focused validation commands are:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend/tests/unit/test_sitemap_manifest.py
+.\.venv\Scripts\python.exe -m pytest backend/tests/unit/test_sitemap_publication.py
+.\.venv\Scripts\python.exe -m pytest backend/tests/integration/test_sitemap_publication_service.py
+```
+
+Atomicity is per file after complete package preflight, not a whole-package transaction. A later
+filesystem failure retains published-file evidence and cleans temporary files but does not roll
+back earlier files. Publication is local-filesystem only. `replace_only_if_changed`, export
+history, remote publication, submission, and persistence are deferred. Symlink capability tests
+probe only link creation and skip only for recognized unsupported or privilege conditions; Windows
+junction root and ancestor tests use local temporary directories and run without symlink privilege.
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local
@@ -277,6 +346,6 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 ## Next recommended development batch
 
 The next bounded batch should add CSV crawl and metadata audit serialization as a separate pure
-consumer of accepted crawl and recommendation evidence. File publication, persistence, public
-download APIs, background jobs, manual overrides, and sitemap submission remain separate future
-authorizations.
+consumer of accepted crawl and recommendation evidence. Public APIs, persistent export history,
+background jobs, manual overrides, remote publication, and sitemap submission remain separate
+future authorizations.

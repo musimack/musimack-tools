@@ -231,6 +231,51 @@ A future publication boundary may write or serve the immutable bytes, a future p
 may retain bundle evidence, and a future submission layer may transmit published locations. None
 of those responsibilities, nor a public XML route, exists in this layer.
 
+## Sitemap publication and orchestration boundaries
+
+`domain/sitemap_publication.py` owns immutable configuration, manifest, plan, integrity, failure,
+file-result, and publication-result contracts. `domain/sitemap_orchestration.py` owns the typed
+service request and aggregate result. The centralized versions are
+`sitemap-publication-manifest-v1` and `sitemap-publication-v1`.
+
+`sitemap/manifest.py` is a pure consumer of an immutable XML bundle. It hashes exact XML bytes and
+produces deterministic UTF-8 JSON with sorted keys, two-space indentation, LF newlines, and a final
+newline. It lists URL documents and then the optional index. It does not list or recursively hash
+itself; its byte count and SHA-256 remain separate result evidence.
+
+`sitemap/publication.py` separates planning from mutation. The planner validates the explicit
+absolute root, link-free containment, safe simple filenames, case-folded collisions, existing
+targets, and conflict policy before returning an immutable plan. Dry run stops after this shared
+planning path. The executor can create an explicitly permitted directory, writes secure random
+temporary files inside the target directory, flushes and `fsync`s content, and commits each file
+atomically. Race-safe no-overwrite uses same-filesystem hard-link creation; overwrite uses atomic
+replacement. If no-clobber hard-link creation is unsupported, denied, or otherwise fails, the
+executor returns a distinct typed failure, removes the temporary file, and never degrades to
+replacement. If a target appears after planning, hard-link creation preserves it and returns
+`target_exists`. Exact bytes are read back and hash-verified.
+
+Package preflight prevents expected partial writes, but the package is not a filesystem
+transaction. If a later atomic write fails, earlier published files remain and the result becomes
+`partially_failed`; temporary files are cleaned and no attempt is made to delete pre-existing user
+files. Unrelated files are never traversed, cleaned, or replaced. Link components are checked at
+planning and again before execution, but application-level path checks cannot eliminate every race
+with an adversary who can concurrently replace output-directory ancestors. Production operators
+must restrict write access to the configured root and its parents.
+
+The standard-library classifier rejects symbolic links and Windows junctions for roots, ancestors,
+and targets. Platform-neutral flag tests cover both classifications. Windows junction root and
+ancestor tests create only local temporary junctions and do not require symlink privilege. Symlink
+tests use a minimal creation probe and skip only for recognized capability or privilege errors;
+production assertions execute outside the skip-catching block. Other Windows reparse-point kinds
+not surfaced by `Path.is_symlink()` or `Path.is_junction()` are not claimed as covered.
+
+`sitemap/service.py` composes recommendation projection, accepted XML generation, publication
+planning, and optional execution without duplicating their rules. Explicit states distinguish
+generated output, publication not requested, dry run, published, blocked, and partially failed.
+The service has no FastAPI, crawl, network, persistence, or submission dependency. Future UI, API,
+job, and persistence layers may consume these immutable results but must not move their concerns
+into this internal boundary.
+
 ## Future boundaries
 
 ### Frontend
@@ -262,9 +307,10 @@ execution model.
 
 ### Exports
 
-In-memory XML sitemap serialization is now a separate consumer of recommendation projections. CSV
-audit serialization remains future work. Future publication and persistence consumers must use
-the immutable XML bundle without moving file or network behavior into the serializer. Optional
+In-memory XML sitemap serialization and safe local publication are separate consumers of
+recommendation projections. CSV audit serialization remains future work. Publication uses the
+immutable XML bundle without moving filesystem behavior into the serializer. Persistence,
+download delivery, remote publication, and submission remain separate future boundaries. Optional
 `lastmod` remains deferred until trustworthy provenance exists; `priority` and `changefreq` are not
 planned defaults. Metadata warnings remain separate from sitemap eligibility.
 
