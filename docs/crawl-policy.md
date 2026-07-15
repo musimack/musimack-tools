@@ -382,6 +382,93 @@ Stable indexability warning codes are `empty_x_robots_tag`, `invalid_x_robots_ta
 `meta_header_index_conflict`, `meta_header_follow_conflict`, `parameter_value_conflict`, and
 `crawler_specific_directive_difference`.
 
+## Sitemap eligibility recommendation policy
+
+Sitemap eligibility is a pure evidence decision separate from crawl permission, page-level
+indexability observations, and metadata quality. The internal engine produces `include`, `exclude`,
+`review`, or `indeterminate`. State precedence is:
+
+1. hard exclusion
+2. indeterminate evidence
+3. human review
+4. include
+
+An included URL must normalize successfully, remain in approved scope and origin policy, have an
+allowed robots permission, complete a successful fetch, represent its own final URL identity,
+return final status 200, and be confirmed as `text/html` or `application/xhtml+xml`. Structurally
+sniffed HTML from a missing Content-Type or `application/octet-stream` is eligible by default.
+Contradictory declared non-HTML and parsed-HTML evidence is indeterminate. PDF, JSON, image, CSS,
+JavaScript, plain text, and other confirmed non-HTML media are excluded.
+
+Robots denial is a crawl-permission exclusion and never implies noindex. Generic meta robots or
+generic X-Robots-Tag `noindex` excludes. A generic `index` does not cancel `noindex`; the conflict is
+retained as warning evidence. Crawler-specific noindex is retained separately and does not exclude
+by default. Nofollow, follow, noarchive, nosnippet, noimageindex, notranslate, and parameterized
+directives do not affect default eligibility.
+
+A missing canonical permits inclusion with a warning. One or more valid canonicals that all
+normalize to the final page URL permit inclusion. A deterministic canonical to any different path,
+query, trailing-slash form, host, scheme, or port excludes the page. Cross-host and cross-origin
+differences add specific evidence codes. Multiple disagreeing valid canonicals require review. One
+or more invalid canonicals with no valid selection require review; invalid evidence plus a valid
+self-canonical includes with a warning; invalid evidence plus a selected canonical elsewhere
+excludes.
+
+Every requested URL that redirects to a different normalized final URL is excluded as a redirect
+source, including temporary redirects. The final target is evaluated only through its own crawl
+record. If absent, no target recommendation row is created; each excluded source retains
+`redirect_target_not_independently_evaluated` warning evidence. Multiple redirect sources therefore
+cannot synthesize duplicate target candidates. Redirect chains remain evidence.
+
+Exact-path, path-prefix, and query-parameter exclusions are reapplied from the immutable crawl
+configuration, and every matching configured rule is retained. The projection emits at most one
+recommendation per normalized identity in first crawl-record order and counts suppressed duplicate
+records.
+
+Path-prefix rules are case-sensitive and segment-aware. `/blog` matches `/blog`, `/blog/`, and
+descendants beginning `/blog/`, but not `/blogging`, `/blogs`, or `/blog-old`. A configured trailing
+slash is deterministically trimmed to the same segment boundary. Root prefix `/` matches every
+absolute path. Empty prefixes are rejected by the crawl exclusion contract, and query strings do
+not affect path matching. Exact-path and query-parameter semantics are unchanged.
+
+Missing, empty, short, long, multiple, and conflicting title or meta-description observations are
+metadata warnings only. They do not cause review or exclusion. Parser recovery, conflicting valid
+canonicals, and invalid canonical evidence without a valid selection require review under the
+default policy. Missing robots, parse, or combined indexability evidence makes an otherwise
+qualifying result indeterminate.
+
+Ordered rule identifiers evaluate URL/scope, robots permission, fetch outcome, redirect source,
+final status, HTML content, generic indexability, configured exclusions, canonical target and
+quality, then evidence quality. All relevant reasons remain; primary reason follows that order
+within the winning state precedence.
+
+Stable recommendation reasons are `eligible_html_page`, `invalid_url`, `unsupported_scheme`,
+`outside_scope`, `disallowed_port`, `configured_url_exclusion`, `not_fetched`, `fetch_failed`,
+`redirect_failed`, `redirect_source`, `non_200_status`, `missing_http_status`,
+`response_too_large`, `non_html_content`, `robots_denied`, `generic_noindex`,
+`conflicting_generic_indexability`, `canonical_points_elsewhere`, `cross_host_canonical`,
+`cross_origin_canonical`, `conflicting_canonicals`, `invalid_canonical`, `missing_canonical`,
+`missing_required_evidence`, `ambiguous_content_type`,
+`redirect_target_not_independently_evaluated`, `severe_parser_recovery`, and
+`crawler_specific_noindex`.
+
+Projection counters cover each state, primary reason, metadata warning, duplicate suppression,
+redirect sources, canonical exclusions, generic-noindex exclusions, robots denials, non-HTML
+responses, and non-200 or missing statuses. The immutable configuration snapshot retains all five
+policy booleans and rule-set identifier `sitemap-eligibility-v1`.
+
+`SITEMAP_RULE_SET_VERSION` is the single authoritative code constant for that identifier.
+Determinacy values are `determinate`, `blocked_missing_evidence`, and
+`blocked_conflicting_evidence`. Include, exclude, and review are determinate because the engine has
+enough coherent evidence to reach those states. Indeterminate results use the applicable blocked
+value to distinguish absent evidence from contradictory evidence.
+
+Default policy values are: missing canonical does not require review; invalid canonical without a
+valid selection does require review; ambiguous structurally sniffed HTML does not require review;
+crawler-specific noindex does not require review; severe parser recovery does require review; and
+the rule-set identifier is `sitemap-eligibility-v1`. These values are internal typed configuration,
+not request-controlled API input.
+
 ## Current limitations and deferred controls
 
 The internal orchestrator can traverse one approved site in memory through the accepted fetch and
@@ -389,12 +476,12 @@ parse boundaries. It is not exposed through the API. The following remain deferr
 
 - connected-peer verification and DNS-answer pinning
 - deployment-level egress enforcement
-- canonical, duplicate, indexability, and sitemap decisions
-- final search-engine-specific directive precedence and sitemap eligibility
+- duplicate-content fingerprinting and final search-engine-specific directive precedence
 - enforcement of robots Crawl-delay values
 - a pre-redirect robots callback inside ordinary page redirect sequences; the accepted fetcher
   still revalidates scope and network safety at every redirect target
 - background job ownership, persistence, durable progress streaming, restart recovery, XML, and CSV
+- manual include/exclude overrides and approval workflows
 
 No caller should treat scope `decision.allowed` as sufficient permission to connect. The safe
 fetcher combines it with the current DNS, address, port, redirect, time, and resource controls;

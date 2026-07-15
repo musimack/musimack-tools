@@ -165,6 +165,42 @@ evidence. Similarly, the
 robots-specific body limit is an evidence-level rejection layered inside the fetcher's existing
 streaming hard cap.
 
+## Sitemap recommendation boundary
+
+`domain/sitemap.py` owns immutable recommendation states, determinacy, rule results, bounded
+evidence summaries, typed policy, counters, and crawl-level projection records.
+`recommendation/rules.py` owns deterministic mappings and accepted exclusion-rule matching.
+`recommendation/sitemap.py` owns ordered rule orchestration and projection aggregation. These
+modules depend on accepted crawl evidence but do not modify the crawler, fetcher, parser, robots
+service, FastAPI composition, or persistence boundaries.
+
+The rule engine is pure apart from safe keyed logs. Its state precedence is hard exclusion,
+indeterminate, review, then include. Primary reasons follow URL and scope, robots permission, fetch
+outcome, redirect source, status, HTML content, generic indexability, configured exclusions,
+canonical target, and evidence-quality order. Every rule result remains attached even when an
+earlier reason controls the final state.
+
+The projection consumes a complete `CrawlResult`, preserves first crawl-record order, suppresses
+duplicate normalized identities, and aggregates state, reason, metadata warning, redirect,
+canonical, noindex, robots, content, and status counts. A redirect final URL is independently
+eligible only when it has its own qualifying crawl record. Otherwise no target recommendation is
+created; the excluded source retains a warning that independent target evidence is absent.
+
+`SITEMAP_RULE_SET_VERSION` in `domain/sitemap.py` is the single code authority for
+`sitemap-eligibility-v1`. Policy defaults and projections reference that constant rather than
+repeating an independent implementation literal. Determinacy answers whether evidence was
+sufficient and coherent: include, exclude, and review are `determinate`; indeterminate results are
+either `blocked_missing_evidence` or `blocked_conflicting_evidence`.
+
+This boundary does not serialize XML or CSV and is not exposed through FastAPI. Future manual
+overrides must be a separate layer over automatic recommendations so original rule evidence remains
+auditable. Future XML and CSV consumers should read recommendation projections without embedding
+eligibility logic in serializers.
+
+Recommendation logs use bounded URL summaries without queries and include state, primary reason,
+status, and rule-set version. They never include bodies, raw HTML, credentials, cookies, or request
+headers.
+
 ## Future boundaries
 
 ### Frontend
@@ -175,9 +211,9 @@ on the FastAPI OpenAPI contract and use server-state-oriented data fetching.
 
 ### Reusable crawler core
 
-Future robots evaluation and indexability analysis belong behind reusable crawler-core
-interfaces. The implemented fetch, HTML, and in-memory orchestration boundaries supply bounded
-response, redirect, metadata, link, and traversal evidence. Persistence and progress delivery
+The implemented robots evaluation, indexability analysis, and sitemap recommendation layers remain
+behind reusable crawler-core interfaces. Fetch, HTML, and in-memory orchestration boundaries supply
+bounded response, redirect, metadata, link, and traversal evidence. Persistence and progress delivery
 should remain injected so the core stays reusable by broken-link, metadata, canonical, redirect,
 inventory, internal-link, image, schema, indexability, and migration-QA modules.
 
@@ -196,9 +232,10 @@ execution model.
 
 ### Exports
 
-XML sitemap and CSV audit serialization will be separate consumers of stable stored crawl
-results. XML will omit `priority` and `changefreq`, and will include `lastmod` only with recorded
-trustworthy provenance. Metadata warnings will remain separate from sitemap eligibility.
+XML sitemap and CSV audit serialization will be separate consumers of stable stored crawl results
+and recommendation projections. XML will omit `priority` and `changefreq`, and will include
+`lastmod` only with recorded trustworthy provenance. Metadata warnings remain separate from
+sitemap eligibility.
 
 ## Why network access is excluded
 
@@ -214,7 +251,8 @@ that an in-scope string is safe to request.
   retries, redirect chains, content gating, decoding, malformed HTML, metadata conflicts,
   base/canonical resolution, robots tokens, links, frontier ordering, admission, limits,
   cancellation, concurrency, pacing, robots parsing and permission, single-flight caching,
-  X-Robots directives, combined conflicts, and stable crawl evidence.
+  X-Robots directives, combined conflicts, recommendation precedence, canonical and redirect
+  policy, duplicate projection, and stable crawl evidence.
 - FastAPI's in-process test client covers the health API.
 - An automatic test fixture blocks DNS resolution and non-loopback socket connections; Windows
   event-loop loopback plumbing remains available to the in-process test client.

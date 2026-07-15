@@ -26,12 +26,13 @@ This first implementation batch provides:
 - Typed crawl progress, cancellation, limits, counters, and URL-level evidence
 - Per-origin robots.txt retrieval, parsing, permission decisions, and one-crawl caching
 - X-Robots-Tag parsing and combined meta/header indexability evidence
+- Pure sitemap eligibility recommendations and deterministic crawl-level projections
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
-It deliberately does **not** provide sitemap eligibility decisions, sitemap fetching, final
-search-engine-specific indexability verdicts, public crawl or fetch API endpoints, background jobs,
-persistence, XML/CSV exports, authentication,
+It deliberately does **not** provide sitemap fetching, final search-engine-specific indexability
+verdicts, public crawl or recommendation API endpoints, background jobs, persistence, XML/CSV
+exports, manual overrides, authentication,
 frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
 inert HTML evidence; they do not contact public HTTP services or DNS.
@@ -186,6 +187,41 @@ the frontier URL's origin before that fetch, not as a callback before every inte
 The fetcher still revalidates scope and network safety for each redirect target. Both limitations
 are retained explicitly for future transport-boundary work.
 
+## Sitemap eligibility recommendations
+
+The internal `SitemapRecommendationEngine` evaluates immutable crawl records without networking,
+framework state, or persistence. Each normalized identity receives one explainable state:
+
+- `include`: complete evidence supports sitemap inclusion.
+- `exclude`: at least one hard exclusion applies.
+- `review`: no hard exclusion applies, but canonical or evidence quality needs human review.
+- `indeterminate`: required evidence is missing or contradictory.
+
+Determinacy is separate from state: `determinate` means sufficient coherent evidence produced an
+include, exclude, or review result; `blocked_missing_evidence` and
+`blocked_conflicting_evidence` explain why an indeterminate result could not be resolved.
+The single authoritative code constant `SITEMAP_RULE_SET_VERSION` identifies this rule set as
+`sitemap-eligibility-v1`.
+
+State precedence is hard exclusion, indeterminate, review, then include. The engine retains every
+applicable hard exclusion and review reason while selecting one primary reason from the documented
+rule order. Hard exclusions cover invalid or out-of-scope URLs, disallowed ports, unavailable or
+failed fetches, redirect sources, non-200 responses, non-HTML content, robots denial, generic
+noindex, configured URL rules, and canonicals pointing elsewhere.
+
+Missing, empty, short, long, duplicate, or conflicting title and description evidence remains in a
+separate metadata-warning collection. Those warnings do not change an otherwise qualifying page
+from `include`. Generic noindex excludes conservatively; crawler-specific noindex is retained as a
+warning by default. Conflicting canonical candidates and one or more invalid canonicals without a
+valid selection require review, while missing canonical is an include-with-warning default.
+
+The crawl projection preserves crawl-record order, emits at most one recommendation per normalized
+identity, counts suppressed duplicates, and summarizes states and exclusion categories. A redirect
+target without its own crawl record does not receive a recommendation row; the excluded source
+retains a warning that the target was not independently evaluated. The engine never invents target
+eligibility. Recommendations remain internal. There is no API, XML or CSV export, manual override,
+approval workflow, or persistence layer.
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local
@@ -218,7 +254,7 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 
 ## Next recommended development batch
 
-The next bounded batch should add a pure sitemap recommendation engine over retained status,
-canonical, robots-permission, and indexability evidence. It must keep metadata quality warnings
-separate from eligibility, preserve decision reasons, and avoid persistence, public crawl APIs,
-background jobs, and exports unless separately authorized.
+The next bounded batch should add a standalone XML sitemap serializer over accepted `include`
+recommendations. It should validate sitemap limits, omit `priority` and `changefreq`, omit `lastmod`
+without trustworthy provenance, and remain separate from persistence, public APIs, manual
+overrides, and CSV audit export unless separately authorized.
