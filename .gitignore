@@ -1,0 +1,47 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+# IDE and operating-system state
+.idea/
+.vscode/
+*.suo
+*.user
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Deferred database artifacts
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.dump
+*.sql
+
+# Deferred frontend artifacts
+node_modules/
+frontend/dist/
+frontend/.vite/
