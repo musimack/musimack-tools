@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import FrozenInstanceError, dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -13,6 +14,7 @@ from musimack_tools.crawl.html import HtmlMetadataParser
 from musimack_tools.crawl.limits import CrawlHardLimits
 from musimack_tools.crawl.normalization import normalize_url
 from musimack_tools.crawl.orchestrator import SingleSiteCrawlOrchestrator
+from musimack_tools.crawl.robots import RobotsTxtService
 from musimack_tools.crawl.scope import create_scope_policy
 from musimack_tools.domain.crawl import (
     CrawlErrorCode,
@@ -36,7 +38,16 @@ from musimack_tools.domain.fetching import (
     ResponseHeaders,
 )
 from musimack_tools.domain.html import HtmlParseResult, HtmlWarningCode
-from musimack_tools.domain.urls import CrawlScopePolicy, ScopeMode
+from musimack_tools.domain.indexability import IndexabilityWarningCode
+from musimack_tools.domain.robots import (
+    CrawlPermissionDecision,
+    CrawlPermissionReason,
+    RobotsFetchOutcome,
+    RobotsOriginRecord,
+    RobotsParseOutcome,
+    RobotsWarningCode,
+)
+from musimack_tools.domain.urls import CrawlScopePolicy, NormalizedUrl, ScopeMode
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,6 +68,7 @@ class _Page:
     actual_bytes: int | None = None
     failure_code: FetchFailureCode | None = None
     redirect_from: str | None = None
+    x_robots_tag: tuple[str, ...] = ()
 
 
 class _FakeClock:
@@ -145,7 +157,10 @@ class _FakeFetcher:
                 final_url=final_url,
                 outcome=page.outcome,
                 status_code=page.status,
-                headers=ResponseHeaders(content_type=page.content_type),
+                headers=ResponseHeaders(
+                    content_type=page.content_type,
+                    x_robots_tag=page.x_robots_tag,
+                ),
                 content_type=page.content_type,
                 declared_content_length=len(body) if body is not None else None,
                 actual_bytes_read=actual_bytes,
@@ -201,6 +216,43 @@ class _CancellingParser:
         return result
 
 
+class AllowAllRobotsServiceForTests:
+    """Explicit test-only policy for orchestration scenarios unrelated to robots."""
+
+    def create_session(self) -> _AllowAllRobotsSessionForTests:
+        return _AllowAllRobotsSessionForTests()
+
+
+class _AllowAllRobotsSessionForTests:
+    async def evaluate(
+        self,
+        url: NormalizedUrl,
+        scope: CrawlScopePolicy,
+        correlation_id: str | None = None,
+    ) -> CrawlPermissionDecision:
+        del scope, correlation_id
+        return CrawlPermissionDecision(
+            evaluated_url=url.normalized,
+            origin=url.origin,
+            robots_url=f"{url.origin}/robots.txt",
+            fetch_outcome=RobotsFetchOutcome.NO_POLICY,
+            parse_outcome=RobotsParseOutcome.NOT_APPLICABLE,
+            selected_group_index=None,
+            matched_rule=None,
+            allowed=True,
+            reason_code=CrawlPermissionReason.ALLOWED_TEST_POLICY,
+            explanation="The explicitly injected test-only robots policy allows this URL",
+            cache_hit=False,
+            warnings=(),
+            temporary_unavailability=False,
+            newly_fetched_bytes=0,
+            evaluation_duration_seconds=0.0,
+        )
+
+    def origin_records(self) -> tuple[RobotsOriginRecord, ...]:
+        return ()
+
+
 def _hard_limits() -> CrawlHardLimits:
     return CrawlHardLimits(1_000, 50, 7_200, 5_000_000_000, 16, 1_000)
 
@@ -241,6 +293,7 @@ def _run(  # noqa: PLR0913 - central test harness exposes every injected boundar
     on_fetch: Callable[[str], None] | None = None,
     raise_for: frozenset[str] = frozenset(),
     parser: object | None = None,
+    enable_robots: bool = False,
 ) -> tuple[CrawlResult, _FakeFetcher, _FakeClock | _SequenceClock]:
     selected_clock = clock or _FakeClock()
     fetcher = _FakeFetcher(
@@ -249,10 +302,16 @@ def _run(  # noqa: PLR0913 - central test harness exposes every injected boundar
         on_fetch=on_fetch,
         raise_for=raise_for,
     )
+    robots_service = (
+        RobotsTxtService(fetcher, clock=selected_clock)
+        if enable_robots
+        else AllowAllRobotsServiceForTests()
+    )
     orchestrator = SingleSiteCrawlOrchestrator(
         fetcher,
         parser or HtmlMetadataParser(clock=selected_clock),  # type: ignore[arg-type]
         _hard_limits(),
+        robots_service,
         clock=selected_clock,
         sleep=(selected_clock.sleep if isinstance(selected_clock, _FakeClock) else asyncio.sleep),
         observer=observer,
@@ -269,6 +328,26 @@ def _html(*links: str, canonical: str | None = None) -> str:
         '<meta name="description" content="A useful crawl page description retained for review '
         f'and deterministic test evidence.">{canonical_tag}</head><body>{link_tags}</body></html>'
     )
+
+
+def test_robots_service_is_a_required_constructor_dependency() -> None:
+    parameter = inspect.signature(SingleSiteCrawlOrchestrator).parameters["robots_service"]
+    assert parameter.default is inspect.Parameter.empty
+
+    constructor: Any = SingleSiteCrawlOrchestrator
+    fetcher = _FakeFetcher({_SEED: _Page()}, clock=_FakeClock())
+    with pytest.raises(TypeError, match="robots_service"):
+        constructor(fetcher, HtmlMetadataParser(), _hard_limits())
+
+
+def test_explicit_test_only_allow_policy_permits_unrelated_orchestration_test() -> None:
+    result, fetcher, _clock = _run({_SEED: _Page(body=_html())})
+
+    assert result.state is CrawlState.COMPLETED
+    assert fetcher.calls == [_SEED]
+    permission = result.url_records[0].robots_permission
+    assert permission is not None
+    assert permission.reason_code is CrawlPermissionReason.ALLOWED_TEST_POLICY
 
 
 def test_seed_only_crawl_returns_immutable_completed_result() -> None:
@@ -943,3 +1022,271 @@ def test_seed_outside_scope_returns_typed_failure_without_fetch() -> None:
     assert result.state is CrawlState.FAILED
     assert fetcher.calls == []
     assert result.errors[0].code is CrawlErrorCode.SEED_SCOPE_DENIED
+
+
+def test_robots_allowed_seed_is_fetched_after_permission_evaluation() -> None:
+    robots = "https://example.test/robots.txt"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert fetcher.calls == [robots, _SEED]
+    assert result.url_records[0].robots_permission is not None
+    assert result.url_records[0].robots_permission.allowed is True
+    assert result.counters.robots_fetches == 1
+
+
+def test_robots_denied_seed_is_not_fetched() -> None:
+    robots = "https://example.test/robots.txt"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nDisallow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert fetcher.calls == [robots]
+    assert result.url_records[0].outcome is UrlCrawlOutcome.ROBOTS_DENIED
+    assert result.url_records[0].skip_reason is LinkAdmissionReason.ROBOTS_DENIED
+    assert result.counters.robots_denied_urls == 1
+
+
+def test_child_denied_by_cached_robots_is_not_fetched() -> None:
+    robots = "https://example.test/robots.txt"
+    child = "https://example.test/private"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(
+                body="User-agent: *\nDisallow: /private",
+                content_type="text/plain",
+            ),
+            _SEED: _Page(body=_html('<a href="/private">Private</a>')),
+            child: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert fetcher.calls == [robots, _SEED]
+    child_record = next(item for item in result.url_records if item.requested_url == child)
+    assert child_record.outcome is UrlCrawlOutcome.ROBOTS_DENIED
+    assert child_record.robots_permission is not None
+    assert child_record.robots_permission.cache_hit is True
+
+
+def test_missing_robots_allows_pages_and_records_warning_counter() -> None:
+    robots = "https://example.test/robots.txt"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="", content_type="text/plain", status=404),
+            _SEED: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert fetcher.calls == [robots, _SEED]
+    assert result.counters.robots_warnings == 1
+    assert RobotsWarningCode.NOT_FOUND in {item.code for item in result.robots_origins[0].warnings}
+
+
+def test_temporary_robots_failure_blocks_page_and_records_recoverable_error() -> None:
+    robots = "https://example.test/robots.txt"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="", content_type="text/plain", status=500),
+            _SEED: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert fetcher.calls == [robots]
+    assert result.state is CrawlState.COMPLETED_WITH_ERRORS
+    assert result.counters.robots_unavailable_origins == 1
+    assert result.errors[0].code is CrawlErrorCode.ROBOTS_UNAVAILABLE
+
+
+def test_robots_is_fetched_once_for_multiple_same_origin_pages() -> None:
+    robots = "https://example.test/robots.txt"
+    child = "https://example.test/child"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html('<a href="/child">Child</a>')),
+            child: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert fetcher.calls.count(robots) == 1
+    assert result.counters.robots_fetches == 1
+    assert result.counters.robots_cache_hits == 1
+
+
+def test_approved_subdomain_gets_separate_origin_robots_policy() -> None:
+    seed_robots = "https://example.test/robots.txt"
+    child = "https://news.example.test/page"
+    child_robots = "https://news.example.test/robots.txt"
+    scope = _scope(mode=ScopeMode.INCLUDE_SUBDOMAINS)
+    result, fetcher, _clock = _run(
+        {
+            seed_robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html(f'<a href="{child}">News</a>')),
+            child_robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            child: _Page(body=_html()),
+        },
+        request=_request(scope),
+        enable_robots=True,
+    )
+
+    assert seed_robots in fetcher.calls
+    assert child_robots in fetcher.calls
+    assert result.counters.robots_origins_evaluated == 2
+    assert len(result.robots_origins) == 2
+
+
+def test_robots_bytes_count_separately_and_toward_total() -> None:
+    robots = "https://example.test/robots.txt"
+    robots_body = "User-agent: *\nAllow: /"
+    result, _fetcher, _clock = _run(
+        {
+            robots: _Page(body=robots_body, content_type="text/plain"),
+            _SEED: _Page(body=_html(), actual_bytes=10),
+        },
+        enable_robots=True,
+    )
+
+    assert result.counters.robots_bytes == len(robots_body.encode())
+    assert result.total_accepted_bytes == len(robots_body.encode()) + 10
+    assert result.url_records[0].accepted_response_bytes == 10
+
+
+def test_x_robots_and_meta_evidence_are_attached_with_conflict() -> None:
+    robots = "https://example.test/robots.txt"
+    body = _html().replace(
+        "</head>",
+        '<meta name="robots" content="index"></head>',
+    )
+    result, _fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=body, x_robots_tag=("noindex",)),
+        },
+        enable_robots=True,
+    )
+
+    record = result.url_records[0]
+    assert record.x_robots_tag is not None
+    assert record.indexability_evidence is not None
+    assert IndexabilityWarningCode.META_HEADER_INDEX_CONFLICT in {
+        item.code for item in record.indexability_evidence.warnings
+    }
+
+
+def test_noindex_page_still_discovers_links() -> None:
+    robots = "https://example.test/robots.txt"
+    child = "https://example.test/child"
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(
+                body=_html('<a href="/child">Child</a>'),
+                x_robots_tag=("noindex",),
+            ),
+            child: _Page(body=_html()),
+        },
+        enable_robots=True,
+    )
+
+    assert child in fetcher.calls
+    assert result.counters.links_admitted == 1
+
+
+def test_cancellation_during_robots_retrieval_stops_page_fetch() -> None:
+    robots = "https://example.test/robots.txt"
+    token = CrawlCancellationToken()
+
+    def cancel_during_robots(url: str) -> None:
+        if url == robots:
+            token.cancel()
+
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html()),
+        },
+        token=token,
+        on_fetch=cancel_during_robots,
+        enable_robots=True,
+    )
+
+    assert result.state is CrawlState.CANCELLED
+    assert fetcher.calls == [robots]
+    assert result.url_records[0].robots_permission is not None
+
+
+def test_duration_limit_during_robots_retrieval_stops_page_fetch() -> None:
+    robots = "https://example.test/robots.txt"
+    clock = _FakeClock()
+
+    def advance_during_robots(url: str) -> None:
+        if url == robots:
+            clock.advance(61)
+
+    result, fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html()),
+        },
+        request=_request(maximum_duration_seconds=60),
+        clock=clock,
+        on_fetch=advance_during_robots,
+        enable_robots=True,
+    )
+
+    assert result.state is CrawlState.LIMIT_REACHED
+    assert fetcher.calls == [robots]
+    assert result.limit_events[0].kind is LimitKind.DURATION
+
+
+def test_progress_snapshots_include_robots_counters_consistently() -> None:
+    robots = "https://example.test/robots.txt"
+    observer = _Observer()
+    result, _fetcher, _clock = _run(
+        {
+            robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+            _SEED: _Page(body=_html()),
+        },
+        observer=observer,
+        enable_robots=True,
+    )
+
+    assert observer.snapshots[-1].counters.robots_fetches == 1
+    assert observer.snapshots[-1].total_accepted_bytes == result.total_accepted_bytes
+
+
+def test_real_robots_policy_preserves_breadth_first_page_order() -> None:
+    robots = "https://example.test/robots.txt"
+    pages = {
+        robots: _Page(body="User-agent: *\nAllow: /", content_type="text/plain"),
+        _SEED: _Page(body=_html('<a href="/a">A</a>', '<a href="/b">B</a>')),
+        "https://example.test/a": _Page(body=_html('<a href="/deep">Deep</a>')),
+        "https://example.test/b": _Page(body=_html()),
+        "https://example.test/deep": _Page(body=_html()),
+    }
+    _result, fetcher, _clock = _run(
+        pages,
+        request=_request(maximum_concurrent_fetches=1),
+        enable_robots=True,
+    )
+
+    assert fetcher.calls == [
+        robots,
+        _SEED,
+        "https://example.test/a",
+        "https://example.test/b",
+        "https://example.test/deep",
+    ]

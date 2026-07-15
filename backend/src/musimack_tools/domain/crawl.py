@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from musimack_tools.domain.fetching import FetchResult
     from musimack_tools.domain.html import HtmlParseResult
+    from musimack_tools.domain.indexability import CombinedIndexabilityEvidence, XRobotsTagEvidence
+    from musimack_tools.domain.robots import CrawlPermissionDecision, RobotsOriginRecord
     from musimack_tools.domain.urls import CrawlScopePolicy, NormalizedUrl
 
 _INVALID_UNIQUE_URLS = "maximum unique URLs must be at least 1"
@@ -50,6 +52,7 @@ class UrlCrawlOutcome(StrEnum):
     FETCH_FAILED = "fetch_failed"
     PARSE_SKIPPED = "parse_skipped"
     SKIPPED = "skipped"
+    ROBOTS_DENIED = "robots_denied"
     WORKER_FAILED = "worker_failed"
 
 
@@ -58,6 +61,7 @@ class CrawlErrorCode(StrEnum):
 
     INVALID_CRAWL_REQUEST = "invalid_crawl_request"
     SEED_SCOPE_DENIED = "seed_scope_denied"
+    ROBOTS_UNAVAILABLE = "robots_unavailable"
     URL_LIMIT_REACHED = "url_limit_reached"
     DURATION_LIMIT_REACHED = "duration_limit_reached"
     BYTE_LIMIT_REACHED = "byte_limit_reached"
@@ -89,6 +93,8 @@ class LinkAdmissionReason(StrEnum):
     CRAWL_STOPPING = "crawl_stopping"
     REDIRECT_FINAL_ALREADY_SEEN = "redirect_final_already_seen"
     CANCELLED = "cancelled"
+    ROBOTS_DENIED = "robots_denied"
+    ROBOTS_UNAVAILABLE = "robots_unavailable"
 
 
 class ExclusionRuleType(StrEnum):
@@ -220,6 +226,11 @@ class UrlCrawlRecord:
     started_at_seconds: float | None
     ended_at_seconds: float
     accepted_response_bytes: int
+    robots_permission: CrawlPermissionDecision | None = None
+    x_robots_tag: XRobotsTagEvidence | None = None
+    indexability_evidence: CombinedIndexabilityEvidence | None = None
+    robots_warning_count: int = 0
+    indexability_warning_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +253,14 @@ class CrawlCounters:
     total_links_observed: int = 0
     links_admitted: int = 0
     links_rejected: int = 0
+    robots_origins_evaluated: int = 0
+    robots_fetches: int = 0
+    robots_cache_hits: int = 0
+    robots_unavailable_origins: int = 0
+    robots_denied_urls: int = 0
+    robots_warnings: int = 0
+    robots_bytes: int = 0
+    indexability_warnings: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,3 +328,4 @@ class CrawlResult:
     maximum_observed_queue_size: int
     maximum_active_worker_count: int
     configuration: CrawlConfigurationSnapshot
+    robots_origins: tuple[RobotsOriginRecord, ...] = ()

@@ -113,6 +113,21 @@ def test_successful_200_retains_bounded_response_evidence() -> None:
     assert resolver.calls == ["example.test"]
 
 
+def test_mixed_case_repeated_x_robots_headers_are_preserved_in_order() -> None:
+    result, _resolver, _fetcher = _run_fetch(
+        lambda _request: httpx.Response(
+            200,
+            headers=[
+                ("x-RoBoTs-TaG", "noindex"),
+                ("X-ROBOTS-TAG", "nofollow"),
+            ],
+        )
+    )
+
+    assert result.headers is not None
+    assert result.headers.x_robots_tag == ("noindex", "nofollow")
+
+
 def test_request_headers_are_identifiable_and_do_not_include_credentials() -> None:
     observed: dict[str, str | None] = {}
 

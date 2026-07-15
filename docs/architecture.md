@@ -119,6 +119,52 @@ All crawl state is process memory. There is no durable job identity, restart rec
 endpoint, progress stream, persistence repository, or export consumer. Those boundaries must be
 added separately rather than embedded in the frontier.
 
+## Robots and indexability boundaries
+
+The fifth backend batch adds two independent evidence layers:
+
+- `domain/robots.py` owns robots retrieval, parse, group, rule, warning, origin, and permission
+  records.
+- `crawl/robots.py` owns bounded parsing, origin URL construction, safe-fetch retrieval,
+  user-agent selection, rule matching, and per-crawl caching.
+- `domain/indexability.py` owns ordered header records, warnings, and conflicts.
+- `crawl/indexability.py` parses repeated X-Robots-Tag values and combines them with existing meta
+  robots records without producing a verdict.
+
+`RobotsTxtService` is a session factory. Each orchestrator run creates a fresh session containing
+an injected cache and an async-safe in-flight task map. The first lookup owns retrieval; concurrent
+lookups for the same origin await that task and report cache-hit evidence. Every terminal result,
+including missing, forbidden, temporary failure, invalid response, and oversized content, is cached
+for the rest of that crawl. Nothing persists across crawls.
+
+The robots session factory is a required `SingleSiteCrawlOrchestrator` constructor dependency.
+Production composition must explicitly inject `RobotsTxtService`; the orchestrator has no implicit
+allow-all fallback. Tests unrelated to robots may explicitly inject a named, test-module-only
+allow-all implementation that is unavailable from production composition modules.
+
+The robots service depends only on the accepted safe-fetch protocol. It constructs
+`scheme://host[:port]/robots.txt`, so non-default ports identify independent origins. Robots
+redirects remain under the existing scope, redirect, DNS, address, port, timeout, and response-size
+controls. The service rejects a body above its additional robots limit and never interprets HTML.
+
+The orchestrator requests robots permission before each frontier URL. A denied URL becomes a
+terminal URL record without a page fetch. Origin evidence is shared through the crawl result rather
+than copying the robots body into every record. Robots bytes count in the aggregate limit and in a
+separate counter. Allowed page responses receive X-Robots evidence and a combined meta/header view;
+neither changes link admission.
+
+Crawl permission, page indexability evidence, and future sitemap eligibility remain separate types.
+No public route exposes any of these internal services. `/api/health` remains the only API path.
+
+The accepted page fetcher handles its own redirect sequence. Consequently, the orchestration layer
+cannot run a robots callback immediately before each page redirect hop without changing that
+contract. It evaluates the frontier URL origin before calling the fetcher, while the accepted
+fetcher continues to revalidate network safety and crawl scope for every redirect target. Future
+transport work may add a robots redirect-policy callback while preserving existing redirect
+evidence. Similarly, the
+robots-specific body limit is an evidence-level rejection layered inside the fetcher's existing
+streaming hard cap.
+
 ## Future boundaries
 
 ### Frontend
@@ -167,7 +213,8 @@ that an in-scope string is safe to request.
 - Unit tests cover normalization, scope, settings, DNS, address safety, streaming limits,
   retries, redirect chains, content gating, decoding, malformed HTML, metadata conflicts,
   base/canonical resolution, robots tokens, links, frontier ordering, admission, limits,
-  cancellation, concurrency, pacing, and stable crawl evidence.
+  cancellation, concurrency, pacing, robots parsing and permission, single-flight caching,
+  X-Robots directives, combined conflicts, and stable crawl evidence.
 - FastAPI's in-process test client covers the health API.
 - An automatic test fixture blocks DNS resolution and non-loopback socket connections; Windows
   event-loop loopback plumbing remains available to the in-process test client.

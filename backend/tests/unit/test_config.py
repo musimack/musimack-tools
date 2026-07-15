@@ -45,6 +45,12 @@ def test_settings_defaults_are_conservative() -> None:
     assert settings.crawl_hard_maximum_total_fetched_bytes == 5_000_000_000
     assert settings.crawl_hard_maximum_concurrent_fetches == 16
     assert settings.crawl_hard_maximum_queued_urls == 100_000
+    # This is a public robots product identifier, not an authentication token.
+    assert settings.robots_user_agent_product_token == "MusimackSEOToolkit"  # noqa: S105
+    assert settings.robots_maximum_response_body_bytes == 1_000_000
+    assert settings.robots_maximum_line_length == 8_192
+    assert settings.robots_maximum_line_count == 10_000
+    assert settings.robots_hard_maximum_response_body_bytes == 5_000_000
 
 
 @pytest.mark.parametrize(
@@ -71,6 +77,10 @@ def test_settings_defaults_are_conservative() -> None:
         ("crawl_hard_maximum_total_fetched_bytes", 5_000_000_001),
         ("crawl_hard_maximum_concurrent_fetches", 17),
         ("crawl_hard_maximum_queued_urls", 100_001),
+        ("robots_maximum_response_body_bytes", 5_000_001),
+        ("robots_maximum_line_length", 65_537),
+        ("robots_maximum_line_count", 100_001),
+        ("robots_hard_maximum_response_body_bytes", 5_000_001),
     ],
 )
 def test_settings_reject_out_of_bounds_values(field: str, value: int) -> None:
@@ -128,3 +138,19 @@ def test_crawl_defaults_cannot_exceed_hard_limits(
 ) -> None:
     with pytest.raises(ValidationError, match="hard maximum"):
         Settings.model_validate({default_field: default_value, hard_field: hard_value})
+
+
+@pytest.mark.parametrize("token", ["", "has spaces", "bad/token"])
+def test_robots_product_token_is_validated(token: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"robots_user_agent_product_token": token})
+
+
+def test_robots_body_default_cannot_exceed_hard_limit() -> None:
+    with pytest.raises(ValidationError, match="robots body limit"):
+        Settings.model_validate(
+            {
+                "robots_maximum_response_body_bytes": 101,
+                "robots_hard_maximum_response_body_bytes": 100,
+            }
+        )

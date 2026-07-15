@@ -24,11 +24,14 @@ This first implementation batch provides:
 - A deterministic breadth-first, in-memory single-site crawl frontier
 - Bounded asynchronous fetch workers with per-origin request pacing
 - Typed crawl progress, cancellation, limits, counters, and URL-level evidence
+- Per-origin robots.txt retrieval, parsing, permission decisions, and one-crawl caching
+- X-Robots-Tag parsing and combined meta/header indexability evidence
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
-It deliberately does **not** provide `robots.txt`, X-Robots-Tag interpretation, sitemap decisions,
-public crawl or fetch API endpoints, background jobs, persistence, XML/CSV exports, authentication,
+It deliberately does **not** provide sitemap eligibility decisions, sitemap fetching, final
+search-engine-specific indexability verdicts, public crawl or fetch API endpoints, background jobs,
+persistence, XML/CSV exports, authentication,
 frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
 inert HTML evidence; they do not contact public HTTP services or DNS.
@@ -155,6 +158,34 @@ skipped records. Progress observers receive immutable snapshots and cannot contr
 Results remain entirely in memory; no job service, persistence, API endpoint, or restart recovery
 exists yet.
 
+## Robots and indexability evidence
+
+An injected `RobotsTxtService` retrieves `/robots.txt` through the accepted safe fetcher once per
+effective origin per crawl. Concurrent lookups share one in-flight retrieval. Successful,
+not-found, forbidden, temporary-failure, invalid, and oversized results are all cached for that
+crawl. Ordinary pages are fetched only after a typed robots permission decision allows them.
+Robots response bytes count toward the aggregate crawl byte limit and are also reported separately.
+The orchestrator requires a robots session factory at construction; production composition must
+explicitly pass `RobotsTxtService`. Tests that are unrelated to robots explicitly inject a
+test-module-only `AllowAllRobotsServiceForTests`. There is no implicit runtime allow-all fallback.
+
+The parser uses the `MusimackSEOToolkit` product token, selects the earliest most-specific matching
+group, falls back to `*`, applies longest matching Allow/Disallow rules, and gives Allow the tie.
+Rules match the normalized path plus query and support `*` and terminal `$`. Crawl-delay and
+Sitemap directives are retained as evidence but are not enforced or fetched.
+
+Repeated `X-Robots-Tag` response headers are parsed in order into generic and crawler-specific
+records. Those records are combined with existing meta robots observations only to identify
+conflicts. No single `indexable` boolean, sitemap recommendation, or search-engine-specific verdict
+is produced. Noindex, meta nofollow, and link nofollow still do not suppress frontier discovery.
+
+The robots-specific 1,000,000-byte policy is enforced after the accepted fetch boundary returns
+its already bounded evidence; the fetcher's lower-level stream cap remains authoritative. Also,
+page redirects occur inside the accepted safe-fetch contract, so robots permission is evaluated for
+the frontier URL's origin before that fetch, not as a callback before every internal redirect hop.
+The fetcher still revalidates scope and network safety for each redirect target. Both limitations
+are retained explicitly for future transport-boundary work.
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local
@@ -187,7 +218,7 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 
 ## Next recommended development batch
 
-The next bounded batch should evaluate page indexability as a pure evidence layer over retained
-HTTP status, canonical evidence, meta robots, and X-Robots-Tag headers. It should keep metadata
-quality warnings separate from sitemap eligibility and consume immutable crawl evidence without
-adding persistence, public crawl APIs, background jobs, or exports unless separately authorized.
+The next bounded batch should add a pure sitemap recommendation engine over retained status,
+canonical, robots-permission, and indexability evidence. It must keep metadata quality warnings
+separate from eligibility, preserve decision reasons, and avoid persistence, public crawl APIs,
+background jobs, and exports unless separately authorized.

@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     )
     crawl_hard_maximum_concurrent_fetches: int = Field(default=16, ge=1, le=16)
     crawl_hard_maximum_queued_urls: int = Field(default=100_000, ge=1, le=100_000)
+    robots_user_agent_product_token: str = Field(
+        default="MusimackSEOToolkit",
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z][A-Za-z0-9_-]*$",
+    )
+    robots_maximum_response_body_bytes: int = Field(default=1_000_000, ge=1, le=5_000_000)
+    robots_maximum_line_length: int = Field(default=8_192, ge=1, le=65_536)
+    robots_maximum_line_count: int = Field(default=10_000, ge=1, le=100_000)
+    robots_hard_maximum_response_body_bytes: int = Field(
+        default=5_000_000,
+        ge=1,
+        le=5_000_000,
+    )
 
     @field_validator("fetch_permitted_production_ports")
     @classmethod
@@ -145,6 +159,9 @@ class Settings(BaseSettings):
             if default > hard:
                 message = f"default crawl {label} cannot exceed its hard maximum"
                 raise ValueError(message)
+        if self.robots_maximum_response_body_bytes > self.robots_hard_maximum_response_body_bytes:
+            message = "default robots body limit cannot exceed its hard maximum"
+            raise ValueError(message)
         return self
 
 

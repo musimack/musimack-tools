@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from musimack_tools.crawl.cancellation import CancellationToken, NeverCancelledToken
 from musimack_tools.crawl.frontier import CrawlFrontier
+from musimack_tools.crawl.indexability import IndexabilityEvidenceParser
 from musimack_tools.crawl.limits import (
     CrawlHardLimits,
     CrawlRequestValidationError,
@@ -46,8 +47,10 @@ from musimack_tools.domain.html import (
     HtmlParseResult,
     LinkRecord,
 )
+from musimack_tools.domain.robots import CrawlPermissionDecision, CrawlPermissionReason
 
 if TYPE_CHECKING:
+    from musimack_tools.crawl.robots import RobotsCrawlSession, RobotsSessionFactory
     from musimack_tools.domain.urls import CrawlScopePolicy, NormalizedUrl
 
 _LOGGER = logging.getLogger(__name__)
@@ -116,6 +119,14 @@ class _MutableCounters:
     total_links_observed: int = 0
     links_admitted: int = 0
     links_rejected: int = 0
+    robots_origins_evaluated: int = 0
+    robots_fetches: int = 0
+    robots_cache_hits: int = 0
+    robots_unavailable_origins: int = 0
+    robots_denied_urls: int = 0
+    robots_warnings: int = 0
+    robots_bytes: int = 0
+    indexability_warnings: int = 0
 
     def freeze(self) -> CrawlCounters:
         values = {field.name: getattr(self, field.name) for field in fields(self)}
@@ -127,6 +138,7 @@ class _Runtime:
     request: CrawlRequest
     started_at: float
     frontier: CrawlFrontier
+    robots_session: RobotsCrawlSession
     state: CrawlState = CrawlState.PENDING
     counters: _MutableCounters = field(default_factory=_MutableCounters)
     records: dict[str, UrlCrawlRecord] = field(default_factory=dict)
@@ -154,6 +166,8 @@ class _FetchExecution:
     fetch_result: FetchResult | None
     started_at: float | None
     ended_at: float
+    robots_permission: CrawlPermissionDecision | None = None
+    stopping_limit: LimitKind | None = None
     cancelled_before_fetch: bool = False
     error: BaseException | None = None
 
@@ -190,11 +204,13 @@ class SingleSiteCrawlOrchestrator:
         fetcher: CrawlFetcher,
         parser: CrawlHtmlParser,
         hard_limits: CrawlHardLimits,
+        robots_service: RobotsSessionFactory,
         *,
         clock: Clock = time.monotonic,
         sleep: Sleeper = asyncio.sleep,
         observer: ProgressObserver | None = None,
         cancellation: CancellationToken | None = None,
+        indexability_parser: IndexabilityEvidenceParser | None = None,
     ) -> None:
         self._fetcher = fetcher
         self._parser = parser
@@ -203,12 +219,19 @@ class SingleSiteCrawlOrchestrator:
         self._sleep = sleep
         self._observer = observer
         self._cancellation = cancellation or NeverCancelledToken()
+        self._robots_service = robots_service
+        self._indexability = indexability_parser or IndexabilityEvidenceParser()
 
     async def crawl(self, request: CrawlRequest) -> CrawlResult:
         """Execute one crawl and return complete immutable in-memory evidence."""
         started = self._clock()
         frontier = CrawlFrontier(maximum_queued_urls=request.maximum_queued_urls)
-        runtime = _Runtime(request=request, started_at=started, frontier=frontier)
+        runtime = _Runtime(
+            request=request,
+            started_at=started,
+            frontier=frontier,
+            robots_session=self._robots_service.create_session(),
+        )
         try:
             self._hard_limits.validate(request)
         except CrawlRequestValidationError as error:
@@ -258,7 +281,14 @@ class SingleSiteCrawlOrchestrator:
                 )
                 break
             runtime.maximum_active = max(runtime.maximum_active, len(batch))
-            executions = await self._run_batch(batch, request, pacer)
+            executions = await self._run_batch(
+                batch,
+                request,
+                pacer,
+                runtime.robots_session,
+                runtime.started_at,
+                runtime.total_bytes,
+            )
             for execution in executions:
                 await self._process_execution(runtime, execution)
             await self._emit(runtime, current_depth=batch[0].best_known_depth)
@@ -277,21 +307,39 @@ class SingleSiteCrawlOrchestrator:
         )
         return result
 
-    async def _run_batch(
+    async def _run_batch(  # noqa: PLR0913 - explicit batch context avoids shared mutable state.
         self,
         batch: tuple[FrontierItem, ...],
         request: CrawlRequest,
         pacer: _OriginPacer,
+        robots_session: RobotsCrawlSession,
+        crawl_started_at: float,
+        accepted_bytes_before_batch: int,
     ) -> tuple[_FetchExecution, ...]:
-        tasks = [asyncio.create_task(self._fetch_item(item, request, pacer)) for item in batch]
+        tasks = [
+            asyncio.create_task(
+                self._fetch_item(
+                    item,
+                    request,
+                    pacer,
+                    robots_session,
+                    crawl_started_at,
+                    accepted_bytes_before_batch,
+                )
+            )
+            for item in batch
+        ]
         results = await asyncio.gather(*tasks)
         return tuple(results)
 
-    async def _fetch_item(
+    async def _fetch_item(  # noqa: PLR0911, PLR0913 - bounded stops return typed evidence.
         self,
         item: FrontierItem,
         request: CrawlRequest,
         pacer: _OriginPacer,
+        robots_session: RobotsCrawlSession,
+        crawl_started_at: float,
+        accepted_bytes_before_batch: int,
     ) -> _FetchExecution:
         if self._cancellation.is_cancelled():
             return _FetchExecution(
@@ -301,6 +349,53 @@ class SingleSiteCrawlOrchestrator:
                 ended_at=self._clock(),
                 cancelled_before_fetch=True,
             )
+        robots_started = self._clock()
+        try:
+            permission = await robots_session.evaluate(
+                item.url,
+                request.scope_policy,
+                request.correlation_id,
+            )
+        except Exception as error:  # noqa: BLE001 - injected robots boundary maps safely.
+            return _FetchExecution(item, None, robots_started, self._clock(), error=error)
+        if self._cancellation.is_cancelled():
+            return _FetchExecution(
+                item,
+                None,
+                robots_started,
+                self._clock(),
+                robots_permission=permission,
+                cancelled_before_fetch=True,
+            )
+        if self._clock() - crawl_started_at >= request.maximum_duration_seconds:
+            return _FetchExecution(
+                item,
+                None,
+                robots_started,
+                self._clock(),
+                robots_permission=permission,
+                stopping_limit=LimitKind.DURATION,
+            )
+        if (
+            accepted_bytes_before_batch + permission.newly_fetched_bytes
+            >= request.maximum_total_fetched_bytes
+        ):
+            return _FetchExecution(
+                item,
+                None,
+                robots_started,
+                self._clock(),
+                robots_permission=permission,
+                stopping_limit=LimitKind.BYTES,
+            )
+        if not permission.allowed:
+            return _FetchExecution(
+                item,
+                None,
+                robots_started,
+                self._clock(),
+                robots_permission=permission,
+            )
         started = await pacer.wait(item.url, self._cancellation)
         if started is None:
             return _FetchExecution(
@@ -308,6 +403,7 @@ class SingleSiteCrawlOrchestrator:
                 fetch_result=None,
                 started_at=None,
                 ended_at=self._clock(),
+                robots_permission=permission,
                 cancelled_before_fetch=True,
             )
         _LOGGER.info(
@@ -324,26 +420,102 @@ class SingleSiteCrawlOrchestrator:
                 request.scope_policy,
             )
         except Exception as error:  # noqa: BLE001 - worker boundary maps injected failures.
-            return _FetchExecution(item, None, started, self._clock(), error=error)
-        return _FetchExecution(item, fetch, started, self._clock())
+            return _FetchExecution(
+                item,
+                None,
+                started,
+                self._clock(),
+                robots_permission=permission,
+                error=error,
+            )
+        return _FetchExecution(
+            item,
+            fetch,
+            started,
+            self._clock(),
+            robots_permission=permission,
+        )
 
-    async def _process_execution(  # noqa: C901 - ordered crawl evidence pipeline.
+    async def _process_execution(  # noqa: C901, PLR0912, PLR0915 - ordered evidence pipeline.
         self,
         runtime: _Runtime,
         execution: _FetchExecution,
     ) -> None:
-        if execution.error is not None:
-            self._record_worker_failure(runtime, execution.item, execution.error)
-            return
         item = execution.item
+        permission = execution.robots_permission
+        if permission is not None:
+            self._account_robots(runtime, permission)
+        if execution.error is not None:
+            self._record_worker_failure(
+                runtime,
+                item,
+                execution.error,
+                robots_permission=permission,
+            )
+            return
+        if execution.stopping_limit is not None:
+            runtime.frontier.complete(item.url.normalized)
+            reason = LinkAdmissionReason.CRAWL_STOPPING
+            runtime.records[item.url.normalized] = _robots_skipped_record(
+                item,
+                reason,
+                execution.ended_at,
+                permission,
+            )
+            if execution.stopping_limit is LimitKind.DURATION:
+                self._set_limit(
+                    runtime,
+                    LimitKind.DURATION,
+                    CrawlErrorCode.DURATION_LIMIT_REACHED,
+                    runtime.request.maximum_duration_seconds,
+                    self._elapsed(runtime),
+                    "The maximum crawl duration was reached during robots evaluation",
+                )
+            else:
+                self._set_limit(
+                    runtime,
+                    LimitKind.BYTES,
+                    CrawlErrorCode.BYTE_LIMIT_REACHED,
+                    runtime.request.maximum_total_fetched_bytes,
+                    runtime.total_bytes,
+                    "The maximum crawl byte count was reached during robots evaluation",
+                )
+            return
         if execution.cancelled_before_fetch:
             runtime.frontier.complete(item.url.normalized)
-            runtime.records[item.url.normalized] = _skipped_record(
+            runtime.records[item.url.normalized] = _robots_skipped_record(
                 item,
                 LinkAdmissionReason.CANCELLED,
                 execution.ended_at,
+                permission,
             )
             self._request_cancellation(runtime)
+            return
+
+        if permission is not None and not permission.allowed:
+            runtime.frontier.complete(item.url.normalized)
+            reason = (
+                LinkAdmissionReason.ROBOTS_UNAVAILABLE
+                if permission.temporary_unavailability
+                else LinkAdmissionReason.ROBOTS_DENIED
+            )
+            runtime.records[item.url.normalized] = _robots_skipped_record(
+                item,
+                reason,
+                execution.ended_at,
+                permission,
+            )
+            if permission.temporary_unavailability and not any(
+                error.code is CrawlErrorCode.ROBOTS_UNAVAILABLE and error.url == item.url.origin
+                for error in runtime.errors
+            ):
+                runtime.errors.append(
+                    CrawlError(
+                        CrawlErrorCode.ROBOTS_UNAVAILABLE,
+                        "robots.txt was temporarily unavailable for an origin",
+                        url=item.url.origin,
+                    )
+                )
             return
 
         fetch = cast("FetchResult", execution.fetch_result)
@@ -356,12 +528,21 @@ class SingleSiteCrawlOrchestrator:
             runtime.counters.fetch_failures += 1
 
         self._check_post_fetch_stopping(runtime)
+        x_robots = self._indexability.parse_x_robots_tag(
+            fetch.headers.x_robots_tag if fetch.headers is not None else ()
+        )
         parse: HtmlParseResult | None = None
         if fetch.outcome is FetchOutcome.SUCCESS and not self._cancellation.is_cancelled():
             try:
                 parse = self._parser.parse(fetch, scope=runtime.request.scope_policy)
             except Exception as error:  # noqa: BLE001 - boundary maps unexpected parser failures.
-                self._record_worker_failure(runtime, item, error, fetch=fetch)
+                self._record_worker_failure(
+                    runtime,
+                    item,
+                    error,
+                    fetch=fetch,
+                    robots_permission=permission,
+                )
                 return
             if parse.outcome is HtmlParseOutcome.PARSED:
                 runtime.counters.html_pages_parsed += 1
@@ -369,6 +550,11 @@ class SingleSiteCrawlOrchestrator:
                 runtime.counters.parser_skips += 1
                 if parse.reason_code is HtmlParseReasonCode.NON_HTML_CONTENT:
                     runtime.counters.non_html_responses += 1
+        combined = self._indexability.combine(
+            parse.meta_robots if parse is not None else (),
+            x_robots,
+        )
+        runtime.counters.indexability_warnings += len(combined.warnings)
 
         if self._cancellation.is_cancelled():
             self._request_cancellation(runtime)
@@ -408,6 +594,11 @@ class SingleSiteCrawlOrchestrator:
             started_at_seconds=execution.started_at,
             ended_at_seconds=execution.ended_at,
             accepted_response_bytes=fetch.actual_bytes_read,
+            robots_permission=permission,
+            x_robots_tag=x_robots,
+            indexability_evidence=combined,
+            robots_warning_count=len(permission.warnings) if permission is not None else 0,
+            indexability_warning_count=len(combined.warnings),
         )
         self._deduplicate_redirect_final(runtime, item, final_url)
         _LOGGER.info(
@@ -700,6 +891,7 @@ class SingleSiteCrawlOrchestrator:
         error: BaseException,
         *,
         fetch: FetchResult | None = None,
+        robots_permission: CrawlPermissionDecision | None = None,
     ) -> None:
         runtime.frontier.complete(item.url.normalized)
         runtime.records[item.url.normalized] = UrlCrawlRecord(
@@ -722,6 +914,10 @@ class SingleSiteCrawlOrchestrator:
             started_at_seconds=None,
             ended_at_seconds=self._clock(),
             accepted_response_bytes=fetch.actual_bytes_read if fetch is not None else 0,
+            robots_permission=robots_permission,
+            robots_warning_count=(
+                len(robots_permission.warnings) if robots_permission is not None else 0
+            ),
         )
         runtime.errors.append(
             CrawlError(
@@ -754,6 +950,23 @@ class SingleSiteCrawlOrchestrator:
             CrawlState.LIMIT_REACHED,
         }:
             runtime.transition(CrawlState.FAILED)
+
+    @staticmethod
+    def _account_robots(runtime: _Runtime, permission: CrawlPermissionDecision) -> None:
+        if permission.reason_code is CrawlPermissionReason.ALLOWED_TEST_POLICY:
+            return
+        if permission.cache_hit:
+            runtime.counters.robots_cache_hits += 1
+        else:
+            runtime.counters.robots_origins_evaluated += 1
+            runtime.counters.robots_fetches += 1
+            runtime.counters.robots_bytes += permission.newly_fetched_bytes
+            runtime.total_bytes += permission.newly_fetched_bytes
+            runtime.counters.robots_warnings += len(permission.warnings)
+            if permission.temporary_unavailability:
+                runtime.counters.robots_unavailable_origins += 1
+        if not permission.allowed:
+            runtime.counters.robots_denied_urls += 1
 
     async def _emit(self, runtime: _Runtime, *, current_depth: int | None) -> None:
         if self._observer is None:
@@ -833,6 +1046,7 @@ class SingleSiteCrawlOrchestrator:
             maximum_observed_queue_size=runtime.frontier.maximum_observed_queue_size,
             maximum_active_worker_count=runtime.maximum_active,
             configuration=configuration_snapshot(runtime.request),
+            robots_origins=runtime.robots_session.origin_records(),
         )
 
     def _elapsed(self, runtime: _Runtime) -> float:
@@ -888,6 +1102,41 @@ def _skipped_record(
         started_at_seconds=None,
         ended_at_seconds=ended_at,
         accepted_response_bytes=0,
+    )
+
+
+def _robots_skipped_record(
+    item: FrontierItem,
+    reason: LinkAdmissionReason,
+    ended_at: float,
+    permission: CrawlPermissionDecision | None,
+) -> UrlCrawlRecord:
+    return UrlCrawlRecord(
+        requested_url=item.url.normalized,
+        first_discovered_value=item.first_discovered_value,
+        first_referrer=item.first_referrer,
+        referring_urls=item.referring_urls,
+        discovery_depth=item.first_discovered_depth,
+        best_known_depth=item.best_known_depth,
+        discovery_order=item.discovery_order,
+        frontier_state=FrontierState.COMPLETED,
+        outcome=(
+            UrlCrawlOutcome.ROBOTS_DENIED
+            if reason in {LinkAdmissionReason.ROBOTS_DENIED, LinkAdmissionReason.ROBOTS_UNAVAILABLE}
+            else UrlCrawlOutcome.SKIPPED
+        ),
+        fetch_result=None,
+        parse_result=None,
+        final_fetched_url=None,
+        discovered_link_count=0,
+        admitted_link_count=0,
+        rejected_link_count=0,
+        skip_reason=reason,
+        started_at_seconds=None,
+        ended_at_seconds=ended_at,
+        accepted_response_bytes=0,
+        robots_permission=permission,
+        robots_warning_count=len(permission.warnings) if permission is not None else 0,
     )
 
 

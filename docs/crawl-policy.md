@@ -285,13 +285,102 @@ rejected links. Progress snapshots are immutable, best-effort views; observer fa
 controlled errors and cannot drive or abort worker execution.
 
 Stable crawl-level error codes are `invalid_crawl_request`, `seed_scope_denied`,
+`robots_unavailable`,
 `url_limit_reached`, `duration_limit_reached`, `byte_limit_reached`, `queue_limit_reached`,
 `cancelled`, `frontier_invariant_violation`, `worker_failure`, `progress_observer_failure`, and
 `unexpected_orchestration_error`. Stable link-admission reasons are `admitted`,
 `updated_better_depth`, `duplicate_url`, `invalid_url`, `unsupported_scheme`, `empty_href`,
 `fragment_only`, `same_document`, `scope_denied`, `depth_exceeded`, `excluded_by_rule`,
 `query_url_disallowed`, `url_limit_reached`, `queue_limit_reached`, `crawl_stopping`,
-`redirect_final_already_seen`, and `cancelled`.
+`redirect_final_already_seen`, `cancelled`, `robots_denied`, and `robots_unavailable`.
+
+## Robots retrieval and response policy
+
+For each frontier origin, the robots URL is the normalized
+`scheme://host[:effective-non-default-port]/robots.txt`. Document paths, queries, bases, and
+canonicals never affect that URL. Retrieval uses the accepted safe GET boundary, including its
+scope, DNS, address, port, redirect, timeout, proxy, concurrency, and hard streaming limits.
+
+Status behavior is explicit:
+
+- 200: parse an accepted plain-text body.
+- 204: no policy; allow.
+- 400 and 404: policy not found; allow with evidence.
+- 401 and 403: conservatively deny the origin.
+- 429 and 500–599: temporarily unavailable; deny ordinary page requests for this crawl.
+- transport and timeout failures: temporarily unavailable and denied.
+- oversized, unsupported status, or invalid content type: invalid evidence and denied.
+
+Missing Content-Type, `text/plain`, and `application/octet-stream` are accepted. Other media types,
+including HTML, are not parsed. Invalid UTF-8 is replacement-decoded with a warning. The default
+robots-specific body limit is 1,000,000 bytes with a 5,000,000-byte hard maximum. This additional
+limit is checked on the bounded fetch evidence; the accepted fetcher may have read up to its own
+hard stream limit first.
+
+Every result is cached per normalized origin for one crawl. Concurrent requests share one in-flight
+retrieval. Successful, missing, forbidden, temporary-failure, invalid, and oversized results are
+cached. No decision is cached across crawls. Accepted robots bytes count toward total crawl bytes
+and also appear in `robots_bytes`.
+
+Robots permission is a required injected orchestrator dependency. Production composition must
+explicitly provide `RobotsTxtService`; omission is a construction error and there is no runtime
+allow-all default. Tests unrelated to robots may explicitly provide a named allow-all service
+defined only in test code.
+
+## Robots parsing and matching
+
+Parsing is line-oriented and bounded to 8,192 characters per line and 10,000 lines by default.
+UTF-8 BOM, blank lines, comments, inline comments, and case-insensitive field names are handled.
+Malformed lines and unknown directives remain warning evidence. User-agent, Allow, Disallow,
+Crawl-delay, and Sitemap are recognized; Sitemap values are never fetched or placed in the
+frontier.
+
+Consecutive User-agent fields before group directives belong to one group. A User-agent field after
+group directives starts a new group. Later groups are never merged merely because they repeat an
+agent value. Matching uses the case-insensitive `MusimackSEOToolkit` product token. The earliest
+group with the longest matching non-wildcard agent token wins; `*` has specificity zero and is the
+fallback. When no group matches, crawling is allowed with `robots_no_matching_group` evidence.
+
+Rules match the normalized, case-sensitive path plus `?query` when present. Query ordering and
+percent-encoding remain exactly as normalized. `*` matches zero or more characters and a final `$`
+anchors the target end. The matching specificity is the rule length excluding wildcards and the
+terminal anchor. The longest match wins; Allow wins equal-specificity ties; earlier source order is
+the final tie-breaker. Empty Disallow has no effect. `/` denies every path.
+
+Crawl-delay accepts finite non-negative numbers and records invalid or conflicting values. It is
+evidence only: configured per-origin pacing remains authoritative, and robots can never reduce the
+server delay. Every valid absolute HTTP(S) Sitemap directive is normalized and retained, while
+relative and unsupported values receive warnings. Sitemap URLs do not change scope or frontier
+admission.
+
+Stable robots warning codes are `robots_not_found`, `robots_access_denied`,
+`robots_temporarily_unavailable`, `robots_fetch_failed`, `robots_response_too_large`,
+`robots_invalid_content_type`, `robots_decode_warning`, `robots_malformed_line`,
+`robots_line_too_long`, `robots_line_limit_exceeded`, `robots_unknown_directive`,
+`robots_invalid_user_agent`, `robots_invalid_rule`, `robots_invalid_crawl_delay`,
+`robots_conflicting_crawl_delay`, `robots_invalid_sitemap`, and `robots_no_matching_group`.
+
+Stable permission reasons are `allowed_by_allow_rule`, `denied_by_disallow_rule`,
+`allowed_no_matching_rule`, `allowed_no_robots_file`, `denied_robots_access_forbidden`,
+`denied_robots_temporarily_unavailable`, `denied_invalid_robots_response`,
+`allowed_no_matching_group`, and the explicit injected-test-policy reason `allowed_test_policy`.
+
+## X-Robots-Tag and combined indexability evidence
+
+Repeated X-Robots-Tag values remain ordered. Header lookup is case-insensitive in the accepted
+fetcher. Generic values and crawler-prefixed values such as `googlebot: noindex, nofollow` remain
+separate records. Known simple and parameterized directives match the existing meta robots set;
+unknown, empty, and invalid directives remain warnings.
+
+The combined view preserves all meta and header records. It detects index/noindex,
+follow/nofollow, parameter-value, meta/header, and generic/crawler-specific differences. It never
+collapses evidence into an `indexable` boolean and never decides sitemap eligibility. Noindex,
+nofollow, and canonical evidence still do not suppress frontier discovery.
+
+Stable indexability warning codes are `empty_x_robots_tag`, `invalid_x_robots_tag`,
+`unknown_x_robots_directive`, `conflicting_x_robots_directives`,
+`meta_header_index_conflict`, `meta_header_follow_conflict`, `parameter_value_conflict`, and
+`crawler_specific_directive_difference`.
 
 ## Current limitations and deferred controls
 
@@ -300,9 +389,11 @@ parse boundaries. It is not exposed through the API. The following remain deferr
 
 - connected-peer verification and DNS-answer pinning
 - deployment-level egress enforcement
-- `robots.txt`, X-Robots-Tag interpretation, and final robots precedence
 - canonical, duplicate, indexability, and sitemap decisions
-- robots-aware admission and crawl-delay interpretation
+- final search-engine-specific directive precedence and sitemap eligibility
+- enforcement of robots Crawl-delay values
+- a pre-redirect robots callback inside ordinary page redirect sequences; the accepted fetcher
+  still revalidates scope and network safety at every redirect target
 - background job ownership, persistence, durable progress streaming, restart recovery, XML, and CSV
 
 No caller should treat scope `decision.allowed` as sufficient permission to connect. The safe
