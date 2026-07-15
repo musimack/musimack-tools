@@ -240,17 +240,70 @@ Every warning has a severity and controlled explanation plus an occurrence index
 query-free observed value where practical. Warnings do not contain response bodies, headers,
 credentials, or full sensitive query strings.
 
+## Single-site frontier and admission policy
+
+The crawl key is the accepted normalized absolute URL. Fragments therefore collapse, while path
+case, query order, repeated keys, blank query values, and trailing-slash variants remain distinct.
+The frontier retains first discovery evidence, bounded referring URLs, first and best-known depth,
+and stable discovery order. Pending work is ordered by best depth and then discovery order. A
+better-depth rediscovery updates a pending item; active or completed URLs are never requeued.
+
+Only links already extracted by the HTML boundary are considered. Empty, invalid, unsupported,
+JavaScript, fragment-only, and same-document references are rejected with stable evidence. An
+HTTP(S) candidate must pass the accepted crawl-scope policy, depth bound, optional query policy,
+and explicit exclusion rules. Current exclusion rules support exact paths, path prefixes, and
+query-parameter names. They are deterministic URL-string policies, not robots or indexability
+decisions.
+
+`rel=nofollow` is retained on discovery evidence but is admitted under the current policy. A
+canonical is metadata evidence and never substitutes for a discovered URL. When a fetched URL
+redirects to a normalized final URL already pending, the redundant pending entry is skipped while
+both the redirect and URL records remain available.
+
+## Orchestration resources and lifecycle
+
+One breadth-first depth batch is active at a time. Fetches inside the batch are asynchronous and
+bounded by the per-crawl concurrency setting; evidence is processed in stable frontier order.
+Request starts are paced per origin. Pacing does not replace the safe fetcher's own connection,
+timeout, response-size, DNS, redirect, and network-concurrency controls.
+
+Validated crawl requests have limits for unique normalized URLs, depth, total elapsed duration,
+total accepted response bytes, concurrent fetches, pending queue size, and minimum per-origin
+delay. Server hard maxima cannot be overridden by ordinary request values. A per-response fetch
+size failure remains separate from the aggregate crawl-byte limit. Limit events record the kind,
+stable code, configured bound, observed value, and elapsed time.
+
+Cancellation is cooperative and independently injectable. Once observed, no new URL is fetched;
+already returned evidence is retained and pending records are marked skipped. Terminal precedence
+is: an orchestration invariant or worker failure produces `failed`; otherwise cancellation produces
+`cancelled`; otherwise an enforced resource stop produces `limit_reached`; otherwise recorded
+recoverable errors produce `completed_with_errors`; otherwise the result is `completed`.
+
+Counters distinguish unique URLs, queued and fetched URLs, fetch outcomes, parsed and skipped
+responses, scope/depth/rule exclusions, duplicates, redirects, observed links, and admitted or
+rejected links. Progress snapshots are immutable, best-effort views; observer failures become
+controlled errors and cannot drive or abort worker execution.
+
+Stable crawl-level error codes are `invalid_crawl_request`, `seed_scope_denied`,
+`url_limit_reached`, `duration_limit_reached`, `byte_limit_reached`, `queue_limit_reached`,
+`cancelled`, `frontier_invariant_violation`, `worker_failure`, `progress_observer_failure`, and
+`unexpected_orchestration_error`. Stable link-admission reasons are `admitted`,
+`updated_better_depth`, `duplicate_url`, `invalid_url`, `unsupported_scheme`, `empty_href`,
+`fragment_only`, `same_document`, `scope_denied`, `depth_exceeded`, `excluded_by_rule`,
+`query_url_disallowed`, `url_limit_reached`, `queue_limit_reached`, `crawl_stopping`,
+`redirect_final_already_seen`, and `cancelled`.
+
 ## Current limitations and deferred controls
 
-The current fetcher and parser handle one starting URL, bounded redirects, and one retained HTML
-document only. The following remain deferred:
+The internal orchestrator can traverse one approved site in memory through the accepted fetch and
+parse boundaries. It is not exposed through the API. The following remain deferred:
 
 - connected-peer verification and DNS-answer pinning
 - deployment-level egress enforcement
 - `robots.txt`, X-Robots-Tag interpretation, and final robots precedence
-- crawl-frontier rate scheduling beyond request concurrency bounds
 - canonical, duplicate, indexability, and sitemap decisions
-- background jobs, persistence, progress, cancellation, XML, and CSV
+- robots-aware admission and crawl-delay interpretation
+- background job ownership, persistence, durable progress streaming, restart recovery, XML, and CSV
 
 No caller should treat scope `decision.allowed` as sufficient permission to connect. The safe
 fetcher combines it with the current DNS, address, port, redirect, time, and resource controls;

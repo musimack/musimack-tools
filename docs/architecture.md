@@ -86,6 +86,39 @@ The parser emits query-free summaries only and is intentionally not exposed thro
 A future crawl frontier may pass each successful bounded fetch into this layer, but must own
 scheduling, deduplication, and admission separately.
 
+## In-memory crawl orchestration boundary
+
+The fourth backend batch composes the accepted fetch and parse boundaries without changing them:
+
+- `domain/crawl.py` owns immutable crawl requests, lifecycle states, URL records, discovery
+  decisions, counters, progress snapshots, limit events, cancellation evidence, and results.
+- `crawl/frontier.py` owns deterministic normalized-URL deduplication and pending ordering.
+- `crawl/limits.py` validates caller-selected bounds against immutable server hard maxima.
+- `crawl/cancellation.py` supplies a small injectable cooperative-cancellation protocol.
+- `crawl/orchestrator.py` coordinates frontier batches, fetch workers, HTML parsing, link
+  admission, pacing, progress observation, and terminal evidence.
+
+The frontier is breadth-first by best-known depth and stable discovery order. Only one depth is
+active at a time; URLs at that depth may fetch concurrently up to the validated per-crawl worker
+limit. Results are processed in frontier order so network completion order cannot change link
+admission order. Request starts for the same normalized origin are separated by the configured
+minimum delay. Different origins pace independently.
+
+The orchestrator depends on narrow fetcher and parser protocols rather than their concrete
+implementations. Tests inject a fake fetcher, clock, sleep function, cancellation token, and
+observer. Production composition can use `SafeSingleUrlFetcher` and `HtmlMetadataParser`, so every
+actual request still passes the existing scope, DNS, address, redirect, timeout, and byte controls.
+
+Cancellation is cooperative: active awaits are allowed to return, their evidence is retained, no
+new fetch is started after cancellation is observed, and remaining pending entries become typed
+skips. Observer failures are recorded but isolated from workers. Unexpected worker or parser
+exceptions become controlled crawl errors and a failed terminal result rather than escaping with
+partial mutable state.
+
+All crawl state is process memory. There is no durable job identity, restart recovery, public crawl
+endpoint, progress stream, persistence repository, or export consumer. Those boundaries must be
+added separately rather than embedded in the frontier.
+
 ## Future boundaries
 
 ### Frontend
@@ -96,10 +129,10 @@ on the FastAPI OpenAPI contract and use server-state-oriented data fetching.
 
 ### Reusable crawler core
 
-Future robots evaluation, indexability analysis, and the crawl frontier belong behind reusable
-crawler-core interfaces. The implemented fetch and HTML boundaries supply bounded response,
-redirect, metadata, and link evidence. Persistence, cancellation, and progress reporting should
-remain injected so the core stays reusable by broken-link, metadata, canonical, redirect,
+Future robots evaluation and indexability analysis belong behind reusable crawler-core
+interfaces. The implemented fetch, HTML, and in-memory orchestration boundaries supply bounded
+response, redirect, metadata, link, and traversal evidence. Persistence and progress delivery
+should remain injected so the core stays reusable by broken-link, metadata, canonical, redirect,
 inventory, internal-link, image, schema, indexability, and migration-QA modules.
 
 ### Persistence
@@ -133,7 +166,8 @@ that an in-scope string is safe to request.
 
 - Unit tests cover normalization, scope, settings, DNS, address safety, streaming limits,
   retries, redirect chains, content gating, decoding, malformed HTML, metadata conflicts,
-  base/canonical resolution, robots tokens, links, and stable evidence.
+  base/canonical resolution, robots tokens, links, frontier ordering, admission, limits,
+  cancellation, concurrency, pacing, and stable crawl evidence.
 - FastAPI's in-process test client covers the health API.
 - An automatic test fixture blocks DNS resolution and non-loopback socket connections; Windows
   event-loop loopback plumbing remains available to the in-process test client.

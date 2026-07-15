@@ -73,6 +73,25 @@ class Settings(BaseSettings):
     fetch_http_allowed: bool = True
     fetch_https_allowed: bool = True
     fetch_trust_environment_proxies: bool = False
+    crawl_maximum_duration_seconds: float = Field(default=1_800, gt=0, le=7_200)
+    crawl_maximum_total_fetched_bytes: int = Field(
+        default=500_000_000,
+        ge=1,
+        le=5_000_000_000,
+    )
+    crawl_maximum_concurrent_fetches: int = Field(default=4, ge=1, le=16)
+    crawl_maximum_queued_urls: int = Field(default=10_000, ge=1, le=100_000)
+    crawl_query_urls_allowed: bool = True
+    crawl_hard_maximum_urls: int = Field(default=50_000, ge=1, le=50_000)
+    crawl_hard_maximum_depth: int = Field(default=50, ge=0, le=50)
+    crawl_hard_maximum_duration_seconds: float = Field(default=7_200, gt=0, le=7_200)
+    crawl_hard_maximum_total_fetched_bytes: int = Field(
+        default=5_000_000_000,
+        ge=1,
+        le=5_000_000_000,
+    )
+    crawl_hard_maximum_concurrent_fetches: int = Field(default=16, ge=1, le=16)
+    crawl_hard_maximum_queued_urls: int = Field(default=100_000, ge=1, le=100_000)
 
     @field_validator("fetch_permitted_production_ports")
     @classmethod
@@ -98,6 +117,34 @@ class Settings(BaseSettings):
         if not self.fetch_http_allowed and not self.fetch_https_allowed:
             message = "at least one fetch scheme must be allowed"
             raise ValueError(message)
+        crawl_pairs = (
+            (self.default_maximum_urls, self.crawl_hard_maximum_urls, "URLs"),
+            (self.default_maximum_crawl_depth, self.crawl_hard_maximum_depth, "depth"),
+            (
+                self.crawl_maximum_duration_seconds,
+                self.crawl_hard_maximum_duration_seconds,
+                "duration",
+            ),
+            (
+                self.crawl_maximum_total_fetched_bytes,
+                self.crawl_hard_maximum_total_fetched_bytes,
+                "bytes",
+            ),
+            (
+                self.crawl_maximum_concurrent_fetches,
+                self.crawl_hard_maximum_concurrent_fetches,
+                "concurrency",
+            ),
+            (
+                self.crawl_maximum_queued_urls,
+                self.crawl_hard_maximum_queued_urls,
+                "queue",
+            ),
+        )
+        for default, hard, label in crawl_pairs:
+            if default > hard:
+                message = f"default crawl {label} cannot exceed its hard maximum"
+                raise ValueError(message)
         return self
 
 

@@ -21,15 +21,17 @@ This first implementation batch provides:
 - Deterministic HTML content gating and character decoding
 - Typed title, meta-description, canonical, base, meta robots, and navigable-link evidence
 - Stable parse warnings that preserve duplicate and conflicting observations
+- A deterministic breadth-first, in-memory single-site crawl frontier
+- Bounded asynchronous fetch workers with per-origin request pacing
+- Typed crawl progress, cancellation, limits, counters, and URL-level evidence
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
-It deliberately does **not** provide a crawl frontier, link queueing, `robots.txt`, X-Robots-Tag
-interpretation, sitemap decisions, public-site crawling, background jobs, persistence, XML/CSV exports,
-authentication, frontend application code, browser automation, or Docker configuration.
-There is no whole-site crawler and no public arbitrary-fetch API in this repository. Safe fetch
-and HTML parsing are internal Python boundaries exercised by deterministic tests. The parser
-consumes already-retained bounded response evidence and cannot make a network request.
+It deliberately does **not** provide `robots.txt`, X-Robots-Tag interpretation, sitemap decisions,
+public crawl or fetch API endpoints, background jobs, persistence, XML/CSV exports, authentication,
+frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
+an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
+inert HTML evidence; they do not contact public HTTP services or DNS.
 
 ## Repository layout
 
@@ -130,9 +132,28 @@ Copy-Item .env.example .env
 ```
 
 `.env` is intentionally ignored. No setting in this batch is secret or requires a credential.
-Numeric crawl defaults are validated even though no crawler currently consumes them. The
-configured user agent is `MusimackSEOToolkit/0.1`; add a legitimate contact reference before
-live crawling is authorized.
+Numeric crawl defaults and absolute server hard limits are validated before orchestration. The
+configured user agent is `MusimackSEOToolkit/0.1`; add a legitimate contact reference before live
+crawling is authorized.
+
+## In-memory crawl orchestration
+
+`SingleSiteCrawlOrchestrator` accepts a normalized seed, an accepted scope policy, and bounded
+request settings. It processes one breadth-first depth at a time while fetching URLs within that
+depth concurrently. The normalized absolute URL is the sole deduplication key: query order,
+repeated query keys, path case, and trailing slashes retain their accepted normalization semantics.
+
+Every parsed navigable link receives explicit admission evidence. Scope, maximum depth, query
+policy, configured exclusions, URL count, and pending-queue bounds are applied before admission.
+`rel=nofollow` is retained as evidence but does not currently block discovery. Canonical evidence
+does not replace a frontier URL. Redirect final URLs are retained and can suppress an already
+pending duplicate destination.
+
+The orchestrator enforces total duration and accepted-byte limits, worker concurrency, and a
+minimum start delay per origin. Cooperative cancellation stops new work and retains completed and
+skipped records. Progress observers receive immutable snapshots and cannot control execution.
+Results remain entirely in memory; no job service, persistence, API endpoint, or restart recovery
+exists yet.
 
 ## Crawl-safety status
 
@@ -166,7 +187,7 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 
 ## Next recommended development batch
 
-The next bounded batch should evaluate page indexability as a pure evidence layer over HTTP
-status, canonical evidence, meta robots, and retained X-Robots-Tag headers. It should keep
-metadata quality warnings separate from sitemap eligibility and must not add a crawl frontier,
-public arbitrary-URL endpoint, persistence, or exports without separate authorization.
+The next bounded batch should evaluate page indexability as a pure evidence layer over retained
+HTTP status, canonical evidence, meta robots, and X-Robots-Tag headers. It should keep metadata
+quality warnings separate from sitemap eligibility and consume immutable crawl evidence without
+adding persistence, public crawl APIs, background jobs, or exports unless separately authorized.

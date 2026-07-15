@@ -34,6 +34,17 @@ def test_settings_defaults_are_conservative() -> None:
     assert settings.fetch_http_allowed is True
     assert settings.fetch_https_allowed is True
     assert settings.fetch_trust_environment_proxies is False
+    assert settings.crawl_maximum_duration_seconds == 1_800
+    assert settings.crawl_maximum_total_fetched_bytes == 500_000_000
+    assert settings.crawl_maximum_concurrent_fetches == 4
+    assert settings.crawl_maximum_queued_urls == 10_000
+    assert settings.crawl_query_urls_allowed is True
+    assert settings.crawl_hard_maximum_urls == 50_000
+    assert settings.crawl_hard_maximum_depth == 50
+    assert settings.crawl_hard_maximum_duration_seconds == 7_200
+    assert settings.crawl_hard_maximum_total_fetched_bytes == 5_000_000_000
+    assert settings.crawl_hard_maximum_concurrent_fetches == 16
+    assert settings.crawl_hard_maximum_queued_urls == 100_000
 
 
 @pytest.mark.parametrize(
@@ -50,6 +61,16 @@ def test_settings_defaults_are_conservative() -> None:
         ("fetch_maximum_response_header_bytes", 100),
         ("fetch_maximum_dns_answers", 65),
         ("fetch_retry_count", 4),
+        ("crawl_maximum_duration_seconds", 0),
+        ("crawl_maximum_total_fetched_bytes", 0),
+        ("crawl_maximum_concurrent_fetches", 17),
+        ("crawl_maximum_queued_urls", 100_001),
+        ("crawl_hard_maximum_urls", 50_001),
+        ("crawl_hard_maximum_depth", 51),
+        ("crawl_hard_maximum_duration_seconds", 7_201),
+        ("crawl_hard_maximum_total_fetched_bytes", 5_000_000_001),
+        ("crawl_hard_maximum_concurrent_fetches", 17),
+        ("crawl_hard_maximum_queued_urls", 100_001),
     ],
 )
 def test_settings_reject_out_of_bounds_values(field: str, value: int) -> None:
@@ -76,3 +97,34 @@ def test_settings_reject_invalid_fetch_port_lists(ports: tuple[int, ...]) -> Non
 def test_settings_require_at_least_one_fetch_scheme() -> None:
     with pytest.raises(ValidationError, match="at least one"):
         Settings.model_validate({"fetch_http_allowed": False, "fetch_https_allowed": False})
+
+
+@pytest.mark.parametrize(
+    ("default_field", "hard_field", "default_value", "hard_value"),
+    [
+        ("default_maximum_urls", "crawl_hard_maximum_urls", 101, 100),
+        ("default_maximum_crawl_depth", "crawl_hard_maximum_depth", 11, 10),
+        ("crawl_maximum_duration_seconds", "crawl_hard_maximum_duration_seconds", 11, 10),
+        (
+            "crawl_maximum_total_fetched_bytes",
+            "crawl_hard_maximum_total_fetched_bytes",
+            11,
+            10,
+        ),
+        (
+            "crawl_maximum_concurrent_fetches",
+            "crawl_hard_maximum_concurrent_fetches",
+            5,
+            4,
+        ),
+        ("crawl_maximum_queued_urls", "crawl_hard_maximum_queued_urls", 11, 10),
+    ],
+)
+def test_crawl_defaults_cannot_exceed_hard_limits(
+    default_field: str,
+    hard_field: str,
+    default_value: int,
+    hard_value: int,
+) -> None:
+    with pytest.raises(ValidationError, match="hard maximum"):
+        Settings.model_validate({default_field: default_value, hard_field: hard_value})
