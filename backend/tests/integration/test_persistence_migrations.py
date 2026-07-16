@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from musimack_tools.persistence.migrations import (
     ARTIFACT_STORAGE_REVISION,
+    AUTHENTICATION_AUTHORIZATION_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
@@ -108,6 +109,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "summary_metadata",
             "warnings",
             "workers",
+            "users",
+            "user_credentials",
+            "authentication_sessions",
+            "authentication_audit_events",
+            "login_attempts",
         }
         foreign_keys = {
             (table, constraint["referred_table"])
@@ -140,6 +146,8 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
+            ("user_credentials", "users"),
+            ("authentication_sessions", "users"),
         }
         unique_names = {
             constraint["name"]
@@ -185,6 +193,13 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert artifact_script.revision == "0003_artifact_storage"
     assert artifact_script.down_revision == DURABLE_EXECUTION_REVISION
     assert artifact_script.doc == "add durable artifact storage"
+    authentication_script = ScriptDirectory.from_config(config).get_revision(
+        AUTHENTICATION_AUTHORIZATION_REVISION
+    )
+    assert authentication_script is not None
+    assert authentication_script.revision == "0005_authentication_authorization"
+    assert authentication_script.down_revision == "0004_history_api"
+    assert authentication_script.doc == "add internal authentication and authorization"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -198,6 +213,8 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE durable_jobs" in sql
     assert "CREATE TABLE job_leases" in sql
     assert "CREATE TABLE artifact_records" in sql
+    assert "CREATE TABLE users" in sql
+    assert "CREATE TABLE authentication_sessions" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -212,6 +229,43 @@ def test_upgrade_is_idempotent_at_head(tmp_path: Path) -> None:
     url = _url(database)
     upgrade_to_head(url, backend_root=BACKEND_ROOT)
     upgrade_to_head(url, backend_root=BACKEND_ROOT)
+    engine = create_engine(url)
+    try:
+        assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_authentication_migration_downgrades_only_phase_27_tables(tmp_path: Path) -> None:
+    database = tmp_path / "authentication-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, AUTHENTICATION_AUTHORIZATION_REVISION)
+    engine = create_engine(url)
+    try:
+        inspector = inspect(engine)
+        assert current_revision(engine) == AUTHENTICATION_AUTHORIZATION_REVISION
+        assert "authentication_sessions" in inspector.get_table_names()
+        assert {index["name"] for index in inspector.get_indexes("authentication_sessions")} >= {
+            "ix_sessions_user",
+            "ix_sessions_expiry",
+            "ix_sessions_revoked",
+        }
+        assert {constraint["name"] for constraint in inspector.get_unique_constraints("users")} == {
+            "uq_users_normalized_email"
+        }
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, "0004_history_api")
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert current_revision(engine) == "0004_history_api"
+        assert "jobs" in tables and "artifact_records" in tables
+        assert "users" not in tables and "authentication_sessions" not in tables
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, AUTHENTICATION_AUTHORIZATION_REVISION)
     engine = create_engine(url)
     try:
         assert schema_is_current(engine)

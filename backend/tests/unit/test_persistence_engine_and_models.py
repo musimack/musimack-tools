@@ -150,6 +150,11 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "artifact_cleanup_events",
             "artifact_reconciliation_events",
             "workers",
+            "users",
+            "user_credentials",
+            "authentication_sessions",
+            "authentication_audit_events",
+            "login_attempts",
         }
     finally:
         runtime.dispose()

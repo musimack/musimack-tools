@@ -736,6 +736,34 @@ of Phase 16 authority and never duplicate artifact lifecycle decisions. Revision
 `0004_history_api` adds nullable wall-clock evidence and only indexes exercised by history queries;
 it creates no duplicate history tables.
 
+## Internal users, sessions, and authorization
+
+Phase 27 adds opt-in, versioned password authentication for the future private frontend. The
+accepted modes are `shared_bearer`, `user_session`, and `hybrid`; expansion is disabled and the
+existing shared bearer remains authoritative by default. Explicit user-session composition needs
+current SQLite persistence plus an injected authentication service. There is no default user,
+password, import-time bootstrap, public bootstrap route, or generated secret.
+
+Passwords use PBKDF2-HMAC-SHA256 with a random salt and a 600,000-iteration production floor.
+Browser sessions use an opaque `session-<64 lowercase hex>` token in the `musimack_session`
+HttpOnly, Secure, SameSite=Strict cookie. Only a SHA-256 token hash is persisted. Role changes,
+deactivation, disablement, and password changes invalidate stale sessions. Login attempts and
+authentication audit events are durable and bounded; cleanup is an explicit service operation.
+
+Authorization is centralized and deny-by-default for the exact `administrator`, `operator`, and
+`viewer` roles. The compatibility bearer maps explicitly to the administrator permission set, so
+unchanged deployments retain their accepted behavior. Expanded composition adds 16 private
+auth/user operations; the default app remains health-only and ordinary bearer production remains
+11 paths.
+
+The one-time administrator setup is the explicit, network-free
+`AuthenticationService.bootstrap_administrator(email, display_name, password)` operation. It
+refuses once any administrator exists and never returns or prints password material. Migration
+`0005_authentication_authorization` creates users, credentials, sessions, audit events, and login
+attempts. Downgrading to `0004_history_api` removes only those Phase 27 tables and their data.
+Administrator-driven password reset is deferred; users can change their own password only after
+presenting the current password, and that change revokes every other session.
+
 ## Next recommended development batch
 
 The next bounded batch may add deterministic CSV crawl and metadata audit serialization as a

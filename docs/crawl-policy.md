@@ -740,3 +740,12 @@ pagination, retention state, interruption state, or artifact availability cannot
 change normalized identity, broaden scope, bypass DNS/SSRF controls, alter robots or indexability
 decisions, modify recommendation precedence, or resume a frontier. A historical warning or failure
 is safe evidence, not permission to refetch. History API requests perform no public HTTP or DNS.
+
+## Authentication does not change crawl authority
+
+Users, roles, sessions, login throttling, and authentication audit records control admission to
+private application operations only. They do not alter URL normalization, scope, DNS/SSRF checks,
+robots evaluation, fetch limits, indexability, recommendation precedence, sitemap serialization,
+or publication safety. A `jobs.submit` permission admits a request to the already accepted
+validation and preflight pipeline; it cannot bypass that pipeline. Authentication and user
+administration perform no public HTTP, DNS, crawl, publication, or artifact filesystem operation.

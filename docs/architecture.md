@@ -623,3 +623,25 @@ Lifecycle states are planned, available, missing, corrupt, expired, deleted, and
 database transactions never span hashing, streaming, or filesystem deletion. Cleanup and
 reconciliation are explicit bounded operations, not background daemons. Cloud storage, public URLs,
 range downloads, artifact blobs, and orphan mutation are excluded.
+
+## Authentication and authorization boundary
+
+Expanded authentication is an explicit production composition over the same SQLite authority. Its
+immutable configuration is disabled by default and supports only `shared_bearer`, `user_session`,
+and `hybrid`. Existing shared-bearer deployments keep their exact behavior. User-session and
+hybrid composition inject the authentication service; imports create no database, user, password,
+token, cleanup task, or bootstrap side effect.
+
+`0005_authentication_authorization` follows `0004_history_api` and owns five tables: users,
+credentials, authentication sessions, append-only authentication audit events, and bounded login
+attempt evidence. Password material is PBKDF2-HMAC-SHA256 with random per-credential salt. A raw
+opaque session token exists only at issuance and in the HttpOnly cookie; SQLite stores its SHA-256
+hash. Session validation reloads the current user state, role, and revocation generation rather
+than trusting the issue-time role snapshot.
+
+One immutable principal crosses the adapter boundary. Central role mappings define the exact
+administrator, operator, and viewer permissions, and unknown roles or permissions deny by default.
+The shared bearer is an explicit compatibility administrator principal. Route authorization maps
+operations to permissions centrally, without caller-supplied privilege lists or handler-level role
+comparisons. The 16 auth/user operations remain private; sign-in is the only credential-accepting
+route, while every other operation passes the common access and permission gate.

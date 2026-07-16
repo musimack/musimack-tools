@@ -13,6 +13,13 @@ from musimack_tools.domain.api import (
     AccessOutcome,
     InternalCallerContext,
 )
+from musimack_tools.domain.authentication import (
+    AuthenticatedPrincipal,
+    AuthenticationMethod,
+    PrincipalType,
+    UserRole,
+    permissions_for_role,
+)
 from musimack_tools.security.client_address import address_is_trusted, resolve_client_address
 
 if TYPE_CHECKING:
@@ -59,6 +66,7 @@ class BearerAccessVerifier:
         credential_id: str,
         trusted_networks: TrustedNetworkConfiguration,
         trusted_proxies: TrustedProxyConfiguration,
+        compatibility_role: UserRole = UserRole.ADMINISTRATOR,
         comparator: CredentialComparator = constant_time_matches,
     ) -> None:
         self._enabled = enabled
@@ -66,6 +74,7 @@ class BearerAccessVerifier:
         self._credential_id = credential_id
         self._trusted_networks = trusted_networks
         self._trusted_proxies = trusted_proxies
+        self._compatibility_role = compatibility_role
         self._comparator = comparator
 
     async def verify(  # noqa: PLR0911 - each fail-closed branch returns bounded evidence.
@@ -106,6 +115,12 @@ class BearerAccessVerifier:
 
         request.state.authentication_outcome = "allowed"
         request.state.caller_id = self._credential_id
+        request.state.authenticated_principal = AuthenticatedPrincipal(
+            PrincipalType.SHARED_BEARER,
+            AuthenticationMethod.SHARED_BEARER,
+            self._compatibility_role,
+            permissions_for_role(self._compatibility_role),
+        )
         return AccessDecision(
             AccessOutcome.ALLOWED,
             caller=InternalCallerContext(self._credential_id),

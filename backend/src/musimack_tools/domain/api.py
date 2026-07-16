@@ -34,6 +34,7 @@ class AccessDenialReason(StrEnum):
     SECURITY_CONFIGURATION_UNAVAILABLE = "security_configuration_unavailable"
     INVALID_FORWARDED_HEADER = "invalid_forwarded_header"
     INTERNAL_API_DISABLED = "internal_api_disabled"
+    AUTHORIZATION_DENIED = "authorization_denied"
 
 
 class ApiErrorCode(StrEnum):
@@ -60,6 +61,34 @@ class ApiErrorCode(StrEnum):
     SECURITY_CONFIGURATION_UNAVAILABLE = "security_configuration_unavailable"
     INVALID_FORWARDED_HEADER = "invalid_forwarded_header"
     INTERNAL_API_DISABLED = "internal_api_disabled"
+    AUTHORIZATION_DENIED = "authorization_denied"
+    AUTHENTICATION_DISABLED = "authentication_disabled"
+    AUTHENTICATION_MODE_UNSUPPORTED = "authentication_mode_unsupported"
+    AUTHENTICATION_VERSION_UNSUPPORTED = "authentication_version_unsupported"
+    AUTHENTICATION_INVALID_CREDENTIALS = "authentication_invalid_credentials"
+    AUTHENTICATION_ACCOUNT_INACTIVE = "authentication_account_inactive"
+    AUTHENTICATION_ACCOUNT_DISABLED = "authentication_account_disabled"
+    AUTHENTICATION_ACCOUNT_LOCKED = "authentication_account_locked"
+    AUTHENTICATION_RATE_LIMITED = "authentication_rate_limited"
+    AUTHENTICATION_SESSION_MISSING = "authentication_session_missing"
+    AUTHENTICATION_SESSION_INVALID = "authentication_session_invalid"
+    AUTHENTICATION_SESSION_EXPIRED = "authentication_session_expired"
+    AUTHENTICATION_SESSION_REVOKED = "authentication_session_revoked"
+    AUTHENTICATION_SESSION_ROTATION_REQUIRED = "authentication_session_rotation_required"
+    AUTHENTICATION_PASSWORD_INVALID = "authentication_password_invalid"  # noqa: S105
+    AUTHENTICATION_PASSWORD_REUSED = "authentication_password_reused"  # noqa: S105
+    AUTHENTICATION_PASSWORD_CHANGE_REQUIRED = "authentication_password_change_required"  # noqa: S105
+    AUTHORIZATION_ROLE_INVALID = "authorization_role_invalid"
+    AUTHORIZATION_PERMISSION_INVALID = "authorization_permission_invalid"
+    USER_NOT_FOUND = "user_not_found"
+    USER_EMAIL_CONFLICT = "user_email_conflict"
+    USER_STATE_INVALID = "user_state_invalid"
+    USER_ROLE_INVALID = "user_role_invalid"
+    USER_BOOTSTRAP_NOT_ALLOWED = "user_bootstrap_not_allowed"
+    SESSION_NOT_FOUND = "session_not_found"
+    SESSION_REVOCATION_NOT_ALLOWED = "session_revocation_not_allowed"
+    AUTH_AUDIT_QUERY_INVALID = "auth_audit_query_invalid"
+    AUTH_QUERY_FAILED = "auth_query_failed"
     ARTIFACT_NOT_FOUND = "artifact_not_found"
     ARTIFACT_NOT_AVAILABLE = "artifact_not_available"
     ARTIFACT_RETRIEVAL_FAILED = "artifact_retrieval_failed"

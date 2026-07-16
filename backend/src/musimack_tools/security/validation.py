@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from musimack_tools.domain.api import INTERNAL_API_PREFIX, INTERNAL_API_VERSION
+from musimack_tools.domain.authentication import AuthenticationMode
 from musimack_tools.domain.deployment import (
     PRODUCTION_APPLICATION_VERSION,
     StartupValidationIssue,
@@ -40,7 +41,13 @@ def validate_production_startup(  # noqa: C901, PLR0913 - explicit version bound
                 "internal_api_disabled", "Internal API is disabled.", blocking=True
             )
         )
-    if settings.bearer_token is None or not settings.bearer_token.get_secret_value():
+    bearer_required = (
+        not settings.authentication_enabled
+        or settings.authentication_mode is not AuthenticationMode.USER_SESSION
+    )
+    if bearer_required and (
+        settings.bearer_token is None or not settings.bearer_token.get_secret_value()
+    ):
         issues.append(
             StartupValidationIssue(
                 "security_credential_missing",
@@ -48,7 +55,10 @@ def validate_production_startup(  # noqa: C901, PLR0913 - explicit version bound
                 blocking=True,
             )
         )
-    elif len(settings.bearer_token.get_secret_value()) > _MAXIMUM_CREDENTIAL_LENGTH:
+    elif (
+        settings.bearer_token is not None
+        and len(settings.bearer_token.get_secret_value()) > _MAXIMUM_CREDENTIAL_LENGTH
+    ):
         issues.append(
             StartupValidationIssue(
                 "security_credential_invalid",
@@ -101,9 +111,16 @@ def validate_production_startup(  # noqa: C901, PLR0913 - explicit version bound
 
 
 def security_readiness(settings: ProductionSettings) -> SecurityReadinessReport:
+    authentication_ready = settings.enabled and (
+        settings.bearer_token is not None
+        or (
+            settings.authentication_enabled
+            and settings.authentication_mode is AuthenticationMode.USER_SESSION
+        )
+    )
     checks = {
         "security_configuration": "ready",
-        "authentication": "ready" if settings.enabled and settings.bearer_token else "not_ready",
+        "authentication": "ready" if authentication_ready else "not_ready",
         "internal_api": "enabled" if settings.enabled else "disabled",
         "trusted_proxy_policy": "ready",
         "trusted_network_policy": "ready",
@@ -115,7 +132,7 @@ def security_readiness(settings: ProductionSettings) -> SecurityReadinessReport:
     }
     state = (
         SecurityReadinessState.NOT_READY
-        if not settings.enabled or settings.bearer_token is None
+        if not authentication_ready
         else SecurityReadinessState.DEGRADED
         if not settings.access_logging or not settings.security_headers
         else SecurityReadinessState.READY
