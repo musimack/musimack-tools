@@ -16,6 +16,7 @@ from musimack_tools.persistence.migrations import (
     AUTHENTICATION_AUTHORIZATION_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
+    PAGE_CRAWL_EVIDENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
     alembic_configuration,
     current_revision,
@@ -104,6 +105,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "jobs",
             "persistence_metadata",
             "progress_snapshots",
+            "crawl_page_evidence",
+            "crawl_page_redirect_hops",
+            "crawl_page_parse_warnings",
+            "crawl_page_evidence_summaries",
+            "crawl_page_evidence_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -143,6 +149,14 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             ("job_leases", "workers"),
             ("progress_snapshots", "jobs"),
             ("progress_snapshots", "runs"),
+            ("crawl_page_evidence", "jobs"),
+            ("crawl_page_evidence", "runs"),
+            ("crawl_page_redirect_hops", "crawl_page_evidence"),
+            ("crawl_page_parse_warnings", "crawl_page_evidence"),
+            ("crawl_page_evidence_summaries", "jobs"),
+            ("crawl_page_evidence_summaries", "runs"),
+            ("crawl_page_evidence_events", "jobs"),
+            ("crawl_page_evidence_events", "runs"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -162,6 +176,10 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "uq_run_stages_run_stage",
             "uq_summary_run_filename",
             "uq_warning_exact",
+            "uq_page_evidence_run_sequence",
+            "uq_page_evidence_run_url",
+            "uq_page_redirect_evidence_sequence",
+            "uq_page_warning_evidence_sequence",
         } <= unique_names
         index_names = {
             index["name"]
@@ -176,6 +194,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "ix_runs_lifecycle",
             "ix_run_stages_run_order",
             "ix_warnings_parent_sequence",
+            "ix_page_evidence_run_order",
+            "ix_page_evidence_expiry",
+            "ix_page_evidence_indexability",
+            "ix_page_redirect_evidence",
+            "ix_page_warning_evidence",
         } <= index_names
     finally:
         engine.dispose()
@@ -200,6 +223,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert authentication_script.revision == "0005_authentication_authorization"
     assert authentication_script.down_revision == "0004_history_api"
     assert authentication_script.doc == "add internal authentication and authorization"
+    page_script = ScriptDirectory.from_config(config).get_revision(PAGE_CRAWL_EVIDENCE_REVISION)
+    assert page_script is not None
+    assert page_script.revision == "0006_page_crawl_evidence"
+    assert page_script.down_revision == AUTHENTICATION_AUTHORIZATION_REVISION
+    assert page_script.doc == "add durable page crawl evidence"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -215,6 +243,7 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE artifact_records" in sql
     assert "CREATE TABLE users" in sql
     assert "CREATE TABLE authentication_sessions" in sql
+    assert "CREATE TABLE crawl_page_evidence" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -266,6 +295,36 @@ def test_authentication_migration_downgrades_only_phase_27_tables(tmp_path: Path
     finally:
         engine.dispose()
     command.upgrade(configuration, AUTHENTICATION_AUTHORIZATION_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == AUTHENTICATION_AUTHORIZATION_REVISION
+    finally:
+        engine.dispose()
+
+
+def test_page_evidence_migration_downgrades_only_page_evidence_tables(tmp_path: Path) -> None:
+    database = tmp_path / "page-evidence-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, PAGE_CRAWL_EVIDENCE_REVISION)
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert current_revision(engine) == PAGE_CRAWL_EVIDENCE_REVISION
+        assert "crawl_page_evidence" in tables
+        assert "authentication_sessions" in tables
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, AUTHENTICATION_AUTHORIZATION_REVISION)
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert current_revision(engine) == AUTHENTICATION_AUTHORIZATION_REVISION
+        assert "crawl_page_evidence" not in tables
+        assert "authentication_sessions" in tables
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, PAGE_CRAWL_EVIDENCE_REVISION)
     engine = create_engine(url)
     try:
         assert schema_is_current(engine)

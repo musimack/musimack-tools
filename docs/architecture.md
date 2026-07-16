@@ -498,6 +498,28 @@ durable coordination, `0003_artifact_storage` adds file lifecycle metadata and h
 `0004_history_api` adds nullable historical timestamps plus indexes used by bounded job/run
 queries. It does not create duplicate history tables.
 
+### Durable page crawl evidence
+
+Phase 20A inserts a bounded persistence projection between accepted terminal crawl results and
+future SEO modules. Existing crawl, fetch, HTML, robots, indexability, and URL-normalization
+domains remain authoritative. A single terminal observer projects immutable evidence through
+bounded SQLAlchemy batches. There is no competing crawler sink or new run stage.
+
+Revision `0006_page_crawl_evidence` owns page, redirect-hop, parse-warning, summary, and event
+tables. Page identity combines run ID, discovery sequence, and normalized requested-URL identity.
+Ordering is `crawl_discovery_sequence_asc_url_identity_asc-v1`; opaque cursors bind that ordering
+to an exact filter fingerprint.
+
+Only structured accepted evidence is stored: URLs, fetch/status outcome, bounded MIME evidence,
+parsed metadata, structured robots/indexability contributions, redirect hops, and safe warnings.
+Raw HTML, bodies, complete headers, credentials, cookies, leases, paths, and parser objects are
+excluded. Metadata values are capped at 4,096 characters and expose truncation.
+
+Evidence retention is independent from in-memory payload retention. Holds are explicit, cleanup is
+dry-run capable and bounded, active runs are protected, and summaries can remain `metadata_only`.
+Reconciliation is explicitly invoked, bounded, diagnostic-only, and never performs destructive
+repair. No HTTP route or frontend UI is introduced.
+
 ## Durable history query boundary
 
 SQLite is the historical source of truth. `SQLAlchemyHistoryRepository` opens a short-lived

@@ -46,6 +46,7 @@ from musimack_tools.persistence.models import (
     SummaryMetadataModel,
     WarningModel,
 )
+from musimack_tools.persistence.page_evidence_repository import persist_projected_evidence
 from musimack_tools.persistence.transactions import map_database_error, safely_record
 
 if TYPE_CHECKING:
@@ -663,6 +664,26 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
             )
         self._record_summaries(session, job_id, result)
         self._record_artifacts(session, job_id, result)
+        page_configuration = self._runtime.configuration.page_evidence
+        if (
+            page_configuration.enabled
+            and result.crawl_result is not None
+            and (
+                page_configuration.persist_partial_runs
+                or result.lifecycle
+                in {
+                    RunLifecycle.COMPLETED,
+                    RunLifecycle.COMPLETED_WITH_WARNINGS,
+                }
+            )
+        ):
+            persist_projected_evidence(
+                session,
+                job_id,
+                result.run_id,
+                result.crawl_result,
+                page_configuration,
+            )
 
     @staticmethod
     def _append_warning(  # noqa: PLR0913 -- normalized evidence fields remain explicit.

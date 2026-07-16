@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -117,6 +119,7 @@ class PersistenceConfiguration:
     reconcile_on_startup: bool = True
     create_parent_directory: bool = False
     retention: PersistenceRetentionPolicy = field(default_factory=PersistenceRetentionPolicy)
+    page_evidence: PageEvidenceConfiguration = field(default_factory=PageEvidenceConfiguration)
     persistence_version: str = PERSISTENCE_VERSION
     schema_version: str = DATABASE_SCHEMA_VERSION
 

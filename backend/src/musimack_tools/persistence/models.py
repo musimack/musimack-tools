@@ -173,6 +173,236 @@ class ProgressSnapshotModel(Base):
     )
 
 
+class CrawlPageEvidenceModel(Base):
+    """Restart-safe bounded projection of one accepted crawl URL record."""
+
+    __tablename__ = "crawl_page_evidence"
+
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.job_id", ondelete="CASCADE"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.run_id", ondelete="CASCADE"))
+    requested_url: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_url_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    final_url: Mapped[str | None] = mapped_column(Text)
+    final_url_identity: Mapped[str | None] = mapped_column(String(64))
+    discovery_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    crawl_depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    referrer_url: Mapped[str | None] = mapped_column(Text)
+    frontier_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    fetch_outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    status_class: Mapped[int | None] = mapped_column(Integer)
+    fetch_failed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    redirect_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    redirect_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    redirect_loop: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(256))
+    content_type_category: Mapped[str] = mapped_column(String(16), nullable=False)
+    charset: Mapped[str | None] = mapped_column(String(64))
+    parsed_as_html: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    parse_outcome: Mapped[str | None] = mapped_column(String(16))
+    title_presence: Mapped[str] = mapped_column(String(16), nullable=False)
+    title_value: Mapped[str | None] = mapped_column(Text)
+    title_normalized_hash: Mapped[str | None] = mapped_column(String(64))
+    title_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    title_length: Mapped[int | None] = mapped_column(Integer)
+    title_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    description_presence: Mapped[str] = mapped_column(String(16), nullable=False)
+    description_value: Mapped[str | None] = mapped_column(Text)
+    description_normalized_hash: Mapped[str | None] = mapped_column(String(64))
+    description_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    description_length: Mapped[int | None] = mapped_column(Integer)
+    description_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    canonical_presence: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_url: Mapped[str | None] = mapped_column(Text)
+    canonical_url_identity: Mapped[str | None] = mapped_column(String(64))
+    canonical_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_conflicting: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    canonical_cross_host: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    canonical_cross_scheme: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    canonical_cross_port: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    canonical_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    meta_robots_json: Mapped[str] = mapped_column(Text, nullable=False)
+    x_robots_json: Mapped[str] = mapped_column(Text, nullable=False)
+    robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    robots_reason_code: Mapped[str | None] = mapped_column(String(64))
+    robots_evidence_json: Mapped[str] = mapped_column(Text, nullable=False)
+    indexability_evidence_json: Mapped[str] = mapped_column(Text, nullable=False)
+    indexability_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    parse_warning_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    parse_warnings_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    evidence_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    value_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    retention_state: Mapped[str] = mapped_column(String(24), nullable=False)
+    retention_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    persisted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evidence_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    persistence_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "discovery_sequence", name="uq_page_evidence_run_sequence"),
+        UniqueConstraint("run_id", "requested_url_identity", name="uq_page_evidence_run_url"),
+        CheckConstraint("discovery_sequence >= 0", name="ck_page_evidence_sequence"),
+        CheckConstraint("crawl_depth >= 0", name="ck_page_evidence_depth"),
+        CheckConstraint("redirect_count >= 0", name="ck_page_evidence_redirect_count"),
+        CheckConstraint(
+            "http_status IS NULL OR (http_status >= 100 AND http_status <= 599)",
+            name="ck_page_evidence_http_status",
+        ),
+        CheckConstraint(
+            "status_class IS NULL OR (status_class >= 1 AND status_class <= 5)",
+            name="ck_page_evidence_status_class",
+        ),
+        CheckConstraint(
+            "content_type_category IN "
+            "('html','pdf','image','json','plain_text','xml','other','ambiguous','missing')",
+            name="ck_page_evidence_content_category",
+        ),
+        CheckConstraint(
+            "title_presence IN ('missing','empty','single','multiple','unavailable')",
+            name="ck_page_evidence_title_presence",
+        ),
+        CheckConstraint(
+            "description_presence IN ('missing','empty','single','multiple','unavailable')",
+            name="ck_page_evidence_description_presence",
+        ),
+        CheckConstraint(
+            "canonical_presence IN ('missing','empty','single','multiple','unavailable')",
+            name="ck_page_evidence_canonical_presence",
+        ),
+        CheckConstraint(
+            "evidence_state IN "
+            "('complete','partial','fetch_failed','not_html','cancelled','truncated','unavailable')",
+            name="ck_page_evidence_state",
+        ),
+        CheckConstraint(
+            "indexability_state IN ('available','conflicting','unavailable')",
+            name="ck_page_evidence_indexability_state",
+        ),
+        CheckConstraint(
+            "retention_state IN "
+            "('active','retained','expired','cleanup_pending','deleted','metadata_only')",
+            name="ck_page_evidence_retention_state",
+        ),
+        Index(
+            "ix_page_evidence_run_order", "run_id", "discovery_sequence", "requested_url_identity"
+        ),
+        Index("ix_page_evidence_job_order", "job_id", "discovery_sequence"),
+        Index("ix_page_evidence_requested_url", "requested_url_identity"),
+        Index("ix_page_evidence_final_url", "final_url_identity"),
+        Index("ix_page_evidence_status", "http_status", "discovery_sequence"),
+        Index("ix_page_evidence_content_type", "content_type_category", "discovery_sequence"),
+        Index("ix_page_evidence_robots", "robots_allowed", "discovery_sequence"),
+        Index("ix_page_evidence_indexability", "indexability_state", "discovery_sequence"),
+        Index("ix_page_evidence_state", "evidence_state", "discovery_sequence"),
+        Index("ix_page_evidence_depth", "crawl_depth", "discovery_sequence"),
+        Index("ix_page_evidence_expiry", "retention_state", "expires_at"),
+    )
+
+
+class CrawlPageRedirectHopModel(Base):
+    __tablename__ = "crawl_page_redirect_hops"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("crawl_page_evidence.evidence_id", ondelete="CASCADE")
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    target_url: Mapped[str | None] = mapped_column(Text)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    cross_host: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    terminal: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    loop: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (
+        UniqueConstraint("evidence_id", "sequence", name="uq_page_redirect_evidence_sequence"),
+        CheckConstraint("sequence > 0", name="ck_page_redirect_sequence"),
+        Index("ix_page_redirect_evidence", "evidence_id", "sequence"),
+    )
+
+
+class CrawlPageParseWarningModel(Base):
+    __tablename__ = "crawl_page_parse_warnings"
+
+    warning_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("crawl_page_evidence.evidence_id", ondelete="CASCADE")
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    stable_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    safe_summary: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    warning_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("evidence_id", "sequence", name="uq_page_warning_evidence_sequence"),
+        Index("ix_page_warning_evidence", "evidence_id", "sequence"),
+        Index("ix_page_warning_code", "stable_code", "warning_id"),
+    )
+
+
+class CrawlPageEvidenceSummaryModel(Base):
+    __tablename__ = "crawl_page_evidence_summaries"
+
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.run_id", ondelete="CASCADE"), primary_key=True
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False
+    )
+    total_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    completed_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    partial_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    html_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    non_html_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    redirect_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    parse_warning_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    truncated_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    title_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    description_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    status_class_counts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type_counts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    robots_permission_counts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    indexability_counts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    projection_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    persisted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retention_state: Mapped[str] = mapped_column(String(24), nullable=False)
+    evidence_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    persistence_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    ordering_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (Index("ix_page_summary_job", "job_id", "run_id"),)
+
+
+class CrawlPageEvidenceEventModel(Base):
+    __tablename__ = "crawl_page_evidence_events"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.run_id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    safe_reason_code: Mapped[str | None] = mapped_column(String(64))
+    affected_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (Index("ix_page_evidence_events_run", "run_id", "event_id"),)
+
+
 class WarningModel(Base):
     __tablename__ = "warnings"
 

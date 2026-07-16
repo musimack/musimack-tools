@@ -570,6 +570,38 @@ Focused persistence validation is:
 .\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_persistence_domain.py backend\tests\unit\test_persistence_engine_and_models.py backend\tests\integration\test_persistence_migrations.py backend\tests\integration\test_persistence_repository.py backend\tests\integration\test_job_persistence_integration.py backend\tests\integration\test_persistence_production.py
 ```
 
+### Durable page-level crawl evidence
+
+Phase 20A adds an opt-in terminal persistence observer for accepted crawl records. Its exact
+contracts are `seo-toolkit-page-crawl-evidence-v1`,
+`seo-toolkit-page-crawl-evidence-persistence-v1`,
+`seo-toolkit-page-crawl-evidence-query-v1`,
+`seo-toolkit-page-crawl-evidence-retention-v1`, and
+`seo-toolkit-page-crawl-evidence-projection-v1`. It never re-fetches, resolves DNS, or reparses
+HTML.
+
+Alembic revision `0006_page_crawl_evidence` (`add durable page crawl evidence`) stores bounded page,
+redirect, parse-warning, summary, and event rows. Ordering is exactly
+`crawl_discovery_sequence_asc_url_identity_asc-v1`. Repeated writes are idempotent and conflicting
+evidence is rejected.
+
+Page evidence is disabled by default. Defaults are 250 records per batch, 50 records per query,
+200 maximum records per query, 100,000 pages per run, 20 redirect hops, 50 parse warnings per page,
+4,096 metadata characters, 180 retention days, and 500 cleanup records per invocation. Cleanup is
+explicit, dry-run capable, hold-aware, bounded, and protects active runs. Reconciliation is
+explicit, read-only, bounded, and never re-fetches or reparses.
+
+No raw HTML, response body, full header set, cookie, token, database URL, or filesystem path is
+stored. No API or frontend route is added, so route counts remain unchanged. Phase 20 metadata
+classification, exports, and UI remain deferred and can consume this evidence after restart or
+terminal-payload eviction.
+
+Focused validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_page_evidence_domain.py backend\tests\integration\test_page_evidence_persistence.py backend\tests\integration\test_persistence_migrations.py
+```
+
 ## Optional durable execution
 
 Durable execution is an explicit alternative to the accepted process-local scheduler. It is off by

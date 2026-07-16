@@ -704,6 +704,19 @@ Explicit cleanup removes or marks only database metadata according to policy. It
 filesystem sitemap or summary artifacts, and retention never changes sitemap recommendation or XML
 generation outcomes.
 
+## Durable page evidence does not change crawl policy
+
+The optional Phase 20A terminal observer persists the accepted `UrlCrawlRecord` projection without
+re-fetching, DNS resolution, HTML reparsing, or robots re-evaluation. Existing normalized URL,
+fetch, redirect, parsed metadata, robots permission, and indexability evidence remains
+authoritative. Missing, empty, unavailable, partial, failed, non-HTML, and truncated states stay
+distinct.
+
+Persistence ordering is discovery sequence ascending with normalized URL identity as tie-breaker.
+Page, redirect, and warning limits are enforced before storage. Raw HTML, response bodies, complete
+headers, and binaries are excluded. The persisted evidence is an enabling input for future Phase 20
+audits; it does not classify issues, severity, duplicates, eligibility, or metadata quality.
+
 ## Durable execution does not change crawl policy
 
 Durable scheduling changes where queued work is coordinated, not how URLs are normalized, scoped,
