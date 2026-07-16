@@ -458,6 +458,45 @@ Focused validation is:
 No public application route, CLI, authentication, persistence, worker, scheduler, or frontend has
 been added.
 
+## Private internal API adapter
+
+An internal FastAPI adapter now maps the accepted application-service facade to bounded Pydantic
+schemas beneath `/api/internal/v1`. The adapter contract is
+`seo-toolkit-internal-api-v1`. It provides explicitly composed endpoints for request validation,
+advisory preflight, job submission, status, latest or bounded retained progress, bounded results,
+cooperative cancellation, registry counts, readiness, and capabilities. It provides no shutdown
+or artifact-download endpoint.
+
+The normal `create_app()` composition remains health-only: `/api/health` is its sole route and no
+internal schemas appear in its OpenAPI document. Internal routes are mounted only by calling
+`mount_internal_api()` with `mount_internal_routes=True`, an explicitly injected application
+service, and an access verifier. A mounted router without a verifier denies every request. The
+gate runs before adapter service invocation, fails closed when verification raises or is
+unavailable, and returns structured errors without echoing credential evidence or revealing job
+existence.
+
+This gate is not a complete authentication or authorization system. It has no users, roles,
+sessions, stored credentials, API keys, OAuth, or deployment trust boundary. Any future deployment
+must add separately reviewed authentication, authorization, TLS/reverse-proxy controls, and
+network restrictions before enabling internal routes.
+
+Success responses use a typed envelope containing the API version, a null request ID, bounded
+data, and bounded warnings. Errors use stable codes, safe messages, and bounded field details.
+Pydantic errors are normalized to HTTP 400 without returning submitted values. Job IDs must match
+`job-<12 lowercase hexadecimal characters>-<four digits>`. Request fields, approved hosts, caller
+labels, URL strings, job IDs, and optional progress history are bounded. The adapter enforces a
+declared `Content-Length` limit; requests without a trustworthy declared length still require a
+future deployment-level body limit.
+
+Focused validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_internal_api_domain.py backend\tests\integration\test_internal_api.py
+```
+
+Tests use in-process ASGI clients, injected access verifiers, fake dependencies, and the accepted
+in-memory job/run services. They perform no public HTTP, DNS, or external authentication calls.
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local

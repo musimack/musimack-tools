@@ -640,3 +640,23 @@ states, stable error and warning codes, logical filenames, hashes, and version i
 not expose URL records, recommendation rows, progress histories, raw HTML, response bodies, XML
 bytes, summary bytes, stack traces, cancellation tokens, locks, tasks, or absolute machine paths.
 Detailed export and record delivery require a separately authorized boundary.
+
+## Internal API adaptation does not change crawl policy
+
+The private internal API is a transport adapter over accepted application projections. Its named
+request fields and Pydantic validation do not redefine URL normalization, scope, network safety,
+robots permission, frontier ordering, crawl limits, recommendation precedence, XML generation, or
+publication safety. Application validation and preparation remain side-effect free. Advisory
+preflight still allocates no attempt, reserves no queue capacity, creates no output path, and may
+be stale before authoritative submission.
+
+API status, progress, registry, and result responses remain bounded. Progress is latest-only unless
+a bounded retained-history limit is explicitly requested; no SSE or WebSocket stream exists.
+Registry responses expose counts rather than job lists. Result responses omit detailed URL rows,
+recommendation rows, HTML, response bodies, XML, manifests, summaries, filesystem paths, and
+runtime objects. No artifact download endpoint exists.
+
+The default application remains health-only. Explicitly mounted routes fail closed without an
+injected verifier, but that gate is not complete authentication and does not authorize public
+exposure. HTTP adaptation never grants crawl or network permission; every submitted run continues
+through the accepted scope, destination-safety, robots, limit, job, and publication contracts.

@@ -382,6 +382,39 @@ translate these contracts without moving validation or projections into transpor
 Authentication, persistence, durable workers, and public authorization require separate future
 boundaries.
 
+## Private internal API adapter boundary
+
+The `domain/api.py` records define the immutable access outcomes, error codes, adapter
+configuration, route prefix, and centralized `seo-toolkit-internal-api-v1` identifier. The `api/`
+adapter package owns deny-by-default access composition, bounded Pydantic schemas, explicit domain
+mapping, structured HTTP errors, and route handlers. Business validation, preflight, submission,
+job coordination, and projections remain owned by the application and job layers.
+
+`create_internal_api_router()` requires an injected application-service port and immutable API
+configuration. `mount_internal_api()` is the only production composition helper and returns
+without mounting when `mount_internal_routes` is false. The normal `create_app()` does not call it,
+so the default process remains health-only and its OpenAPI document contains no internal paths or
+schemas. Router construction creates no registry, task, singleton, or background work.
+
+Mounted routes share a router-level access dependency. No verifier means deny all; verifier
+exceptions and unavailable decisions fail closed. Access is checked before handler service calls,
+so denial cannot allocate attempts, inspect jobs, cancel jobs, reserve capacity, or reveal job
+existence. The verifier is deployment-injected and may inspect the framework request, but its
+decision contract contains only a safe optional caller identifier. This access gate is explicitly
+not full authentication or authorization.
+
+Request schemas expose only accepted operator-facing fields and convert them to
+`RawApplicationCrawlRequest`. Mapping back to HTTP is explicit and bounded: registry responses are
+counts-only, progress defaults to latest-only, and results contain counts, codes, logical names,
+and hashes rather than lower-layer dataclasses or payload bytes. Pydantic request errors, known
+adapter outcomes, and unexpected exceptions use one versioned safe envelope. Unexpected errors
+remain available to normal server logging while clients receive no raw exception text.
+
+Future public or broader internal deployment requires separate authentication, authorization,
+reverse-proxy/TLS, request-body enforcement, network policy, and rate-limit decisions. Persistence,
+durable workers, frontend delivery, streaming progress, and download endpoints remain separate
+boundaries.
+
 ## Future boundaries
 
 ### Frontend
