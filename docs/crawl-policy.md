@@ -749,3 +749,10 @@ robots evaluation, fetch limits, indexability, recommendation precedence, sitema
 or publication safety. A `jobs.submit` permission admits a request to the already accepted
 validation and preflight pipeline; it cannot bypass that pipeline. Authentication and user
 administration perform no public HTTP, DNS, crawl, publication, or artifact filesystem operation.
+
+## Frontend does not change crawl authority
+
+The private frontend is an authenticated presentation adapter. Its route guards, navigation, and
+Phase 18 landing pages cannot authorize a URL, broaden scope, bypass DNS/SSRF controls, change
+robots or indexability evidence, or begin a crawl. Frontend tests mock every API call and perform no
+public HTTP or DNS. Crawl submission and sitemap workflow behavior remain deferred to Phase 19.

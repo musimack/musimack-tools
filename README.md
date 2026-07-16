@@ -5,7 +5,7 @@ tools. Its first planned module is the **Sitemap Generator and Metadata Crawler*
 eventually crawl approved websites, collect response and page metadata, explain sitemap
 recommendations, support human overrides, and export XML and CSV results.
 
-## Current backend scope
+## Current application scope
 
 This first implementation batch provides:
 
@@ -36,13 +36,15 @@ This first implementation batch provides:
   authentication, trusted-network and trusted-proxy policies, request correlation, narrow CORS,
   deterministic security headers, and audit-safe access logging
 - Pytest, Ruff, and MyPy validation
+- A private React, TypeScript, and Vite frontend foundation with cookie authentication,
+  permission-aware routing, responsive accessible pages, and deterministic component tests
 - Architecture and crawl-policy documentation
 
 It deliberately does **not** provide sitemap fetching, final search-engine-specific indexability
 verdicts, public crawl, recommendation, or job API endpoints, persistent background workers,
 persistence, CSV
-exports, manual overrides, user accounts, roles, sessions, OAuth, JWT,
-frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
+exports, manual overrides, OAuth, JWT, frontend workflow mutations, browser automation, or Docker
+configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
 inert HTML evidence; they do not contact public HTTP services or DNS.
 
@@ -51,10 +53,13 @@ inert HTML evidence; they do not contact public HTTP services or DNS.
 ```text
 backend/                 FastAPI package, URL/scope core, and tests
 docs/                    Architecture, crawl policy, and decision records
-frontend/README.md       Future frontend direction only
+frontend/                Private React/TypeScript/Vite application and frontend tests
 ```
 
 The Python package uses a `src` layout at `backend/src/musimack_tools`.
+
+The frontend requires Node.js 22 or newer. Its reviewed npm graph is locked in
+`frontend/package-lock.json`; see `frontend/README.md` for setup and validation.
 
 ## Supported Python
 
@@ -738,7 +743,7 @@ it creates no duplicate history tables.
 
 ## Internal users, sessions, and authorization
 
-Phase 27 adds opt-in, versioned password authentication for the future private frontend. The
+Phase 27 adds opt-in, versioned password authentication consumed by the private frontend. The
 accepted modes are `shared_bearer`, `user_session`, and `hybrid`; expansion is disabled and the
 existing shared bearer remains authoritative by default. Explicit user-session composition needs
 current SQLite persistence plus an injected authentication service. There is no default user,
@@ -766,7 +771,7 @@ presenting the current password, and that change revokes every other session.
 
 ## Next recommended development batch
 
-The next bounded batch may add deterministic CSV crawl and metadata audit serialization as a
-separate pure consumer of accepted run evidence. Full durable-result reconstruction, public
-persistence or worker APIs, PostgreSQL, multi-machine workers, manual overrides, remote
-publication, and sitemap submission remain separate future authorizations.
+The next frontend batch may connect one bounded, accepted workflow to the protected landing
+surfaces. Deterministic CSV serialization, full durable-result reconstruction, public persistence
+or worker APIs, PostgreSQL, multi-machine workers, manual overrides, remote publication, and
+sitemap submission remain separate future authorizations.

@@ -44,4 +44,6 @@ Desktop.ini
 # Deferred frontend artifacts
 node_modules/
 frontend/dist/
+frontend/coverage/
 frontend/.vite/
+frontend/*.tsbuildinfo

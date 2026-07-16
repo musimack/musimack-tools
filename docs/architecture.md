@@ -451,9 +451,23 @@ managed secrets, credential rotation, users, roles, persistent sessions, and pub
 
 ### Frontend
 
-The future frontend will use React, TypeScript, and Vite under `frontend/`. This batch creates
-no frontend package manifest or dependencies. The frontend should consume a typed client based
-on the FastAPI OpenAPI contract and use server-state-oriented data fetching.
+The private static frontend uses React, strict TypeScript, and Vite under `frontend/`. A narrow
+native-fetch adapter owns `/api/internal/v1` request construction, `credentials: include`, response
+validation, and safe error normalization. Authentication state is explicit: `initializing`,
+`authenticated`, `unauthenticated`, `expired`, or `unavailable`. No token, password, or parsed
+cookie enters browser persistence.
+
+Central route metadata maps protected pages to the exact backend permission vocabulary and drives
+both route guards and navigation. This improves the experience but does not replace backend
+authorization. Vite serves only local development on loopback and proxies `/api` to a separately
+running local backend. Production static hosting, TLS, origin policy, CSP, and reverse-proxy
+topology are separate deployment boundaries; FastAPI does not serve the built frontend.
+
+The development proxy keeps browser API requests same-origin. Direct CORS is not required for that
+topology. If enabled for local diagnostics, the backend must allow only the exact
+`http://127.0.0.1:5173` origin with credentials; wildcard credentialed CORS remains invalid. The
+session cookie stays HttpOnly and scoped to `/api/internal/v1`; production retains Secure and
+SameSite=Strict behavior.
 
 ### Reusable crawler core
 
