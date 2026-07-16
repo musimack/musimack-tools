@@ -1,13 +1,7 @@
 import type { ComponentType } from 'react';
 import type { Permission } from '../auth/contracts';
-import {
-  ArtifactsPage,
-  HistoryPage,
-  JobsPage,
-  OverviewPage,
-  SettingsPage,
-  UsersPage,
-} from '../pages/WorkspacePages';
+import { OverviewPage, SettingsPage, UsersPage } from '../pages/WorkspacePages';
+import { ArtifactsPage, HistoryPage, JobsPage } from '../pages/WorkflowPages';
 
 export type WorkspaceRoute = {
   path: string;

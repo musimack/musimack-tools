@@ -190,6 +190,52 @@ class JobStatusSchema(ApiSchema):
     application_service_version: str
 
 
+class JobListSchema(ApiSchema):
+    items: tuple[JobStatusSchema, ...]
+    truncated: bool
+    maximum: int
+    application_service_version: str
+
+
+class RecommendationItemSchema(ApiSchema):
+    url: str
+    requested_url: str
+    final_url: str | None
+    state: str
+    determinacy: str
+    primary_reason: str
+    explanation: str
+    http_status: int | None
+    content_type: str | None
+    fetch_failure_code: str | None
+    canonical_url: str | None
+    canonical_conflicting: bool
+    redirect_source: bool
+    redirect_hops: int
+    redirect_final_url: str | None
+    robots_available: bool
+    robots_allowed: bool | None
+    robots_reason_code: str | None
+    generic_directives: tuple[str, ...]
+    crawler_specific_directives: tuple[str, ...]
+    indexability_conflict: bool
+    configured_exclusions: tuple[tuple[str, str], ...]
+
+
+class RecommendationPageSchema(ApiSchema):
+    outcome: str
+    job_id: str | None
+    run_id: str | None
+    offset: int
+    limit: int
+    total: int
+    returned_count: int
+    has_more: bool
+    items: tuple[RecommendationItemSchema, ...]
+    rule_set_version: str | None
+    application_service_version: str
+
+
 class SubmissionSchema(ApiSchema):
     outcome: str
     validation: ValidationReportSchema
@@ -335,6 +381,20 @@ class JobStatusResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
     request_id: str | None = Field(default_factory=current_request_id)
     data: JobStatusSchema
+    warnings: tuple[ApiWarningSchema, ...] = ()
+
+
+class JobListResponse(ApiSchema):
+    api_version: str = INTERNAL_API_VERSION
+    request_id: str | None = Field(default_factory=current_request_id)
+    data: JobListSchema
+    warnings: tuple[ApiWarningSchema, ...] = ()
+
+
+class RecommendationPageResponse(ApiSchema):
+    api_version: str = INTERNAL_API_VERSION
+    request_id: str | None = Field(default_factory=current_request_id)
+    data: RecommendationPageSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 

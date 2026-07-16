@@ -241,7 +241,7 @@ def test_history_routes_are_private_and_mount_only_when_explicitly_enabled(
         _SecurityTestService(), settings, Settings(), history=history
     )
     paths = sorted(application.openapi()["paths"])
-    assert len(paths) == 21
+    assert len(paths) == 22
     assert len([path for path in paths if path.startswith("/api/internal/v1/history")]) == 10
     client = TestClient(application, client=("203.0.113.10", 50_000), raise_server_exceptions=False)
     assert client.get("/api/internal/v1/history/jobs").status_code == 401
@@ -303,4 +303,4 @@ def test_exact_route_matrix_for_default_and_optional_private_features(
     }
     assert {
         name: len(application.openapi()["paths"]) for name, application in applications.items()
-    } == {"default": 1, "production": 11, "artifacts": 14, "history": 21, "both": 24}
+    } == {"default": 1, "production": 12, "artifacts": 15, "history": 22, "both": 25}

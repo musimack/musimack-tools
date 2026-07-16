@@ -228,7 +228,7 @@ def test_expanded_production_composition_is_explicit_and_authorizes_viewer() -> 
         Settings(),
         authentication=service,
     )
-    assert len(application.openapi()["paths"]) == 25
+    assert len(application.openapi()["paths"]) == 26
     with TestClient(application, base_url="https://testserver") as client:
         signed_in = client.post(
             "/api/internal/v1/auth/sign-in",

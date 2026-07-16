@@ -6,6 +6,15 @@ import { LoadingScreen } from '../design-system/components';
 import { AppShell } from '../layouts/AppShell';
 import { NotFoundPage, SignInPage, UnauthorizedPage, UnavailablePage } from '../pages/SystemPages';
 import { workspaceRoutes } from './routeConfig';
+import {
+  ArtifactDetailPage,
+  HistoryJobPage,
+  HistoryRunPage,
+  JobDetailPage,
+  JobResultPage,
+  NewCrawlPage,
+  RecommendationPage,
+} from '../pages/WorkflowPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -16,7 +25,16 @@ function DocumentTitle() {
       '/unauthorized': 'Unauthorized',
       '/service-unavailable': 'Service Unavailable',
     };
-    const label = workspace ? workspace.label : (systemTitles[location.pathname] ?? 'Not Found');
+    const workflowTitle = location.pathname.startsWith('/jobs/')
+      ? 'Job workflow'
+      : location.pathname.startsWith('/history/')
+        ? 'History detail'
+        : location.pathname.startsWith('/artifacts/')
+          ? 'Artifact detail'
+          : null;
+    const label = workspace
+      ? workspace.label
+      : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
     document.title = `${label} | Musimack SEO Toolkit`;
   }, [location.pathname]);
   return null;
@@ -46,6 +64,24 @@ export function AppRoutes() {
             <Route path={path} element={<Component />} />
           </Route>
         ))}
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/jobs/new" element={<NewCrawlPage />} />
+        </Route>
+        <Route element={<Protected permission="jobs.view" />}>
+          <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+          <Route path="/jobs/:jobId/progress" element={<JobDetailPage />} />
+          <Route path="/jobs/:jobId/results" element={<JobResultPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route path="/jobs/:jobId/results/recommendations" element={<RecommendationPage />} />
+        </Route>
+        <Route element={<Protected permission="history.view" />}>
+          <Route path="/history/jobs/:jobId" element={<HistoryJobPage />} />
+          <Route path="/history/runs/:runId" element={<HistoryRunPage />} />
+        </Route>
+        <Route element={<Protected permission="artifacts.view" />}>
+          <Route path="/artifacts/:artifactId" element={<ArtifactDetailPage />} />
+        </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </>

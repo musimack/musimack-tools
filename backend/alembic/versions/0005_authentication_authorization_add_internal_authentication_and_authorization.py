@@ -16,7 +16,7 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:  # noqa: PLR0915 - explicit auditable schema.
+def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("user_id", sa.String(32), primary_key=True),

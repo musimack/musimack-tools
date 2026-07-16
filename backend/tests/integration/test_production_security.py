@@ -36,10 +36,12 @@ if TYPE_CHECKING:
     from musimack_tools.crawl.orchestrator import ProgressObserver
     from musimack_tools.domain.application import (
         ApplicationCancellationResult,
+        ApplicationJobList,
         ApplicationJobStatus,
         ApplicationPreflightResult,
         ApplicationProgressResult,
         ApplicationReadinessReport,
+        ApplicationRecommendationPage,
         ApplicationRegistryStatus,
         ApplicationResultProjection,
         ApplicationSubmissionResult,
@@ -56,9 +58,11 @@ _INTERNAL_PATHS = (
     ("POST", "/api/internal/v1/requests/validate"),
     ("POST", "/api/internal/v1/requests/preflight"),
     ("POST", "/api/internal/v1/jobs"),
+    ("GET", "/api/internal/v1/jobs"),
     ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001"),
     ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/progress"),
     ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/result"),
+    ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/recommendations"),
     ("POST", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/cancel"),
     ("GET", "/api/internal/v1/registry"),
     ("GET", "/api/internal/v1/readiness"),
@@ -92,6 +96,10 @@ class _SecurityTestService:
         self.calls.append("status")
         raise AssertionError(_UNUSED_SERVICE_CALL)
 
+    async def list_jobs(self) -> ApplicationJobList:
+        self.calls.append("list")
+        raise AssertionError(_UNUSED_SERVICE_CALL)
+
     async def get_job_progress(self, job_id: str) -> ApplicationProgressResult:
         del job_id
         self.calls.append("progress")
@@ -100,6 +108,20 @@ class _SecurityTestService:
     async def get_job_result(self, job_id: str) -> ApplicationResultProjection:
         del job_id
         self.calls.append("result")
+        raise AssertionError(_UNUSED_SERVICE_CALL)
+
+    async def get_job_recommendations(  # noqa: PLR0913 - mirrors the endpoint contract.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> ApplicationRecommendationPage:
+        del job_id, offset, limit, state, reason, text
+        self.calls.append("recommendations")
         raise AssertionError(_UNUSED_SERVICE_CALL)
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult:
@@ -424,7 +446,7 @@ def test_openapi_is_disabled_by_default_and_explicit_when_enabled() -> None:
     shown = _client(_SecurityTestService(), _settings(include_openapi=True))
     assert hidden.get("/openapi.json").status_code == 404
     document = shown.get("/openapi.json").json()
-    assert len([path for path in document["paths"] if path.startswith("/api/internal/v1")]) == 10
+    assert len([path for path in document["paths"] if path.startswith("/api/internal/v1")]) == 11
     assert _TOKEN not in str(document)
 
 

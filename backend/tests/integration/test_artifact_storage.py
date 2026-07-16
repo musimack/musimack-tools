@@ -288,7 +288,7 @@ def test_production_adds_exactly_three_private_artifact_routes(
     internal = {
         path for path in application.openapi()["paths"] if path.startswith("/api/internal/v1")
     }
-    assert len(internal) == 13
+    assert len(internal) == 14
     assert {
         "/api/internal/v1/artifacts",
         "/api/internal/v1/artifacts/{artifact_id}",

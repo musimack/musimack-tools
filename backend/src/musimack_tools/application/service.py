@@ -20,10 +20,12 @@ from musimack_tools.application.projections import (
 from musimack_tools.application.readiness import capability_report, readiness_report
 from musimack_tools.domain.application import (
     ApplicationCancellationResult,
+    ApplicationJobList,
     ApplicationOutcomeCode,
     ApplicationPreflightResult,
     ApplicationPreparationResult,
     ApplicationProgressResult,
+    ApplicationRecommendationPage,
     ApplicationRegistryStatus,
     ApplicationServiceConfiguration,
     ApplicationShutdownResult,
@@ -33,6 +35,7 @@ from musimack_tools.domain.application import (
     PreflightFinding,
     PreflightState,
     RawApplicationCrawlRequest,
+    RecommendationItemProjection,
     ValidationSeverity,
 )
 from musimack_tools.domain.job import (
@@ -161,6 +164,23 @@ class SeoToolkitApplicationService:
     async def get_job_status(self, job_id: str) -> ApplicationJobStatus:
         return project_status(await self._jobs.status(job_id))
 
+    async def list_jobs(self) -> ApplicationJobList:
+        snapshot = await self._jobs.snapshot()
+        identifiers = tuple(
+            dict.fromkeys(
+                (
+                    *snapshot.active_job_ids,
+                    *snapshot.queued_job_ids,
+                    *snapshot.retained_terminal_job_ids,
+                )
+            )
+        )
+        maximum = self._configuration.maximum_job_list_items
+        items: list[ApplicationJobStatus] = [
+            project_status(await self._jobs.status(job_id)) for job_id in identifiers[:maximum]
+        ]
+        return ApplicationJobList(tuple(items), len(identifiers) > maximum, maximum)
+
     async def get_job_progress(self, job_id: str) -> ApplicationProgressResult:
         progress = await self._jobs.progress(job_id)
         outcome = (
@@ -175,6 +195,96 @@ class SeoToolkitApplicationService:
 
     async def get_job_result(self, job_id: str) -> ApplicationResultProjection:
         return project_result(await self._jobs.result(job_id), self._configuration)
+
+    async def get_job_recommendations(  # noqa: PLR0913 - bounded filter contract.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> ApplicationRecommendationPage:
+        view = await self._jobs.result(job_id)
+        if view.outcome.value == "not_found" or view.snapshot is None:
+            return ApplicationRecommendationPage(
+                outcome=ApplicationOutcomeCode.JOB_NOT_FOUND,
+                job_id=None,
+                run_id=None,
+                offset=offset,
+                limit=limit,
+                total=0,
+                returned_count=0,
+                has_more=False,
+                items=(),
+                rule_set_version=None,
+            )
+        projection = (
+            view.full_result.recommendation_projection if view.full_result is not None else None
+        )
+        if projection is None:
+            return ApplicationRecommendationPage(
+                outcome=ApplicationOutcomeCode.RESULT_UNAVAILABLE,
+                job_id=view.snapshot.job_id,
+                run_id=view.snapshot.run_id,
+                offset=offset,
+                limit=limit,
+                total=0,
+                returned_count=0,
+                has_more=False,
+                items=(),
+                rule_set_version=None,
+            )
+        normalized_text = text.casefold().strip() if text else None
+        filtered = tuple(
+            item
+            for item in projection.recommendations
+            if (state is None or item.state.value == state)
+            and (reason is None or item.primary_reason.value == reason)
+            and (normalized_text is None or normalized_text in item.evaluated_url.casefold())
+        )
+        bounded_limit = min(limit, self._configuration.maximum_recommendation_page_size)
+        page = filtered[offset : offset + bounded_limit]
+        items = tuple(
+            RecommendationItemProjection(
+                item.evaluated_url,
+                item.requested_url,
+                item.final_url,
+                item.state.value,
+                item.determinacy.value,
+                item.primary_reason.value,
+                item.explanation,
+                item.http_status,
+                item.content_type,
+                item.fetch_failure_code,
+                item.canonical.selected_url,
+                item.canonical.conflicting,
+                item.redirect.is_redirect_source,
+                item.redirect.hop_count,
+                item.redirect.final_url,
+                item.robots.available,
+                item.robots.allowed,
+                item.robots.reason_code,
+                item.indexability.generic_directives,
+                item.indexability.crawler_specific_directives,
+                item.indexability.generic_index_conflict,
+                tuple((value.rule_type, value.value) for value in item.configured_exclusions),
+            )
+            for item in page
+        )
+        return ApplicationRecommendationPage(
+            ApplicationOutcomeCode.FOUND,
+            view.snapshot.job_id,
+            view.snapshot.run_id,
+            offset,
+            bounded_limit,
+            len(filtered),
+            len(items),
+            offset + len(items) < len(filtered),
+            items,
+            projection.rule_set_version,
+        )
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult:
         cancelled = await self._jobs.cancel(job_id)

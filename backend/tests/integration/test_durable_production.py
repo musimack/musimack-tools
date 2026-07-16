@@ -229,7 +229,7 @@ def test_production_app_keeps_ten_internal_routes_and_registers_worker_lifecycle
             durable=durable,
         )
         internal = [path for path in app.openapi()["paths"] if path.startswith("/api/internal/")]
-        assert len(internal) == 10
+        assert len(internal) == 11
         assert app.state.durable_readiness.enabled
         assert len(app.router.on_startup) == 1
         assert len(app.router.on_shutdown) == 1

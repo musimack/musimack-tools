@@ -43,7 +43,7 @@ export function AppShell() {
         </nav>
         <div className="sidebar__footer">
           <StatusBadge tone="positive">Private workspace</StatusBadge>
-          <span>Foundation v1</span>
+          <span>Workflow v1</span>
         </div>
       </aside>
       <div className="workspace">

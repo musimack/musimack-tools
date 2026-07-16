@@ -28,10 +28,12 @@ from musimack_tools.domain.authentication import (
 if TYPE_CHECKING:
     from musimack_tools.domain.application import (
         ApplicationCancellationResult,
+        ApplicationJobList,
         ApplicationJobStatus,
         ApplicationPreflightResult,
         ApplicationProgressResult,
         ApplicationReadinessReport,
+        ApplicationRecommendationPage,
         ApplicationRegistryStatus,
         ApplicationResultProjection,
         ApplicationSubmissionResult,
@@ -52,9 +54,22 @@ class InternalApiApplication(Protocol):
 
     async def get_job_status(self, job_id: str) -> ApplicationJobStatus: ...
 
+    async def list_jobs(self) -> ApplicationJobList: ...
+
     async def get_job_progress(self, job_id: str) -> ApplicationProgressResult: ...
 
     async def get_job_result(self, job_id: str) -> ApplicationResultProjection: ...
+
+    async def get_job_recommendations(  # noqa: PLR0913 - bounded filter contract.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> ApplicationRecommendationPage: ...
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult: ...
 
@@ -203,8 +218,10 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
         return Permission.ARTIFACTS_VIEW
     if "/history" in path:
         return Permission.HISTORY_VIEW
-    if path.endswith("/jobs") and method == "POST":
-        return Permission.JOBS_SUBMIT
+    if path.endswith("/jobs"):
+        return Permission.JOBS_SUBMIT if method == "POST" else Permission.JOBS_VIEW
+    if path.endswith("/recommendations"):
+        return Permission.RUNS_VIEW
     if path.endswith("/cancel"):
         return Permission.JOBS_CANCEL
     if "/jobs/" in path:

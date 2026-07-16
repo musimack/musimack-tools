@@ -86,5 +86,5 @@ def test_production_app_accepts_explicit_disabled_persistence_without_new_routes
     )
     app = create_production_app(service, settings, Settings(), persistence=prepared)
     internal = [path for path in app.openapi()["paths"] if path.startswith("/api/internal/")]
-    assert len(internal) == 10
+    assert len(internal) == 11
     assert app.state.persistence_readiness.state is PersistenceReadinessState.DISABLED

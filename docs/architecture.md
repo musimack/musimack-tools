@@ -584,6 +584,24 @@ boundaries. Optional
 `lastmod` remains deferred until trustworthy provenance exists; `priority` and `changefreq` are not
 planned defaults. Metadata warnings remain separate from sitemap eligibility.
 
+## Frontend crawl workflow
+
+The React application is a typed presentation adapter over authenticated internal routes. A crawl
+request moves through edit, validation, preflight, confirmation, submission, live monitoring, and
+terminal result review. React context retains only a bounded list of job identifiers for the
+current page lifetime; durable state stays in the backend. Route permissions remain centralized.
+
+Live job listing is a bounded projection on the existing `/jobs` resource. Detailed sitemap
+recommendations add one read-only path because the existing aggregate result contract does not
+retain per-URL items. That projection is paged and filtered server-side and omits bodies, raw HTML,
+tasks, locks, tokens, and filesystem locations. Artifact transfer remains separate from metadata
+and requires an explicit browser action.
+
+Polling is recursive rather than interval-based so requests cannot overlap. Queued and active
+cadences are fixed, transient failures back off to a ceiling, hidden documents slow down, unmount
+aborts in-flight work, and accepted terminal states stop scheduling. Polling is observation only;
+it cannot become scheduler, cancellation, or retry authority.
+
 ## Why network access is excluded
 
 URL parsing and hostname matching alone cannot make outbound requests safe. Live fetching

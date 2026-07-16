@@ -11,6 +11,11 @@ The foundation versions are:
 - `seo-toolkit-frontend-api-client-v1`
 - `seo-toolkit-frontend-auth-v1`
 - `seo-toolkit-frontend-design-system-v1`
+- `seo-toolkit-crawl-workflow-ui-v1`
+- `seo-toolkit-job-monitor-ui-v1`
+- `seo-toolkit-sitemap-review-ui-v1`
+- `seo-toolkit-artifact-access-ui-v1`
+- `seo-toolkit-frontend-polling-v1`
 
 ## Requirements and install
 
@@ -74,13 +79,48 @@ temporary static bundle to `dist/`; remove it after validation. Production stati
 reverse-proxy policy are deployment responsibilities. The Python backend does not serve this
 bundle.
 
+## Crawl, monitoring, and review workflow
+
+Users with `jobs.submit` can configure a backend-supported crawl at `/jobs/new`, run validation
+and preflight, and explicitly submit it. Live status and bounded progress events appear under
+`/jobs/:jobId`; polling stops at terminal state and slows while the document is hidden. Result and
+recommendation pages use `jobs.view` and `runs.view`. Durable history uses `history.view`, while
+artifact metadata and explicit downloads use `artifacts.view` and the backend download gate.
+
+The browser keeps only ephemeral workflow state. It does not store crawl drafts in browser
+persistence, place them in URLs, accept server filesystem paths, inspect cookies, or automatically
+download artifacts. History and recommendation filters use bounded query parameters.
+
+Workflow routes are `/jobs`, `/jobs/new`, `/jobs/:jobId`, `/jobs/:jobId/progress`,
+`/jobs/:jobId/results`, `/jobs/:jobId/results/recommendations`, `/history`,
+`/history/jobs/:jobId`, `/history/runs/:runId`, `/artifacts`, and
+`/artifacts/:artifactId`. Detail pages provide contextual navigation and remain protected on direct
+entry. The UI consumes the internal validation, preflight, jobs, progress, result, cancellation,
+capabilities, recommendation, history, and artifact routes. Phase 19 adds only one OpenAPI path,
+`GET /api/internal/v1/jobs/{job_id}/recommendations`; live job listing uses `GET` on the existing
+`/api/internal/v1/jobs` path.
+
+Visible queued jobs poll every 3 seconds; starting, running, and cancelling jobs poll every 2
+seconds; other nonterminal and retry-failure states use at least 5 seconds. Failures back off
+exponentially to 15 seconds and hidden documents use at least 10 seconds. Requests never overlap,
+unmount aborts in-flight work, and cancelled, completed, completed-with-warnings, failed,
+partially-completed, and evicted states stop polling. Cancellation is cooperative and requires
+`jobs.cancel`; submission uses `jobs.submit`; live reads use `jobs.view`; results and
+recommendations use `runs.view`; durable records use `history.view`; artifact metadata and
+downloads use `artifacts.view` and `artifacts.download`.
+
+Forms use semantic fieldsets, controlled inputs, client usability checks, backend validation,
+effective-value review, and explicit preflight confirmation. Tables scroll on narrow screens,
+long evidence wraps, reduced motion is honored, status always includes text, and every data surface
+has a loading, empty, or safe error state. This is an accessibility foundation, not a certification.
+
 ## Scope
 
-This phase provides Sign In, Overview, Jobs, History, Artifacts, Users, Settings, Unauthorized,
-Not Found, and Service Unavailable surfaces. Jobs, History, Artifacts, Users, and Settings are
-intentional permission-gated landing pages. Phase 19 workflow behavior, mutations, live polling,
-generated API clients, OAuth, JWT, public deployment, and backend static-file serving remain
-deferred.
+This phase provides Sign In, Overview, crawl submission, job monitoring and cancellation, result
+and recommendation review, durable history, artifact browsing and download, Users, Settings,
+Unauthorized, Not Found, and Service Unavailable surfaces. Manual recommendation overrides,
+sitemap submission, deployment automation, generated API clients, OAuth, JWT, public deployment,
+and backend static-file serving remain deferred.
 
 The compatibility target is the current evergreen releases of Chrome, Edge, Firefox, and Safari.
 No Internet Explorer support or legacy polyfill bundle is provided.

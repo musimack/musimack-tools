@@ -21,11 +21,13 @@ from musimack_tools.domain.api import (
 )
 from musimack_tools.domain.application import (
     ApplicationCancellationResult,
+    ApplicationJobList,
     ApplicationJobStatus,
     ApplicationOutcomeCode,
     ApplicationPreflightResult,
     ApplicationProgressResult,
     ApplicationReadinessReport,
+    ApplicationRecommendationPage,
     ApplicationRegistryStatus,
     ApplicationResultProjection,
     ApplicationSubmissionResult,
@@ -35,6 +37,7 @@ from musimack_tools.domain.application import (
     PreflightState,
     RawApplicationCrawlRequest,
     ReadinessState,
+    RecommendationItemProjection,
     ValidationSeverity,
 )
 from musimack_tools.domain.crawl import (
@@ -206,6 +209,10 @@ class _FakeApplication:
         self.calls.append("status")
         return _status() if job_id == _JOB_ID else _missing_status()
 
+    async def list_jobs(self) -> ApplicationJobList:
+        self.calls.append("list")
+        return ApplicationJobList(items=(_status(),), truncated=False, maximum=100)
+
     async def get_job_progress(self, job_id: str) -> ApplicationProgressResult:
         self.calls.append("progress")
         if job_id != _JOB_ID:
@@ -227,6 +234,67 @@ class _FakeApplication:
         if job_id != _JOB_ID:
             return _result(ApplicationOutcomeCode.JOB_NOT_FOUND)
         return _result(self.result_outcome)
+
+    async def get_job_recommendations(  # noqa: PLR0913 - mirrors the endpoint contract.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> ApplicationRecommendationPage:
+        self.calls.append(f"recommendations:{state}:{reason}:{text}")
+        if job_id != _JOB_ID:
+            return ApplicationRecommendationPage(
+                outcome=ApplicationOutcomeCode.JOB_NOT_FOUND,
+                job_id=None,
+                run_id=None,
+                offset=offset,
+                limit=limit,
+                total=0,
+                returned_count=0,
+                has_more=False,
+                items=(),
+                rule_set_version=None,
+            )
+        item = RecommendationItemProjection(
+            url="https://example.test/guide",
+            requested_url="https://example.test/guide",
+            final_url="https://example.test/guide",
+            state="include",
+            determinacy="determinate",
+            primary_reason="eligible",
+            explanation="The URL is eligible.",
+            http_status=200,
+            content_type="text/html",
+            fetch_failure_code=None,
+            canonical_url="https://example.test/guide",
+            canonical_conflicting=False,
+            redirect_source=False,
+            redirect_hops=0,
+            redirect_final_url=None,
+            robots_available=True,
+            robots_allowed=True,
+            robots_reason_code="allowed",
+            generic_directives=(),
+            crawler_specific_directives=(),
+            indexability_conflict=False,
+            configured_exclusions=(),
+        )
+        return ApplicationRecommendationPage(
+            outcome=ApplicationOutcomeCode.FOUND,
+            job_id=_JOB_ID,
+            run_id="run-4f82d76a1b42",
+            offset=offset,
+            limit=limit,
+            total=1,
+            returned_count=1,
+            has_more=False,
+            items=(item,),
+            rule_set_version="sitemap-recommendation-v1",
+        )
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult:
         self.calls.append("cancel")
@@ -435,6 +503,7 @@ def test_explicit_routes_are_exact_and_shutdown_is_not_exposed() -> None:
         "/api/internal/v1/jobs/{job_id}",
         "/api/internal/v1/jobs/{job_id}/progress",
         "/api/internal/v1/jobs/{job_id}/result",
+        "/api/internal/v1/jobs/{job_id}/recommendations",
         "/api/internal/v1/jobs/{job_id}/cancel",
         "/api/internal/v1/registry",
         "/api/internal/v1/readiness",
@@ -456,9 +525,11 @@ def test_explicit_routes_can_be_hidden_from_openapi_while_remaining_mounted() ->
         ("post", "/api/internal/v1/requests/validate"),
         ("post", "/api/internal/v1/requests/preflight"),
         ("post", "/api/internal/v1/jobs"),
+        ("get", "/api/internal/v1/jobs"),
         ("get", f"/api/internal/v1/jobs/{_JOB_ID}"),
         ("get", f"/api/internal/v1/jobs/{_JOB_ID}/progress"),
         ("get", f"/api/internal/v1/jobs/{_JOB_ID}/result"),
+        ("get", f"/api/internal/v1/jobs/{_JOB_ID}/recommendations"),
         ("post", f"/api/internal/v1/jobs/{_JOB_ID}/cancel"),
         ("get", "/api/internal/v1/registry"),
         ("get", "/api/internal/v1/readiness"),
@@ -616,6 +687,15 @@ def test_status_unknown_and_found_do_not_leak_internal_objects() -> None:
     assert all(word not in text for word in ("task", "lock", "token", "callback", "exception"))
 
 
+def test_live_job_list_is_bounded_and_projects_only_safe_status() -> None:
+    service = _FakeApplication()
+    response = _client(service, verifier=_AllowVerifier()).get("/api/internal/v1/jobs")
+    assert response.status_code == 200
+    assert response.json()["data"]["maximum"] == 100
+    assert response.json()["data"]["items"][0]["job_id"] == _JOB_ID
+    assert all(word not in response.text.lower() for word in ("task", "lock", "token", "callback"))
+
+
 def test_progress_is_latest_only_by_default_and_history_is_bounded_ordered() -> None:
     service = _FakeApplication()
     client = _client(service, verifier=_AllowVerifier())
@@ -641,6 +721,24 @@ def test_result_found_unavailable_unknown_and_bounded() -> None:
     assert unavailable.status_code == 409
     assert unavailable.json()["error"]["code"] == "job_result_unavailable"
     unknown = client.get(f"/api/internal/v1/jobs/{_UNKNOWN_JOB_ID}/result")
+    assert unknown.status_code == 404
+
+
+def test_recommendation_page_is_bounded_filterable_and_safe() -> None:
+    service = _FakeApplication()
+    client = _client(service, verifier=_AllowVerifier())
+    response = client.get(
+        f"/api/internal/v1/jobs/{_JOB_ID}/recommendations",
+        params={"limit": 25, "state": "include", "text": "guide"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["total"] == 1
+    assert response.json()["data"]["items"][0]["url"] == "https://example.test/guide"
+    assert service.calls[-1] == "recommendations:include:None:guide"
+    assert all(word not in response.text.lower() for word in ("html_body", "storage_path", "token"))
+    excessive = client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations?limit=101")
+    assert excessive.status_code == 400
+    unknown = client.get(f"/api/internal/v1/jobs/{_UNKNOWN_JOB_ID}/recommendations")
     assert unknown.status_code == 404
 
 

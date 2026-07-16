@@ -180,6 +180,21 @@ async def test_validate_preflight_submit_status_result_and_diagnostics() -> None
     assert dict(projected.crawl_counts)["urls_fetched"] == 1
     status = await application.get_job_status(submitted.status.job_id)
     assert status.terminal
+    listed = await application.list_jobs()
+    assert [item.job_id for item in listed.items] == [submitted.status.job_id]
+    assert not listed.truncated
+    recommendations = await application.get_job_recommendations(
+        submitted.status.job_id,
+        offset=0,
+        limit=25,
+        state="include",
+        text="example",
+    )
+    assert recommendations.outcome is ApplicationOutcomeCode.FOUND
+    assert recommendations.total == 0
+    assert recommendations.items == ()
+    missing = await application.get_job_recommendations("missing", offset=0, limit=25)
+    assert missing.outcome is ApplicationOutcomeCode.JOB_NOT_FOUND
     assert b'"job_id"' in application.diagnostics_json(status).content
     assert application.diagnostics_markdown(projected, "Result").content.endswith(b"\n")
     await application.shutdown()

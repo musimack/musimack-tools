@@ -752,7 +752,9 @@ administration perform no public HTTP, DNS, crawl, publication, or artifact file
 
 ## Frontend does not change crawl authority
 
-The private frontend is an authenticated presentation adapter. Its route guards, navigation, and
-Phase 18 landing pages cannot authorize a URL, broaden scope, bypass DNS/SSRF controls, change
-robots or indexability evidence, or begin a crawl. Frontend tests mock every API call and perform no
-public HTTP or DNS. Crawl submission and sitemap workflow behavior remain deferred to Phase 19.
+The private frontend is an authenticated presentation adapter. Its route guards, navigation, crawl
+form, polling, and review pages cannot authorize a URL, broaden scope, bypass DNS/SSRF controls, or
+change robots or indexability evidence. Submission always passes the backend validation and
+preflight pipeline. Polling reads bounded status evidence and stops at terminal state. Frontend
+tests mock every API call and perform no public HTTP or DNS. History, recommendation filters, and
+artifact downloads do not trigger a crawl or change sitemap eligibility.

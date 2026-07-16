@@ -38,15 +38,21 @@ This first implementation batch provides:
 - Pytest, Ruff, and MyPy validation
 - A private React, TypeScript, and Vite frontend foundation with cookie authentication,
   permission-aware routing, responsive accessible pages, and deterministic component tests
+- A guided crawl submission, live job monitor, sitemap recommendation review, durable history,
+  and explicit retained-artifact download workflow
 - Architecture and crawl-policy documentation
 
 It deliberately does **not** provide sitemap fetching, final search-engine-specific indexability
-verdicts, public crawl, recommendation, or job API endpoints, persistent background workers,
-persistence, CSV
-exports, manual overrides, OAuth, JWT, frontend workflow mutations, browser automation, or Docker
+verdicts, public APIs, CSV exports, manual recommendation overrides, sitemap submission, OAuth,
+JWT, browser automation, deployment automation, or Docker
 configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
 inert HTML evidence; they do not contact public HTTP services or DNS.
+
+The private frontend submits only accepted crawl request fields through validation and preflight.
+It polls bounded status and progress projections, reviews retained recommendation evidence, and
+downloads artifacts only after an explicit action. Browser state contains no passwords, session
+tokens, server paths, raw HTML, or persisted crawl drafts.
 
 ## Repository layout
 

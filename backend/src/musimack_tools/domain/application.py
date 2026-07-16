@@ -321,6 +321,55 @@ class ApplicationJobStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ApplicationJobList:
+    items: tuple[ApplicationJobStatus, ...]
+    truncated: bool
+    maximum: int
+    application_service_version: str = APPLICATION_SERVICE_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class RecommendationItemProjection:
+    url: str
+    requested_url: str
+    final_url: str | None
+    state: str
+    determinacy: str
+    primary_reason: str
+    explanation: str
+    http_status: int | None
+    content_type: str | None
+    fetch_failure_code: str | None
+    canonical_url: str | None
+    canonical_conflicting: bool
+    redirect_source: bool
+    redirect_hops: int
+    redirect_final_url: str | None
+    robots_available: bool
+    robots_allowed: bool | None
+    robots_reason_code: str | None
+    generic_directives: tuple[str, ...]
+    crawler_specific_directives: tuple[str, ...]
+    indexability_conflict: bool
+    configured_exclusions: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationRecommendationPage:
+    outcome: ApplicationOutcomeCode
+    job_id: str | None
+    run_id: str | None
+    offset: int
+    limit: int
+    total: int
+    returned_count: int
+    has_more: bool
+    items: tuple[RecommendationItemProjection, ...]
+    rule_set_version: str | None
+    application_service_version: str = APPLICATION_SERVICE_VERSION
+
+
+@dataclass(frozen=True, slots=True)
 class ApplicationResultProjection:
     outcome: ApplicationOutcomeCode
     job_id: str | None
@@ -363,6 +412,8 @@ class ApplicationServiceConfiguration:
     maxima: ApplicationCrawlLimits
     maximum_projection_codes: int = 100
     maximum_projection_filenames: int = 100
+    maximum_job_list_items: int = 100
+    maximum_recommendation_page_size: int = 100
     coordinator_available: bool = True
     crawl_service_available: bool = True
     robots_service_available: bool = True
@@ -375,7 +426,12 @@ class ApplicationServiceConfiguration:
     def __post_init__(self) -> None:
         if self.application_service_version != APPLICATION_SERVICE_VERSION:
             raise ValueError(_UNSUPPORTED_SERVICE_VERSION)
-        if self.maximum_projection_codes < 1 or self.maximum_projection_filenames < 1:
+        if (
+            self.maximum_projection_codes < 1
+            or self.maximum_projection_filenames < 1
+            or self.maximum_job_list_items < 1
+            or self.maximum_recommendation_page_size < 1
+        ):
             raise ValueError(_INVALID_PROJECTION_BOUNDS)
 
 

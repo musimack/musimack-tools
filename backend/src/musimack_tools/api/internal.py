@@ -36,11 +36,16 @@ from musimack_tools.api.schemas import (
     ApplicationRequestSchema,
     CancellationResponse,
     CapabilityResponse,
+    JobListResponse,
+    JobListSchema,
     JobProgressResponse,
     JobResultResponse,
     JobStatusResponse,
     PreflightResponse,
     ReadinessResponse,
+    RecommendationItemSchema,
+    RecommendationPageResponse,
+    RecommendationPageSchema,
     RegistryStatusResponse,
     SubmissionResponse,
     ValidationResponse,
@@ -56,6 +61,10 @@ from musimack_tools.domain.application import (
     ApplicationValidationReport,
     PreflightState,
     ReadinessState,
+)
+from musimack_tools.domain.sitemap import (  # noqa: TC001 - FastAPI resolves query types.
+    RecommendationState,
+    SitemapReasonCode,
 )
 
 if TYPE_CHECKING:
@@ -182,6 +191,18 @@ def create_internal_api_router(  # noqa: C901, PLR0915 - explicit route composit
             resolved.maximum_validation_details,
         )
 
+    @router.get("/jobs", response_model=JobListResponse, responses=error_responses)
+    async def list_jobs() -> JobListResponse:
+        result = await service.list_jobs()
+        return JobListResponse(
+            data=JobListSchema(
+                items=tuple(job_status_schema(item) for item in result.items),
+                truncated=result.truncated,
+                maximum=result.maximum,
+                application_service_version=result.application_service_version,
+            )
+        )
+
     @router.get("/jobs/{job_id}", response_model=JobStatusResponse, responses=error_responses)
     async def get_status(job_id: str) -> JobStatusResponse:
         _validate_job_id(job_id)
@@ -228,6 +249,55 @@ def create_internal_api_router(  # noqa: C901, PLR0915 - explicit route composit
                 "The retained job metadata does not include a result payload.",
             )
         return JobResultResponse(data=result_schema(result))
+
+    @router.get(
+        "/jobs/{job_id}/recommendations",
+        response_model=RecommendationPageResponse,
+        responses=error_responses,
+    )
+    async def get_recommendations(  # noqa: PLR0913 - explicit bounded query contract.
+        job_id: str,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        state: RecommendationState | None = None,
+        reason: SitemapReasonCode | None = None,
+        text: Annotated[str | None, Query(max_length=256)] = None,
+    ) -> RecommendationPageResponse:
+        _validate_job_id(job_id)
+        result = await service.get_job_recommendations(
+            job_id,
+            offset=offset,
+            limit=limit,
+            state=state.value if state is not None else None,
+            reason=reason.value if reason is not None else None,
+            text=text,
+        )
+        if result.outcome is ApplicationOutcomeCode.JOB_NOT_FOUND:
+            raise InternalApiError(404, ApiErrorCode.JOB_NOT_FOUND, "The job was not found.")
+        if result.outcome is ApplicationOutcomeCode.RESULT_UNAVAILABLE:
+            raise InternalApiError(
+                409,
+                ApiErrorCode.JOB_RESULT_UNAVAILABLE,
+                "Detailed recommendations are not retained for this job.",
+            )
+        return RecommendationPageResponse(
+            data=RecommendationPageSchema(
+                outcome=result.outcome.value,
+                job_id=result.job_id,
+                run_id=result.run_id,
+                offset=result.offset,
+                limit=result.limit,
+                total=result.total,
+                returned_count=result.returned_count,
+                has_more=result.has_more,
+                items=tuple(
+                    RecommendationItemSchema.model_validate(item, from_attributes=True)
+                    for item in result.items
+                ),
+                rule_set_version=result.rule_set_version,
+                application_service_version=result.application_service_version,
+            )
+        )
 
     @router.post(
         "/jobs/{job_id}/cancel",
