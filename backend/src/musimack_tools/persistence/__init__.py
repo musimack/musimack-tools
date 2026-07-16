@@ -1,0 +1,1 @@
+"""Explicit SQLAlchemy persistence boundary."""

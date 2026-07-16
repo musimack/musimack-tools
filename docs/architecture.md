@@ -465,16 +465,37 @@ inventory, internal-link, image, schema, indexability, and migration-QA modules.
 
 ### Persistence
 
-Persistence is absent. A future boundary may use SQLite initially through typed repository
-interfaces and migrations, with PostgreSQL portability retained. API and domain objects should
-not acquire SQLite-specific behavior.
+Persistence is an optional injected record layer. Immutable contracts in `domain/persistence.py`
+and repository protocols in `domain/storage.py` remain independent of SQLAlchemy. Typed ORM models,
+engine/session creation, mapping, repositories, reconciliation, diagnostics, and cleanup live under
+`persistence/`; ORM rows are storage representations and never replace job, run, crawl,
+recommendation, XML, publication, or API domain authorities.
+
+No engine or session exists at import time. Explicit startup validates the absolute SQLite path,
+creates a short-lived engine/session factory, verifies the migrated schema and effective SQLite
+pragmas, reconciles interrupted records, recovers attempt maxima and metadata-only terminal views,
+then constructs the in-memory registry with an observer. Each repository operation owns one short
+session and transaction. No transaction crosses crawl execution or an awaited network operation.
+Persistence failure adds bounded coordination evidence without erasing the in-memory terminal
+result.
+
+Alembic revision `0001_persistence` owns the frozen initial schema. `alembic.ini` has no fallback
+URL; callers must inject an explicit database URL. Automatic migration is disabled by default and
+pending migrations block persistence readiness. Cleanup is explicit and sequence ordered. It never
+deletes published XML or summary files.
+
+The database stores metadata and hashes, not artifact bytes, raw bodies, credentials, access logs,
+or unrestricted paths. SQLite is supported only for local process durability. A future PostgreSQL
+adapter is possible behind the protocols but is not implemented. A future durable worker may make
+the database scheduling-authoritative only through a separate architecture decision.
 
 ### Background jobs
 
 The internal process-local job boundary owns bounded admission, FIFO coordination, cooperative
-cancellation, lookup, and bounded retention. A future adapter may add authenticated API delivery;
-a future durable worker boundary may add persisted progress and interruption recovery. FastAPI
-background tasks should not become the crawler's core execution model.
+cancellation, lookup, and bounded in-memory retention. Optional persistence records its accepted
+transitions, progress, and terminal metadata, but does not schedule or resume work. Restart
+reconciliation marks interrupted work and preserves completed evidence. A future durable worker
+boundary remains separate; FastAPI background tasks do not become the crawler's execution model.
 
 ### Exports
 

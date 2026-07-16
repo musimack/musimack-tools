@@ -678,3 +678,26 @@ The production application still depends on deployment controls for TLS, reverse
 actual streamed request-body limits beyond the accepted declared `Content-Length` check, and
 network ingress/egress policy. The internal access gate and shared bearer credential are not a
 public authorization system.
+
+## Persistence does not change crawl policy
+
+Optional SQLite persistence records bounded accepted evidence after the same normalization, scope,
+destination safety, robots, frontier, indexability, recommendation, XML, and publication decisions.
+It does not authorize a request, broaden scope, alter normalized URL identity, recompute a
+recommendation, or make retained rows authoritative over current domain contracts.
+
+Stored URLs omit query strings for safe operational evidence. The database does not retain raw
+HTML, response bodies, full crawl records, XML bytes, manifest bytes, summary bytes, credentials,
+or arbitrary filesystem roots. Configuration snapshots are canonical, path-free, immutable, and
+deduplicated by SHA-256. Progress, warnings, failures, summaries, artifacts, and terminal jobs are
+bounded by deterministic sequence-based retention.
+
+After restart, no crawl automatically resumes. Accepted, queued, starting, running, and cancelling
+records are mapped to failed or partially completed with `process_restart_interrupted`; completed
+stage and artifact metadata remains. Recovered attempts prevent duplicate job IDs, while queued
+capacity rejection still allocates no attempt. Metadata-only bootstrap restores no task,
+cancellation token, response body, XML payload, or full `CrawlRunResult`.
+
+Explicit cleanup removes or marks only database metadata according to policy. It never deletes
+filesystem sitemap or summary artifacts, and retention never changes sitemap recommendation or XML
+generation outcomes.

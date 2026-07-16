@@ -39,13 +39,16 @@ from musimack_tools.domain.job_registry import (
     ShutdownPolicy,
 )
 from musimack_tools.domain.run import CrawlRunResult, RunLifecycle
+from musimack_tools.domain.storage import NullPersistenceRepository
 from musimack_tools.jobs.identity import job_identifier
 from musimack_tools.run.identity import run_identity
 
 if TYPE_CHECKING:
+    from musimack_tools.domain.persistence import PersistedJobMetadata, PersistenceOperationResult
     from musimack_tools.domain.run import CrawlRunRequest
     from musimack_tools.domain.run_progress import RunProgressEvent
     from musimack_tools.domain.run_summary import RunSummaryArtifact
+    from musimack_tools.domain.storage import JobPersistenceObserver
     from musimack_tools.jobs.coordinator import JobRunServiceFactory
 
 
@@ -105,6 +108,9 @@ class InMemoryJobRegistry:
         self,
         run_service_factory: JobRunServiceFactory,
         configuration: JobRegistryConfiguration | None = None,
+        persistence: JobPersistenceObserver | None = None,
+        recovered_attempts: tuple[tuple[str, int], ...] = (),
+        persisted_terminal_jobs: tuple[PersistedJobMetadata, ...] = (),
     ) -> None:
         self._factory = run_service_factory
         self._configuration = configuration or JobRegistryConfiguration()
@@ -114,7 +120,9 @@ class InMemoryJobRegistry:
         self._queue: deque[str] = deque()
         self._active: dict[str, None] = {}
         self._terminal: deque[str] = deque()
-        self._attempts: dict[str, int] = {}
+        self._attempts: dict[str, int] = dict(recovered_attempts)
+        self._persisted_terminal = {item.job_id: item for item in persisted_terminal_jobs}
+        self._persistence = persistence or NullPersistenceRepository()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._counters = _MutableCounters()
         self._terminal_sequence = 0
@@ -193,22 +201,36 @@ class InMemoryJobRegistry:
             self._state = RegistryState.RUNNING
             self._idle.clear()
             if starts_now:
-                self._activate(job)
+                self._active[job.job_id] = None
                 accepted_snapshot = replace(self._snapshot(job), state=JobState.ACCEPTED)
             else:
                 self._queue.append(job_id)
                 accepted_snapshot = self._snapshot(job)
-            return JobSubmissionResult(
+            accepted_result = JobSubmissionResult(
                 JobSubmissionOutcome.ACCEPTED,
                 accepted_snapshot,
                 None,
                 "The job was accepted",
                 CRAWL_JOB_REGISTRY_VERSION,
             )
+        persistence = self._persistence.record_submission(accepted_snapshot, submission.run_request)
+        if not persistence.succeeded:
+            await self._record_persistence_warning(job_id, _persistence_warning_code(persistence))
+        if starts_now:
+            async with self._lock:
+                reserved = self._jobs.get(job_id)
+                if reserved is not None and not reserved.state.terminal:
+                    self._schedule_reserved(reserved)
+        return accepted_result
 
     async def lookup(self, job_id: str) -> JobLookupResult:
         async with self._lock:
             job = self._jobs.get(job_id)
+            if job is None and job_id in self._persisted_terminal:
+                return JobLookupResult(
+                    JobLookupOutcome.FOUND,
+                    self._persisted_metadata_snapshot(self._persisted_terminal[job_id]),
+                )
             return JobLookupResult(
                 JobLookupOutcome.FOUND if job is not None else JobLookupOutcome.NOT_FOUND,
                 self._snapshot(job) if job is not None else None,
@@ -234,9 +256,17 @@ class InMemoryJobRegistry:
     async def result(self, job_id: str) -> JobResultView:
         async with self._lock:
             job = self._jobs.get(job_id)
+            if job is None and job_id in self._persisted_terminal:
+                return JobResultView(
+                    JobLookupOutcome.FOUND,
+                    self._persisted_metadata_snapshot(self._persisted_terminal[job_id]),
+                    None,
+                    (),
+                )
             return self._result_view(job)
 
     async def cancel(self, job_id: str) -> JobCancellationResult:
+        terminal_result: JobCancellationResult | None = None
         async with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -265,17 +295,33 @@ class InMemoryJobRegistry:
                 snapshot = self._snapshot(job)
                 self._terminalize(job)
                 self._start_available()
-                return JobCancellationResult(
+                terminal_result = JobCancellationResult(
                     JobCancellationOutcome.CANCELLED_WHILE_QUEUED,
                     snapshot,
                     "The queued job was cancelled before execution",
                 )
-            job.state = JobState.CANCELLING
-            return JobCancellationResult(
-                JobCancellationOutcome.REQUESTED,
-                self._snapshot(job),
-                "Cooperative cancellation was requested",
+            else:
+                job.state = JobState.CANCELLING
+                terminal_result = JobCancellationResult(
+                    JobCancellationOutcome.REQUESTED,
+                    self._snapshot(job),
+                    "Cooperative cancellation was requested",
+                )
+        if terminal_result is None or terminal_result.snapshot is None:
+            message = "cancellation transition did not retain a snapshot"
+            raise RuntimeError(message)
+        if terminal_result.snapshot.terminal:
+            persistence = self._persistence.record_terminal(
+                terminal_result.snapshot, None, (), None
             )
+        else:
+            persistence = self._persistence.record_transition(terminal_result.snapshot)
+        if not persistence.succeeded:
+            await self._record_persistence_warning(
+                terminal_result.snapshot.job_id,
+                _persistence_warning_code(persistence),
+            )
+        return terminal_result
 
     async def wait_for_completion(
         self,
@@ -322,6 +368,10 @@ class InMemoryJobRegistry:
                 while len(job.progress_history) > limit:
                     job.progress_history.popleft()
                     job.history_truncated = True
+            run_id = job.run_id
+        persistence = self._persistence.record_progress(job_id, run_id, event)
+        if not persistence.succeeded:
+            await self._record_persistence_warning(job_id, _persistence_warning_code(persistence))
 
     async def record_progress_failure(self, job_id: str, error: Exception) -> None:
         """Retain safe warning evidence without failing the accepted run service."""
@@ -390,7 +440,7 @@ class InMemoryJobRegistry:
             self._shutdown_result = result
             return result
 
-    async def _execute(self, job_id: str) -> None:
+    async def _execute(self, job_id: str) -> None:  # noqa: C901, PLR0915
         try:
             async with self._lock:
                 job = self._jobs.get(job_id)
@@ -401,6 +451,12 @@ class InMemoryJobRegistry:
                     job.state = JobState.RUNNING
                 cancellation = job.cancellation
                 request = job.request
+                starting_snapshot = self._snapshot(job)
+            transition = self._persistence.record_transition(starting_snapshot)
+            if not transition.succeeded:
+                await self._record_persistence_warning(
+                    job_id, _persistence_warning_code(transition)
+                )
             try:
                 executor = self._factory(cancellation, _RegistryProgressSink(self, job_id))
                 result = await executor.execute(request)
@@ -417,6 +473,19 @@ class InMemoryJobRegistry:
                     job.failure_count = 1
                     job.state = JobState.FAILED
                     self._complete(job)
+                    failed_snapshot = self._snapshot(job)
+                    failed_warnings = tuple(job.coordination_warnings)
+                    failed_coordination = job.coordination_failure
+                terminal = self._persistence.record_terminal(
+                    failed_snapshot,
+                    None,
+                    failed_warnings,
+                    failed_coordination,
+                )
+                if not terminal.succeeded:
+                    await self._record_persistence_warning(
+                        job_id, _persistence_warning_code(terminal)
+                    )
                 return
             async with self._lock:
                 job = self._jobs.get(job_id)
@@ -434,6 +503,17 @@ class InMemoryJobRegistry:
                     elif policy is PayloadRetentionPolicy.SUMMARY_ONLY:
                         job.summaries = result.summaries
                 self._complete(job)
+                terminal_snapshot = self._snapshot(job)
+                terminal_warnings = tuple(job.coordination_warnings)
+                terminal_failure = job.coordination_failure
+            terminal = self._persistence.record_terminal(
+                terminal_snapshot,
+                result,
+                terminal_warnings,
+                terminal_failure,
+            )
+            if not terminal.succeeded:
+                await self._record_persistence_warning(job_id, _persistence_warning_code(terminal))
         finally:
             async with self._lock:
                 self._tasks.pop(job_id, None)
@@ -444,6 +524,12 @@ class InMemoryJobRegistry:
             raise RuntimeError(message)
         job.state = JobState.STARTING
         self._active[job.job_id] = None
+        self._schedule_reserved(job)
+
+    def _schedule_reserved(self, job: _MutableJob) -> None:
+        if job.started or job.job_id in self._tasks:
+            message = "job scheduling attempted more than once"
+            raise RuntimeError(message)
         self._tasks[job.job_id] = asyncio.create_task(self._execute(job.job_id))
 
     def _start_available(self) -> None:
@@ -537,6 +623,38 @@ class InMemoryJobRegistry:
             self._counters.queue_capacity_rejections,
         )
 
+    async def _record_persistence_warning(self, job_id: str, code: str) -> None:
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            if any(warning.code == code for warning in job.coordination_warnings):
+                return
+            job.coordination_warnings.append(
+                JobCoordinationWarning(code, "Durable persistence did not record accepted evidence")
+            )
+            job.warning_count += 1
+
+    @staticmethod
+    def _persisted_metadata_snapshot(metadata: PersistedJobMetadata) -> JobSnapshot:
+        return JobSnapshot(
+            job_id=metadata.job_id,
+            run_id=metadata.run_id,
+            attempt_number=metadata.attempt_number,
+            state=JobState(metadata.state),
+            queue_position=None,
+            run_lifecycle=None,
+            active_stage=None,
+            latest_progress=None,
+            warning_count=metadata.warning_count,
+            failure_count=metadata.failure_count,
+            cancellation_requested=False,
+            final_result_available=metadata.result_available,
+            summary_artifact_count=0,
+            terminal=metadata.terminal,
+            registry_version=CRAWL_JOB_REGISTRY_VERSION,
+        )
+
 
 def _job_state(lifecycle: RunLifecycle) -> JobState:
     return {
@@ -558,4 +676,10 @@ def _submission_failure(
         code,
         explanation,
         CRAWL_JOB_REGISTRY_VERSION,
+    )
+
+
+def _persistence_warning_code(result: PersistenceOperationResult) -> str:
+    return (
+        result.failure_code.value if result.failure_code is not None else "persistence_write_failed"
     )

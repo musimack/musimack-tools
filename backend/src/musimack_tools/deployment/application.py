@@ -21,6 +21,7 @@ from musimack_tools.domain.deployment import (
     StartupValidationOutcome,
     StartupValidationReport,
 )
+from musimack_tools.domain.persistence import PersistenceReadinessState
 from musimack_tools.domain.security import (
     AccessLogConfiguration,
     CorrelationConfiguration,
@@ -40,6 +41,7 @@ from musimack_tools.security.validation import security_readiness, validate_prod
 
 if TYPE_CHECKING:
     from musimack_tools.api.dependencies import InternalApiApplication
+    from musimack_tools.deployment.persistence_runtime import PreparedPersistence
 
 Network = IPv4Network | IPv6Network
 
@@ -48,6 +50,7 @@ def create_production_app(
     service: InternalApiApplication,
     settings: ProductionSettings | None = None,
     application_settings: Settings | None = None,
+    persistence: PreparedPersistence | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -58,6 +61,11 @@ def create_production_app(
     report = validate_production_startup(resolved, service)
     if report.outcome is StartupValidationOutcome.INVALID:
         raise ProductionConfigurationError(report)
+    if persistence is not None and persistence.diagnostics.state not in {
+        PersistenceReadinessState.READY,
+        PersistenceReadinessState.DISABLED,
+    }:
+        raise _configuration_error("persistence_not_ready")
 
     core_settings = application_settings or get_settings()
     configure_logging(core_settings)
@@ -109,6 +117,8 @@ def create_production_app(
     application.state.production_configuration = configuration
     application.state.startup_validation = report
     application.state.security_readiness = security_readiness(resolved)
+    if persistence is not None:
+        application.state.persistence_readiness = persistence.diagnostics
     return application
 
 

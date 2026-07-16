@@ -510,7 +510,54 @@ Focused validation is:
 .\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_application_service_domain.py backend\tests\integration\test_application_service.py
 ```
 
-No public application route, CLI, persistence, worker, scheduler, or frontend has been added.
+No public application route, CLI, durable worker, scheduler, or frontend has been added.
+
+## Optional SQLite persistence
+
+The internal toolkit now has an optional durable metadata boundary identified by
+`seo-toolkit-persistence-v1` with schema `seo-toolkit-database-schema-v1`. It uses SQLAlchemy 2.x,
+SQLite, and Alembic revision `0001_persistence` (`create persistence foundation`). Persistence is
+disabled by default, and the accepted in-memory registry remains the execution and scheduling
+authority. The default health-only app creates no engine, session, migration check, or database.
+
+When enabled, `MUSIMACK_PERSISTENCE_DATABASE_PATH` must be an explicit absolute path. Parent
+creation, automatic migration, and SQL echo are off by default. The path boundary rejects `.git`,
+UNC/device paths, directories, regular-file parents, and existing symlink or junction ancestors.
+Pure path validation creates nothing. SQLite connections enable foreign keys, apply a bounded busy
+timeout, request WAL journaling, and use `NORMAL` synchronous mode; readiness verifies the effective
+settings rather than assuming they succeeded.
+
+The database stores bounded job/run lifecycle records, stage states, progress, normalized warning
+and failure evidence, canonical safe configuration snapshots, and summary/artifact metadata with
+hashes. It does not store credentials, environment values, absolute publication or summary roots,
+raw HTML, response bodies, XML/manifest/summary bytes, access logs, tasks, or cancellation tokens.
+Seed and warning URLs are persisted without query strings.
+
+Migration is explicit by default. From the repository root, supply a test or operator-managed
+absolute URL rather than relying on the current directory:
+
+```powershell
+$databaseUrl = "sqlite+pysqlite:///C:/absolute/path/to/musimack-tools.db"
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini -x "database_url=$databaseUrl" upgrade head
+.\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini -x "database_url=$databaseUrl" current
+```
+
+`alembic.ini` deliberately has no fallback database URL. Production startup blocks when enabled
+persistence is unmigrated. Explicit startup composition can migrate only when `auto_migrate=true`,
+then reconciles non-terminal records before a registry is constructed. Interrupted accepted,
+queued, starting, running, or cancelling work is not resumed or requeued; it becomes failed or
+partially completed with `process_restart_interrupted`. Attempt maxima and metadata-only terminal
+views can then seed a new in-memory registry without recreating tasks, tokens, or full results.
+
+Cleanup is explicit, sequence-ordered, and bounded. It prunes old progress/warning/failure and
+artifact/summary metadata and may mark excess terminal records evicted; it never deletes filesystem
+artifacts. SQLite remains a local single-process durability layer, not a worker queue.
+
+Focused persistence validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_persistence_domain.py backend\tests\unit\test_persistence_engine_and_models.py backend\tests\integration\test_persistence_migrations.py backend\tests\integration\test_persistence_repository.py backend\tests\integration\test_job_persistence_integration.py backend\tests\integration\test_persistence_production.py
+```
 
 ## Private internal API adapter
 
@@ -587,6 +634,6 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 ## Next recommended development batch
 
 The next bounded batch should add deterministic CSV crawl and metadata audit serialization as a
-separate pure consumer of accepted run evidence. Public APIs, persistent run history, external
-workers, manual overrides, remote publication, and sitemap submission remain separate future
-authorizations.
+separate pure consumer of accepted run evidence. Durable workers, full result reconstruction,
+public persistence APIs, PostgreSQL, manual overrides, remote publication, and sitemap submission
+remain separate future authorizations.
