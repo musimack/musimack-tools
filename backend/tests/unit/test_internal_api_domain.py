@@ -148,26 +148,27 @@ def test_request_schema_rejects_unbounded_invalid_or_arbitrary_input(
         ApplicationRequestSchema.model_validate(payload)
 
 
-def test_error_envelope_is_typed_deterministic_and_contains_no_request_id() -> None:
+def test_error_envelope_is_typed_deterministic_and_supports_request_id() -> None:
     envelope = ApiErrorEnvelope(
         error=ApiErrorDataSchema(code="job_not_found", message="The job was not found.")
     )
     assert envelope.model_dump(mode="json") == {
         "api_version": "seo-toolkit-internal-api-v1",
+        "request_id": None,
         "error": {
             "code": "job_not_found",
             "message": "The job was not found.",
             "details": [],
         },
     }
-    assert "request_id" not in envelope.model_dump(mode="json")
+    assert envelope.request_id is None
 
 
 def test_success_envelope_contract_is_immutable() -> None:
     fields = ValidationResponse.model_fields
     assert tuple(fields) == ("api_version", "request_id", "data", "warnings")
     assert fields["api_version"].default == INTERNAL_API_VERSION
-    assert fields["request_id"].default is None
+    assert fields["request_id"].default_factory is not None
 
 
 def test_warning_urls_drop_fragments_and_redact_query_values() -> None:

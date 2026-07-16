@@ -32,13 +32,16 @@ This first implementation batch provides:
 - Deterministic JSON and Markdown run summaries with optional safe atomic local writing
 - An internal process-local job manager with bounded execution, FIFO queueing, cooperative
   cancellation, progress lookup, and terminal-result retention
+- An explicit production application factory with environment-backed internal bearer
+  authentication, trusted-network and trusted-proxy policies, request correlation, narrow CORS,
+  deterministic security headers, and audit-safe access logging
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
 It deliberately does **not** provide sitemap fetching, final search-engine-specific indexability
 verdicts, public crawl, recommendation, or job API endpoints, persistent background workers,
 persistence, CSV
-exports, manual overrides, authentication,
+exports, manual overrides, user accounts, roles, sessions, OAuth, JWT,
 frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
 inert HTML evidence; they do not contact public HTTP services or DNS.
@@ -141,10 +144,62 @@ only when local overrides are needed:
 Copy-Item .env.example .env
 ```
 
-`.env` is intentionally ignored. No setting in this batch is secret or requires a credential.
+`.env` is intentionally ignored. General crawler settings are non-secret. Production internal API
+composition additionally reads `MUSIMACK_INTERNAL_API_*` process variables; its bearer token is a
+secret and has no default. Do not put a real credential in `.env.example`, source, documentation,
+or logs.
 Numeric crawl defaults and absolute server hard limits are validated before orchestration. The
 configured user agent is `MusimackSEOToolkit/0.1`; add a legitimate contact reference before live
 crawling is authorized.
+
+## Explicit secured production application
+
+The normal `musimack_tools.main:app` remains health-only and never loads an authentication secret.
+Internal routes are available only through the separate
+`musimack_tools.deployment.application.create_production_app()` factory with an explicitly
+injected application service. The factory validates configuration immediately and refuses to
+start when the internal API is disabled, its bearer credential is missing, a CIDR or CORS origin
+is invalid, or required composition is unavailable. Its contracts are identified by
+`seo-toolkit-security-v1` and `seo-toolkit-production-app-v1`.
+
+Set production values in the process environment rather than committing them. A PowerShell
+example using a placeholder is:
+
+```powershell
+$env:MUSIMACK_INTERNAL_API_ENABLED = "true"
+$env:MUSIMACK_INTERNAL_API_BEARER_TOKEN = "<provide-through-secure-runtime-configuration>"
+$env:MUSIMACK_INTERNAL_API_TOKEN_ID = "internal-operator"
+```
+
+Requests use `Authorization: Bearer <credential>`. Verification uses `hmac.compare_digest`; the
+credential is excluded from settings representations, reports, responses, OpenAPI, and access
+events. This is one shared internal credential, not a user, role, session, OAuth, JWT, or public
+authorization system.
+
+Forwarded headers are ignored unless the direct socket peer belongs to an explicitly configured
+trusted-proxy CIDR. For a trusted peer, one bounded `X-Forwarded-For` chain is parsed left-to-right
+and the first address outside the proxy networks is selected; if every address is a proxy, the
+leftmost address is used. Optional trusted-client networks are evaluated only after that step.
+This policy supports a deliberately simple proxy topology and does not replace reverse-proxy or
+deployment firewall configuration.
+
+`X-Request-ID` accepts at most 64 ASCII letters, digits, periods, underscores, or hyphens. Missing
+or invalid values are replaced with `req-` plus 32 lowercase hexadecimal characters. The ID is
+returned in the response header and internal API envelopes. Access events include only bounded
+method, route template, status, duration, caller identifier, resolved client address, validated
+job ID, and version fields; they omit query strings, headers, bodies, credentials, and output
+roots.
+
+CORS is disabled by default. When explicitly enabled it requires exact HTTP/HTTPS origins, permits
+only `GET`, `POST`, and `OPTIONS`, allows only `Authorization`, `Content-Type`, and the correlation
+header, exposes only that correlation header, and never enables browser credentials. Wildcards
+are rejected.
+
+Enabled security responses include `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`,
+`Pragma: no-cache`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, and a restrictive
+Content Security Policy. HSTS is intentionally absent because TLS termination is not owned by this
+application. OpenAPI and docs are disabled unless explicitly enabled. Tests use in-process ASGI
+clients and inert addresses; no authentication test contacts a network or DNS.
 
 ## In-memory crawl orchestration
 
@@ -396,7 +451,7 @@ summary-only, and metadata-only payload options. Evicted IDs return typed `not_f
 Default shutdown stops admission, cancels queued jobs, requests active cancellation, and waits for
 tracked coordinator tasks to settle. An alternative drains accepted work in FIFO order. All state
 is process-local and disappears on restart. There is no public job API, persistent queue,
-scheduler, external worker, authentication, or distributed coordination.
+scheduler, external worker, or distributed coordination.
 
 Focused validation is:
 
@@ -455,8 +510,7 @@ Focused validation is:
 .\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_application_service_domain.py backend\tests\integration\test_application_service.py
 ```
 
-No public application route, CLI, authentication, persistence, worker, scheduler, or frontend has
-been added.
+No public application route, CLI, persistence, worker, scheduler, or frontend has been added.
 
 ## Private internal API adapter
 
@@ -475,13 +529,16 @@ gate runs before adapter service invocation, fails closed when verification rais
 unavailable, and returns structured errors without echoing credential evidence or revealing job
 existence.
 
-This gate is not a complete authentication or authorization system. It has no users, roles,
-sessions, stored credentials, API keys, OAuth, or deployment trust boundary. Any future deployment
-must add separately reviewed authentication, authorization, TLS/reverse-proxy controls, and
-network restrictions before enabling internal routes.
+The explicit production factory now supplies one environment-backed shared bearer credential,
+trusted-client/proxy policy, and fail-closed startup validation around this gate. It is still not a
+complete authentication or authorization system: there are no users, roles, sessions, OAuth,
+JWT, stored credential records, or public deployment trust boundary. TLS/reverse-proxy controls
+and network restrictions remain deployment responsibilities.
 
-Success responses use a typed envelope containing the API version, a null request ID, bounded
-data, and bounded warnings. Errors use stable codes, safe messages, and bounded field details.
+Success responses use a typed envelope containing the API version, an optional request ID, bounded
+data, and bounded warnings. Production correlation supplies the request ID on success and error;
+the lower-level adapter remains `null` when used without that middleware. Errors use stable codes,
+safe messages, and bounded field details.
 Pydantic errors are normalized to HTTP 400 without returning submitted values. Job IDs must match
 `job-<12 lowercase hexadecimal characters>-<four digits>`. Request fields, approved hosts, caller
 labels, URL strings, job IDs, and optional progress history are bounded. The adapter enforces a

@@ -21,6 +21,7 @@ from musimack_tools.domain.application import (
     ScopeProfile,
 )
 from musimack_tools.domain.sitemap_publication import ExistingFilePolicy
+from musimack_tools.security.correlation import current_request_id
 
 BoundedUrl = Annotated[str, StringConstraints(min_length=1, max_length=4_096)]
 BoundedHost = Annotated[str, StringConstraints(min_length=1, max_length=253)]
@@ -88,6 +89,7 @@ class ApiErrorDataSchema(ApiSchema):
 
 class ApiErrorEnvelope(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
+    request_id: str | None = Field(default_factory=current_request_id)
     error: ApiErrorDataSchema
 
 
@@ -310,69 +312,69 @@ class CapabilitySchema(ApiSchema):
 
 class ValidationResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: ValidationReportSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class PreflightResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: PreflightReportSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class SubmissionResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: SubmissionSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class JobStatusResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: JobStatusSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class JobProgressResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: JobProgressSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class JobResultResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: JobResultSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class CancellationResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: CancellationSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class RegistryStatusResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: RegistryStatusSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class ReadinessResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: ReadinessSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
 class CapabilityResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
-    request_id: None = None
+    request_id: str | None = Field(default_factory=current_request_id)
     data: CapabilitySchema
     warnings: tuple[ApiWarningSchema, ...] = ()

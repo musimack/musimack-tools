@@ -339,9 +339,10 @@ either cancels queued work and requests active cooperative cancellation or drain
 then awaits every tracked coordinator task. Registry state disappears at process exit and cannot
 coordinate multiple processes.
 
-No job operation is exposed through FastAPI. A future authenticated adapter may translate these
-internal contracts into HTTP without moving execution rules into route handlers. Persistence,
-restart recovery, external workers, and distributed coordination remain separate boundaries.
+The accepted internal API translates these contracts into HTTP without moving execution rules
+into route handlers, and the explicit production factory wraps it in the bounded security layer.
+Persistence, restart recovery, external workers, and distributed coordination remain separate
+boundaries.
 
 ## Internal application-service boundary
 
@@ -377,10 +378,10 @@ typed constants and never inferred by runtime filesystem scanning. Diagnostics s
 records as deterministic sorted UTF-8 JSON or Markdown and redact any defensive `Path` occurrence.
 Neither format contains timestamps, stack traces, or a self-hash.
 
-The facade remains internal. A future authenticated API adapter, CLI adapter, or React frontend may
-translate these contracts without moving validation or projections into transport handlers.
-Authentication, persistence, durable workers, and public authorization require separate future
-boundaries.
+The facade remains internal. The accepted private API and production-security adapter translate
+these contracts without moving validation or projections into transport handlers. A CLI or React
+frontend, persistence, durable workers, user identity, and public authorization require separate
+future boundaries.
 
 ## Private internal API adapter boundary
 
@@ -410,10 +411,41 @@ and hashes rather than lower-layer dataclasses or payload bytes. Pydantic reques
 adapter outcomes, and unexpected exceptions use one versioned safe envelope. Unexpected errors
 remain available to normal server logging while clients receive no raw exception text.
 
-Future public or broader internal deployment requires separate authentication, authorization,
+Future public or broader deployment requires user-aware authentication and authorization,
 reverse-proxy/TLS, request-body enforcement, network policy, and rate-limit decisions. Persistence,
 durable workers, frontend delivery, streaming progress, and download endpoints remain separate
 boundaries.
+
+## Internal security and production deployment boundary
+
+`domain/security.py` and `domain/deployment.py` define frozen records for the
+`seo-toolkit-security-v1` and `seo-toolkit-production-app-v1` contracts. Environment-backed
+`ProductionSettings` is read only when explicit production composition is requested. The bearer
+credential uses Pydantic's secret type, has no default, and never enters a domain report.
+
+`BearerAccessVerifier` implements the existing access-verifier protocol without moving
+authentication into route handlers. It strictly parses one bearer header, compares with
+`hmac.compare_digest`, resolves client evidence through the trusted-proxy boundary, applies an
+optional trusted-network allowlist, and returns the accepted bounded caller context. Missing,
+malformed, invalid, unavailable, and network-denied cases fail closed with stable safe responses.
+
+`create_production_app()` is separate from the health-only `create_app()`. It requires an injected
+application service, validates configuration before building the app, explicitly mounts the
+accepted ten-route adapter, and composes correlation, optional CORS, access logging, and security
+headers. It creates no registry, service, task, or secret at import time. OpenAPI is disabled by
+default and internal schemas appear only when explicitly configured.
+
+The middleware boundary uses request-local context for correlation and request state for safe
+authentication evidence. Access events log route templates rather than query-bearing URLs and
+never log headers or bodies. Security headers are deterministic; HSTS is deferred to a future
+TLS-aware deployment boundary. CORS accepts exact internal origins only and handles preflight
+without invoking the application service.
+
+Forwarded headers are untrusted by default. One bounded `X-Forwarded-For` chain is considered only
+when the direct peer is in an explicit proxy CIDR. This application-level check cannot establish
+TLS, configure a reverse proxy, or prevent direct network access around that proxy; deployment
+egress/ingress controls and topology-specific verification remain required. Future work also owns
+managed secrets, credential rotation, users, roles, persistent sessions, and public authorization.
 
 ## Future boundaries
 
@@ -469,7 +501,9 @@ that an in-scope string is safe to request.
   cancellation, concurrency, pacing, robots parsing and permission, single-flight caching,
   X-Robots directives, combined conflicts, recommendation precedence, canonical and redirect
   policy, duplicate projection, and stable crawl evidence.
-- FastAPI's in-process test client covers the health API.
+- FastAPI's in-process test client covers health, the private adapter, and explicit secured
+  production composition, including authentication, proxy spoofing, CORS, correlation, headers,
+  startup failure, and log redaction.
 - An automatic test fixture blocks DNS resolution and non-loopback socket connections; Windows
   event-loop loopback plumbing remains available to the in-process test client.
 - HTTP behavior uses fake resolvers and `httpx.MockTransport`; future tests may use explicitly
@@ -484,5 +518,5 @@ while Git and editors can manage platform checkout behavior normally. All comman
 repository root and use `.venv` rather than changing system Python.
 
 Docker-based local and server deployment remains the eventual direction, but Dockerfiles,
-Compose, reverse proxies, authentication, secret handling, and production egress controls are
-explicitly deferred.
+Compose, reverse proxies, public/user authentication, managed secret handling, and production
+egress controls are explicitly deferred.

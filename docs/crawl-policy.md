@@ -660,3 +660,21 @@ The default application remains health-only. Explicitly mounted routes fail clos
 injected verifier, but that gate is not complete authentication and does not authorize public
 exposure. HTTP adaptation never grants crawl or network permission; every submitted run continues
 through the accepted scope, destination-safety, robots, limit, job, and publication contracts.
+
+## Deployment security does not change crawl policy
+
+Internal bearer authentication is evaluated before any application-service operation. Trusted
+network and proxy rules authorize the client-to-API boundary only; they do not authorize a crawl
+destination, modify URL scope, bypass DNS/address safety, or alter redirect and robots decisions.
+The direct peer is authoritative unless explicitly trusted as a proxy. A trusted proxy may supply
+one bounded `X-Forwarded-For` chain; malformed evidence fails closed for authenticated operations.
+
+Correlation IDs and access logs are operational evidence only. They do not participate in run,
+job, URL, recommendation, XML, publication, or sitemap identity. Logs omit URL query strings,
+request bodies, credentials, publication roots, and summary roots. Security configuration never
+changes metadata warnings or sitemap recommendation precedence.
+
+The production application still depends on deployment controls for TLS, reverse-proxy isolation,
+actual streamed request-body limits beyond the accepted declared `Content-Length` check, and
+network ingress/egress policy. The internal access gate and shared bearer credential are not a
+public authorization system.

@@ -28,6 +28,12 @@ class AccessDenialReason(StrEnum):
     ACCESS_NOT_CONFIGURED = "access_not_configured"
     ACCESS_DENIED = "access_denied"
     ACCESS_VERIFIER_UNAVAILABLE = "access_verifier_unavailable"
+    AUTHENTICATION_REQUIRED = "authentication_required"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    TRUSTED_NETWORK_REQUIRED = "trusted_network_required"
+    SECURITY_CONFIGURATION_UNAVAILABLE = "security_configuration_unavailable"
+    INVALID_FORWARDED_HEADER = "invalid_forwarded_header"
+    INTERNAL_API_DISABLED = "internal_api_disabled"
 
 
 class ApiErrorCode(StrEnum):
@@ -48,6 +54,12 @@ class ApiErrorCode(StrEnum):
     JOB_CANCELLATION_ALREADY_REQUESTED = "job_cancellation_already_requested"
     INTERNAL_SERVICE_UNAVAILABLE = "internal_service_unavailable"
     INTERNAL_API_ERROR = "internal_api_error"
+    AUTHENTICATION_REQUIRED = "authentication_required"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    TRUSTED_NETWORK_REQUIRED = "trusted_network_required"
+    SECURITY_CONFIGURATION_UNAVAILABLE = "security_configuration_unavailable"
+    INVALID_FORWARDED_HEADER = "invalid_forwarded_header"
+    INTERNAL_API_DISABLED = "internal_api_disabled"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):
@@ -114,6 +126,7 @@ class InternalApiError(Exception):
     code: ApiErrorCode
     message: str
     details: tuple[ApiErrorDetail, ...] = ()
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

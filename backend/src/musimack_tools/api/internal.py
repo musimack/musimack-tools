@@ -82,6 +82,7 @@ def create_internal_api_router(  # noqa: C901, PLR0915 - explicit route composit
         include_in_schema=include_in_schema,
     )
     error_responses: dict[int | str, dict[str, Any]] = {
+        401: {"model": ApiErrorEnvelope},
         400: {"model": ApiErrorEnvelope},
         403: {"model": ApiErrorEnvelope},
         404: {"model": ApiErrorEnvelope},

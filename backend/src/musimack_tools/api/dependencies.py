@@ -57,7 +57,9 @@ class InternalApiApplication(Protocol):
     def get_capabilities(self) -> ApplicationCapabilityReport: ...
 
 
-def create_access_dependency(configuration: InternalApiConfiguration) -> AccessDependency:
+def create_access_dependency(  # noqa: C901 - explicit stable security mappings.
+    configuration: InternalApiConfiguration,
+) -> AccessDependency:
     """Create a fail-closed dependency bound to one immutable configuration."""
     verifier = configuration.access_verifier or DenyAllAccessVerifier()
 
@@ -71,12 +73,52 @@ def create_access_dependency(configuration: InternalApiConfiguration) -> AccessD
                 "Internal access verification is unavailable.",
             ) from None
         if decision.outcome is AccessOutcome.UNAVAILABLE:
+            if decision.reason is AccessDenialReason.SECURITY_CONFIGURATION_UNAVAILABLE:
+                raise InternalApiError(
+                    503,
+                    ApiErrorCode.SECURITY_CONFIGURATION_UNAVAILABLE,
+                    "Internal authentication is unavailable.",
+                )
             raise InternalApiError(
                 403,
                 ApiErrorCode.ACCESS_VERIFIER_UNAVAILABLE,
                 "Internal access verification is unavailable.",
             )
         if decision.outcome is not AccessOutcome.ALLOWED:
+            if decision.reason in {
+                AccessDenialReason.AUTHENTICATION_REQUIRED,
+                AccessDenialReason.AUTHENTICATION_FAILED,
+            }:
+                raise InternalApiError(
+                    401,
+                    ApiErrorCode.AUTHENTICATION_FAILED,
+                    "Valid internal authentication is required.",
+                    headers=(("WWW-Authenticate", "Bearer"),),
+                )
+            if decision.reason is AccessDenialReason.TRUSTED_NETWORK_REQUIRED:
+                raise InternalApiError(
+                    403,
+                    ApiErrorCode.TRUSTED_NETWORK_REQUIRED,
+                    "Internal API access is denied.",
+                )
+            if decision.reason is AccessDenialReason.INVALID_FORWARDED_HEADER:
+                raise InternalApiError(
+                    403,
+                    ApiErrorCode.INVALID_FORWARDED_HEADER,
+                    "Internal API access is denied.",
+                )
+            if decision.reason is AccessDenialReason.INTERNAL_API_DISABLED:
+                raise InternalApiError(
+                    403,
+                    ApiErrorCode.INTERNAL_API_DISABLED,
+                    "Internal API access is denied.",
+                )
+            if decision.reason is AccessDenialReason.SECURITY_CONFIGURATION_UNAVAILABLE:
+                raise InternalApiError(
+                    503,
+                    ApiErrorCode.SECURITY_CONFIGURATION_UNAVAILABLE,
+                    "Internal authentication is unavailable.",
+                )
             code = (
                 ApiErrorCode.ACCESS_VERIFIER_UNAVAILABLE
                 if decision.reason is AccessDenialReason.ACCESS_VERIFIER_UNAVAILABLE
