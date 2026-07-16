@@ -12,6 +12,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 from musimack_tools.persistence.migrations import (
+    ARTIFACT_STORAGE_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
@@ -86,6 +87,12 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
         assert set(database.get_table_names()) == {
             "alembic_version",
             "artifact_metadata",
+            "artifact_storage_roots",
+            "artifact_records",
+            "artifact_integrity_checks",
+            "artifact_lifecycle_events",
+            "artifact_cleanup_events",
+            "artifact_reconciliation_events",
             "configuration_snapshots",
             "durable_jobs",
             "durable_recovery_events",
@@ -110,6 +117,14 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
         assert foreign_keys == {
             ("artifact_metadata", "jobs"),
             ("artifact_metadata", "runs"),
+            ("artifact_records", "jobs"),
+            ("artifact_records", "runs"),
+            ("artifact_records", "artifact_storage_roots"),
+            ("artifact_integrity_checks", "artifact_records"),
+            ("artifact_lifecycle_events", "artifact_records"),
+            ("artifact_cleanup_events", "artifact_records"),
+            ("artifact_reconciliation_events", "artifact_storage_roots"),
+            ("artifact_reconciliation_events", "artifact_records"),
             ("jobs", "configuration_snapshots"),
             ("jobs", "runs"),
             ("durable_jobs", "jobs"),
@@ -133,6 +148,7 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
         }
         assert {
             "uq_artifact_run",
+            "uq_artifact_record",
             "uq_jobs_run_attempt",
             "uq_progress_job_sequence",
             "uq_run_stages_run_stage",
@@ -164,6 +180,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert durable_script.revision == "0002_durable_execution"
     assert durable_script.down_revision == INITIAL_PERSISTENCE_REVISION
     assert durable_script.doc == "add durable execution coordination"
+    artifact_script = ScriptDirectory.from_config(config).get_revision(ARTIFACT_STORAGE_REVISION)
+    assert artifact_script is not None
+    assert artifact_script.revision == "0003_artifact_storage"
+    assert artifact_script.down_revision == DURABLE_EXECUTION_REVISION
+    assert artifact_script.doc == "add durable artifact storage"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -176,6 +197,7 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE artifact_metadata" in sql
     assert "CREATE TABLE durable_jobs" in sql
     assert "CREATE TABLE job_leases" in sql
+    assert "CREATE TABLE artifact_records" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -193,6 +215,36 @@ def test_upgrade_is_idempotent_at_head(tmp_path: Path) -> None:
     engine = create_engine(url)
     try:
         assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_artifact_migration_upgrades_downgrades_and_reupgrades_from_durable(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "artifact-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, DURABLE_EXECUTION_REVISION)
+    command.upgrade(configuration, ARTIFACT_STORAGE_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == ARTIFACT_STORAGE_REVISION
+        assert "artifact_records" in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, DURABLE_EXECUTION_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == DURABLE_EXECUTION_REVISION
+        assert "artifact_records" not in inspect(engine).get_table_names()
+        assert "jobs" in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, ARTIFACT_STORAGE_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == ARTIFACT_STORAGE_REVISION
     finally:
         engine.dispose()
 

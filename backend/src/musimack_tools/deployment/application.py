@@ -41,18 +41,20 @@ from musimack_tools.security.validation import security_readiness, validate_prod
 
 if TYPE_CHECKING:
     from musimack_tools.api.dependencies import InternalApiApplication
+    from musimack_tools.artifacts.service import ArtifactService
     from musimack_tools.deployment.persistence_runtime import PreparedPersistence
     from musimack_tools.deployment.worker import PreparedDurableExecution
 
 Network = IPv4Network | IPv6Network
 
 
-def create_production_app(  # noqa: C901, PLR0912, PLR0915 - explicit composition checks.
+def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     service: InternalApiApplication,
     settings: ProductionSettings | None = None,
     application_settings: Settings | None = None,
     persistence: PreparedPersistence | None = None,
     durable: PreparedDurableExecution | None = None,
+    artifacts: ArtifactService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -109,6 +111,26 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0915 - explicit compositio
     )
     if not mounted:
         raise _configuration_error("internal_router_not_mounted")
+    if artifacts is not None and artifacts.configuration.enabled:
+        from musimack_tools.api.artifacts import create_artifact_router  # noqa: PLC0415
+
+        readiness = artifacts.readiness()
+        if not readiness or any(not item.ready for item in readiness):
+            raise _configuration_error("artifact_storage_not_ready")
+        if artifacts.configuration.reconcile_on_startup:
+            application.state.artifact_reconciliation = artifacts.reconcile()
+        application.include_router(
+            create_artifact_router(
+                artifacts,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.artifact_readiness = readiness
 
     add_internal_cors(
         application,

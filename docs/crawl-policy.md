@@ -550,8 +550,9 @@ presence or blockage, conflict policy, and ordered XML file media types, entry c
 and lowercase SHA-256 hashes. It contains no timestamps, machine identity, username, absolute local
 path, or its own recursive hash. The publication result carries the manifest hash separately.
 
-This local publication policy does not authorize an API, download delivery, remote upload, sitemap
-submission, persistence, scheduling, or export history.
+This local publication policy does not itself authorize an API, download delivery, remote upload,
+sitemap submission, persistence, scheduling, or export history. The separately composed Phase 16
+artifact boundary may register and serve verified local outputs internally.
 
 ## Crawl-run orchestration policy
 
@@ -654,7 +655,8 @@ API status, progress, registry, and result responses remain bounded. Progress is
 a bounded retained-history limit is explicitly requested; no SSE or WebSocket stream exists.
 Registry responses expose counts rather than job lists. Result responses omit detailed URL rows,
 recommendation rows, HTML, response bodies, XML, manifests, summaries, filesystem paths, and
-runtime objects. No artifact download endpoint exists.
+runtime objects. Three optional artifact routes form a separately authorized, authenticated,
+bounded retrieval boundary; they do not broaden these job/result projections.
 
 The default application remains health-only. Explicitly mounted routes fail closed without an
 injected verifier, but that gate is not complete authentication and does not authorize public
@@ -721,3 +723,12 @@ Lease expiry and retries are execution-coordination evidence only. They do not m
 recommendation precedence, metadata warnings, XML rules, or publication behavior. Durable mode is
 single-machine SQLite coordination; it provides neither distributed fencing nor authorization for
 public worker control.
+
+## Artifact storage does not change crawl or eligibility policy
+
+Artifact registration consumes only successfully generated local outputs. Missing, corrupt,
+expired, retained, or deleted artifact state cannot change URL normalization, scope, fetching,
+robots permission, indexability, recommendation, XML serialization, or publication success.
+Registration failures are artifact-management evidence and do not retroactively exclude URLs or
+delete successfully published files. Retrieval is authenticated internal delivery only and never
+authorizes a crawl, remote publication, sitemap submission, or public sharing.

@@ -60,6 +60,9 @@ class ApiErrorCode(StrEnum):
     SECURITY_CONFIGURATION_UNAVAILABLE = "security_configuration_unavailable"
     INVALID_FORWARDED_HEADER = "invalid_forwarded_header"
     INTERNAL_API_DISABLED = "internal_api_disabled"
+    ARTIFACT_NOT_FOUND = "artifact_not_found"
+    ARTIFACT_NOT_AVAILABLE = "artifact_not_available"
+    ARTIFACT_RETRIEVAL_FAILED = "artifact_retrieval_failed"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):

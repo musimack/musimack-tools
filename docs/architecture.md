@@ -479,8 +479,9 @@ session and transaction. No transaction crosses crawl execution or an awaited ne
 Persistence failure adds bounded coordination evidence without erasing the in-memory terminal
 result.
 
-Alembic revision `0001_persistence` owns the frozen initial schema and revision
-`0002_durable_execution` adds durable coordination tables. `alembic.ini` has no fallback
+Alembic revision `0001_persistence` owns the frozen initial schema, `0002_durable_execution` adds
+durable coordination, and `0003_artifact_storage` adds file lifecycle metadata and histories.
+`alembic.ini` has no fallback
 URL; callers must inject an explicit database URL. Automatic migration is disabled by default and
 pending migrations block persistence readiness. Cleanup is explicit and sequence ordered. It never
 deletes published XML or summary files.
@@ -532,8 +533,9 @@ distributed fencing, multi-machine supervision, and deployment-specific failover
 
 In-memory XML sitemap serialization and safe local publication are separate consumers of
 recommendation projections. CSV audit serialization remains future work. Publication uses the
-immutable XML bundle without moving filesystem behavior into the serializer. Persistence,
-download delivery, remote publication, and submission remain separate future boundaries. Optional
+immutable XML bundle without moving filesystem behavior into the serializer. Authenticated local
+artifact retrieval is separate from remote publication and submission, which remain future
+boundaries. Optional
 `lastmod` remains deferred until trustworthy provenance exists; `priority` and `changefreq` are not
 planned defaults. Metadata warnings remain separate from sitemap eligibility.
 
@@ -572,3 +574,21 @@ repository root and use `.venv` rather than changing system Python.
 Docker-based local and server deployment remains the eventual direction, but Dockerfiles,
 Compose, reverse proxies, public/user authentication, managed secret handling, and production
 egress controls are explicitly deferred.
+
+## Durable artifact boundary
+
+Artifact bytes remain files beneath explicitly configured local roots; SQLite stores only identity,
+root ID, safe relative path, lifecycle, retention, integrity, and history evidence. Root paths are
+runtime-only configuration and never appear in API projections. `artifact_records` is the Phase 16
+lifecycle authority; the older `artifact_metadata` table remains compatible run-output evidence.
+
+The deterministic layout is `jobs/<job-id>/runs/<run-id>/artifacts/<filename>`. Validation rejects
+absolute, drive, UNC, device, traversal, alternate-stream, control-character, reserved-name, and
+separator-ambiguous forms. Resolution and link/junction checks repeat immediately before hashing,
+streaming, deletion, and reconciliation. Publication and summary writers retain their atomic-write
+authority; an optional observer registers successful outputs afterward.
+
+Lifecycle states are planned, available, missing, corrupt, expired, deleted, and retained. Short
+database transactions never span hashing, streaming, or filesystem deletion. Cleanup and
+reconciliation are explicit bounded operations, not background daemons. Cloud storage, public URLs,
+range downloads, artifact blobs, and orphan mutation are excluded.

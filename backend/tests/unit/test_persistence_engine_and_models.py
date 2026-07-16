@@ -12,7 +12,13 @@ from musimack_tools.persistence import durable_models  # noqa: F401 - registers 
 from musimack_tools.persistence.base import Base
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.models import (
+    ArtifactCleanupEventModel,
+    ArtifactIntegrityCheckModel,
+    ArtifactLifecycleEventModel,
     ArtifactMetadataModel,
+    ArtifactReconciliationEventModel,
+    ArtifactRecordModel,
+    ArtifactStorageRootModel,
     ConfigurationSnapshotModel,
     FailureModel,
     JobModel,
@@ -105,6 +111,12 @@ def test_transaction_rolls_back_on_failure(tmp_path: Path) -> None:
         (FailureModel, "failures"),
         (SummaryMetadataModel, "summary_metadata"),
         (ArtifactMetadataModel, "artifact_metadata"),
+        (ArtifactStorageRootModel, "artifact_storage_roots"),
+        (ArtifactRecordModel, "artifact_records"),
+        (ArtifactIntegrityCheckModel, "artifact_integrity_checks"),
+        (ArtifactLifecycleEventModel, "artifact_lifecycle_events"),
+        (ArtifactCleanupEventModel, "artifact_cleanup_events"),
+        (ArtifactReconciliationEventModel, "artifact_reconciliation_events"),
     ],
 )
 def test_model_table_names_are_stable(model: type[Base], table_name: str) -> None:
@@ -131,6 +143,12 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "failures",
             "summary_metadata",
             "artifact_metadata",
+            "artifact_storage_roots",
+            "artifact_records",
+            "artifact_integrity_checks",
+            "artifact_lifecycle_events",
+            "artifact_cleanup_events",
+            "artifact_reconciliation_events",
             "workers",
         }
     finally:

@@ -567,7 +567,8 @@ SQLite rows as the sole queue authority and never creates a duplicate local sche
 exact contracts are `seo-toolkit-durable-execution-v1` and
 `seo-toolkit-worker-protocol-v1`.
 
-Durable mode requires enabled, ready persistence at Alembic revision `0002_durable_execution`.
+Durable mode requires enabled, ready persistence at the current Alembic head. Phase 16 advances
+that head to `0003_artifact_storage` while retaining the Phase 15 durable tables unchanged.
 Persistence startup must be called with `durable_queue_authority=True`; this bypasses only the
 legacy in-memory interrupted-job reconciler so queued and leased records reach durable stale
 recovery. The default remains `False`, preserving accepted in-memory restart behavior.
@@ -610,8 +611,9 @@ An internal FastAPI adapter now maps the accepted application-service facade to 
 schemas beneath `/api/internal/v1`. The adapter contract is
 `seo-toolkit-internal-api-v1`. It provides explicitly composed endpoints for request validation,
 advisory preflight, job submission, status, latest or bounded retained progress, bounded results,
-cooperative cancellation, registry counts, readiness, and capabilities. It provides no shutdown
-or artifact-download endpoint.
+cooperative cancellation, registry counts, readiness, and capabilities. When explicitly composed
+with enabled artifact storage, it adds private bounded artifact list, detail, and download routes.
+It provides no shutdown or public download endpoint.
 
 The normal `create_app()` composition remains health-only: `/api/health` is its sole route and no
 internal schemas appear in its OpenAPI document. Internal routes are mounted only by calling
@@ -675,6 +677,34 @@ indexability. Encoding selection uses HTTP charset, then BOM, then a declaration
 [docs/crawl-policy.md](docs/crawl-policy.md) for the complete contract.
 
 See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contract.
+
+## Durable artifact storage and retrieval
+
+Phase 16 adds optional local artifact management without storing file bytes in SQLite. It is
+disabled by default and uses `seo-toolkit-artifact-storage-v1`,
+`seo-toolkit-artifact-retrieval-v1`, and `seo-toolkit-artifact-reconciliation-v1`. Enabled
+composition requires explicit `root-id=absolute-path` roots and a configured default root; no
+current-directory or repository-relative fallback exists. Paths follow
+`jobs/<job-id>/runs/<run-id>/artifacts/<safe-filename>` and are revalidated for containment,
+symlinks, and Windows junctions immediately before file operations.
+
+Supported types are sitemap XML, sitemap indexes, publication manifests, run-summary JSON, and
+run-summary Markdown. CSV metadata is reserved but creation is disabled. Registration streams
+SHA-256 verification, persists expected and observed evidence, and never copies or overwrites a
+published file. The optional terminal observer registers successful outputs independently;
+publication remains successful when metadata registration fails, and the file is not deleted.
+
+Authenticated production composition can add exactly three routes:
+`GET /api/internal/v1/artifacts`, `GET /api/internal/v1/artifacts/{artifact_id}`, and
+`GET /api/internal/v1/artifacts/{artifact_id}/download`. Downloads verify by default, stream in
+bounded chunks, use safe fixed headers, and expose no root or relative storage path. The default
+application remains health-only.
+
+Retention uses persisted expiration rather than file modification time. Holds prevent cleanup.
+Explicit cleanup is deterministic, batch-bounded, and metadata-preserving. Reconciliation is
+startup-disabled by default, scans only the bounded managed layout, and reports orphans without
+registering or deleting them. Database revision `0003_artifact_storage` downgrades cleanly to
+`0002_durable_execution`, with data loss limited to Phase 16 tables.
 
 ## Next recommended development batch
 
