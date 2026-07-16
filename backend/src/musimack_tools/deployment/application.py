@@ -42,15 +42,17 @@ from musimack_tools.security.validation import security_readiness, validate_prod
 if TYPE_CHECKING:
     from musimack_tools.api.dependencies import InternalApiApplication
     from musimack_tools.deployment.persistence_runtime import PreparedPersistence
+    from musimack_tools.deployment.worker import PreparedDurableExecution
 
 Network = IPv4Network | IPv6Network
 
 
-def create_production_app(
+def create_production_app(  # noqa: C901, PLR0912, PLR0915 - explicit composition checks.
     service: InternalApiApplication,
     settings: ProductionSettings | None = None,
     application_settings: Settings | None = None,
     persistence: PreparedPersistence | None = None,
+    durable: PreparedDurableExecution | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -66,6 +68,14 @@ def create_production_app(
         PersistenceReadinessState.DISABLED,
     }:
         raise _configuration_error("persistence_not_ready")
+    if durable is not None and durable.configuration.enabled:
+        if (
+            persistence is None
+            or persistence.diagnostics.state is not PersistenceReadinessState.READY
+        ):
+            raise _configuration_error("durable_persistence_required")
+        if not persistence.diagnostics.schema_current:
+            raise _configuration_error("durable_migration_required")
 
     core_settings = application_settings or get_settings()
     configure_logging(core_settings)
@@ -119,6 +129,29 @@ def create_production_app(
     application.state.security_readiness = security_readiness(resolved)
     if persistence is not None:
         application.state.persistence_readiness = persistence.diagnostics
+    if durable is not None:
+        application.state.durable_readiness = durable.diagnostics
+        if durable.worker is not None:
+            worker = durable.worker
+            repository = durable.repository
+            worker_id = durable.configuration.worker_id
+
+            async def start_durable_worker() -> None:
+                await worker.start()
+                if repository is not None and worker_id is not None:
+                    application.state.durable_readiness = repository.diagnostics(
+                        worker_id.value, recovery_complete=True
+                    )
+
+            async def stop_durable_worker() -> None:
+                await worker.shutdown()
+                if repository is not None and worker_id is not None:
+                    application.state.durable_readiness = repository.diagnostics(
+                        worker_id.value, recovery_complete=True
+                    )
+
+            application.router.add_event_handler("startup", start_durable_worker)
+            application.router.add_event_handler("shutdown", stop_durable_worker)
     return application
 
 

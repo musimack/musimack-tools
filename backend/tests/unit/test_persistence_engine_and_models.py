@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import Table, inspect, text
 
 from musimack_tools.domain.persistence import PersistenceConfiguration
+from musimack_tools.persistence import durable_models  # noqa: F401 - registers durable tables.
 from musimack_tools.persistence.base import Base
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.models import (
@@ -117,6 +118,11 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
         assert set(inspect(runtime.engine).get_table_names()) == {
             "persistence_metadata",
             "configuration_snapshots",
+            "durable_jobs",
+            "durable_recovery_events",
+            "durable_sequences",
+            "job_execution_attempts",
+            "job_leases",
             "jobs",
             "runs",
             "run_stages",
@@ -125,6 +131,7 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "failures",
             "summary_metadata",
             "artifact_metadata",
+            "workers",
         }
     finally:
         runtime.dispose()

@@ -559,6 +559,51 @@ Focused persistence validation is:
 .\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_persistence_domain.py backend\tests\unit\test_persistence_engine_and_models.py backend\tests\integration\test_persistence_migrations.py backend\tests\integration\test_persistence_repository.py backend\tests\integration\test_job_persistence_integration.py backend\tests\integration\test_persistence_production.py
 ```
 
+## Optional durable execution
+
+Durable execution is an explicit alternative to the accepted process-local scheduler. It is off by
+default. In-memory mode continues to use the bounded in-process queue; durable mode uses migrated
+SQLite rows as the sole queue authority and never creates a duplicate local scheduling task. The
+exact contracts are `seo-toolkit-durable-execution-v1` and
+`seo-toolkit-worker-protocol-v1`.
+
+Durable mode requires enabled, ready persistence at Alembic revision `0002_durable_execution`.
+Persistence startup must be called with `durable_queue_authority=True`; this bypasses only the
+legacy in-memory interrupted-job reconciler so queued and leased records reach durable stale
+recovery. The default remains `False`, preserving accepted in-memory restart behavior.
+Enabling the worker additionally requires an explicit safe ID such as `worker-local`; no hostname,
+username, random value, or environment-derived fallback is used. One explicitly composed worker
+may run in the API process, or a worker may be composed without the API. No worker or polling task
+is created at import time, and the default health-only application remains unchanged.
+
+Claims use short SQLite `BEGIN IMMEDIATE` transactions and deterministic durable sequences. Each
+claim creates a new secure lease token, increments its lease generation, and creates a distinct
+execution-attempt record while retaining the same external job ID. Heartbeats extend only a valid
+active lease. Cancellation is persisted for queued, claimed, running, and retry-wait jobs and is
+forwarded to the existing cooperative cancellation token. Startup recovery releases expired
+leases before polling; it may queue a fresh execution attempt but never resumes a partial crawl
+frontier or recreates an old task.
+
+Retry policy defaults to `never`. `retry_transient` and `retry_selected` use only configured stable
+failure codes, bounded attempt counts, and fixed or linear delays without jitter. A retry receives a
+new availability sequence, so work already queued is not starved. SQLite wall-clock UTC timestamps
+control lease expiry and retry eligibility, while integer sequences—not timestamps—control queue,
+claim, attempt, and recovery ordering.
+
+Shutdown first stops new claims and enters `draining`. The default policy gives active cooperative
+work a bounded grace period; the optional cancellation policy requests cancellation through the
+accepted token. This is single-machine execution, not distributed coordination. SQLite lock
+contention, clock correctness, process termination, filesystem durability, and deployment
+supervision remain operational responsibilities.
+
+The safe disabled values in `.env.example` use the `MUSIMACK_DURABLE_EXECUTION_ENABLED` and
+`MUSIMACK_WORKER_*` settings. To migrate an explicitly selected database, use the Alembic commands
+above. Focused durable validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_durable_execution_domain.py backend\tests\integration\test_durable_migration.py backend\tests\integration\test_durable_repository.py backend\tests\integration\test_durable_worker_and_service.py backend\tests\integration\test_durable_production.py
+```
+
 ## Private internal API adapter
 
 An internal FastAPI adapter now maps the accepted application-service facade to bounded Pydantic
@@ -634,6 +679,6 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 ## Next recommended development batch
 
 The next bounded batch should add deterministic CSV crawl and metadata audit serialization as a
-separate pure consumer of accepted run evidence. Durable workers, full result reconstruction,
-public persistence APIs, PostgreSQL, manual overrides, remote publication, and sitemap submission
-remain separate future authorizations.
+separate pure consumer of accepted run evidence. Full durable-result reconstruction, public
+persistence or worker APIs, PostgreSQL, multi-machine workers, manual overrides, remote
+publication, and sitemap submission remain separate future authorizations.

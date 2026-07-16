@@ -42,6 +42,7 @@ def prepare_persistence(
     *,
     backend_root: Path,
     repository_root: Path,
+    durable_queue_authority: bool = False,
 ) -> PreparedPersistence:
     configuration = settings.to_configuration()
     if not configuration.enabled:
@@ -57,10 +58,11 @@ def prepare_persistence(
         raise PersistenceStartupError(_NOT_READY)
     bootstrap = (
         reconcile_and_bootstrap(repository)
-        if configuration.reconcile_on_startup
+        if configuration.reconcile_on_startup and not durable_queue_authority
         else PersistenceBootstrap(
             repository.reconcile_interrupted()
             if diagnostics.reconciliation is ReconciliationState.REQUIRED
+            and not durable_queue_authority
             else ReconciliationReport(ReconciliationState.NOT_REQUIRED, 0, 0, 0, ()),
             repository.highest_attempts(),
             repository.retained_terminal_jobs(),

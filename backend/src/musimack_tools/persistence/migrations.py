@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 INITIAL_PERSISTENCE_REVISION = "0001_persistence"
+DURABLE_EXECUTION_REVISION = "0002_durable_execution"
+PERSISTENCE_HEAD_REVISION = DURABLE_EXECUTION_REVISION
 
 
 def alembic_configuration(database_url: str, *, backend_root: Path) -> Config:
@@ -39,4 +41,4 @@ def current_revision(engine: Engine) -> str | None:
 
 
 def schema_is_current(engine: Engine) -> bool:
-    return current_revision(engine) == INITIAL_PERSISTENCE_REVISION
+    return current_revision(engine) == PERSISTENCE_HEAD_REVISION

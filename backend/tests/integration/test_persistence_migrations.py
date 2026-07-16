@@ -12,7 +12,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 from musimack_tools.persistence.migrations import (
+    DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
+    PERSISTENCE_HEAD_REVISION,
     alembic_configuration,
     current_revision,
     downgrade_to_base,
@@ -35,7 +37,7 @@ def test_upgrade_current_downgrade_and_reupgrade(tmp_path: Path) -> None:
     upgrade_to_head(url, backend_root=BACKEND_ROOT)
     engine = create_engine(url)
     try:
-        assert current_revision(engine) == INITIAL_PERSISTENCE_REVISION
+        assert current_revision(engine) == PERSISTENCE_HEAD_REVISION
         assert schema_is_current(engine)
         assert "jobs" in inspect(engine).get_table_names()
         with engine.connect() as connection:
@@ -85,7 +87,12 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "alembic_version",
             "artifact_metadata",
             "configuration_snapshots",
+            "durable_jobs",
+            "durable_recovery_events",
+            "durable_sequences",
             "failures",
+            "job_execution_attempts",
+            "job_leases",
             "jobs",
             "persistence_metadata",
             "progress_snapshots",
@@ -93,6 +100,7 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "run_stages",
             "summary_metadata",
             "warnings",
+            "workers",
         }
         foreign_keys = {
             (table, constraint["referred_table"])
@@ -104,6 +112,14 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             ("artifact_metadata", "runs"),
             ("jobs", "configuration_snapshots"),
             ("jobs", "runs"),
+            ("durable_jobs", "jobs"),
+            ("durable_jobs", "workers"),
+            ("durable_recovery_events", "jobs"),
+            ("durable_recovery_events", "workers"),
+            ("job_execution_attempts", "jobs"),
+            ("job_execution_attempts", "workers"),
+            ("job_leases", "jobs"),
+            ("job_leases", "workers"),
             ("progress_snapshots", "jobs"),
             ("progress_snapshots", "runs"),
             ("runs", "configuration_snapshots"),
@@ -143,6 +159,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert script is not None
     assert script.revision == "0001_persistence"
     assert script.doc == "create persistence foundation"
+    durable_script = ScriptDirectory.from_config(config).get_revision(DURABLE_EXECUTION_REVISION)
+    assert durable_script is not None
+    assert durable_script.revision == "0002_durable_execution"
+    assert durable_script.down_revision == INITIAL_PERSISTENCE_REVISION
+    assert durable_script.doc == "add durable execution coordination"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -153,6 +174,8 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     sql = output.getvalue()
     assert "CREATE TABLE jobs" in sql
     assert "CREATE TABLE artifact_metadata" in sql
+    assert "CREATE TABLE durable_jobs" in sql
+    assert "CREATE TABLE job_leases" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 

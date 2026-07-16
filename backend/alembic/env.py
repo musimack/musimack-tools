@@ -7,7 +7,10 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-from musimack_tools.persistence import models  # noqa: F401 -- registers mapped tables.
+from musimack_tools.persistence import (
+    durable_models,  # noqa: F401 -- registers mapped tables.
+    models,  # noqa: F401 -- registers mapped tables.
+)
 from musimack_tools.persistence.base import Base
 
 config = context.config

@@ -701,3 +701,23 @@ cancellation token, response body, XML payload, or full `CrawlRunResult`.
 Explicit cleanup removes or marks only database metadata according to policy. It never deletes
 filesystem sitemap or summary artifacts, and retention never changes sitemap recommendation or XML
 generation outcomes.
+
+## Durable execution does not change crawl policy
+
+Durable scheduling changes where queued work is coordinated, not how URLs are normalized, scoped,
+fetched, checked against robots, interpreted for indexability, or recommended for a sitemap. A job
+must still pass every accepted crawl and network-safety boundary. Retry classification cannot turn
+a robots denial, noindex directive, canonical exclusion, validation failure, or explicit
+cancellation into an eligible sitemap URL.
+
+Cancellation remains cooperative. The durable worker persists the request, checks it before
+execution and during heartbeats, and forwards it to the accepted cancellation token. It does not
+use unsafe task termination as the normal mechanism. After process loss, stale recovery may create
+a new execution attempt under the same job ID, but it never resumes a partially consumed frontier,
+reuses an old lease, or changes URL/run identity. Completed stage and artifact metadata can remain
+as evidence without becoming resumable crawler state.
+
+Lease expiry and retries are execution-coordination evidence only. They do not modify crawl limits,
+recommendation precedence, metadata warnings, XML rules, or publication behavior. Durable mode is
+single-machine SQLite coordination; it provides neither distributed fencing nor authorization for
+public worker control.

@@ -479,23 +479,54 @@ session and transaction. No transaction crosses crawl execution or an awaited ne
 Persistence failure adds bounded coordination evidence without erasing the in-memory terminal
 result.
 
-Alembic revision `0001_persistence` owns the frozen initial schema. `alembic.ini` has no fallback
+Alembic revision `0001_persistence` owns the frozen initial schema and revision
+`0002_durable_execution` adds durable coordination tables. `alembic.ini` has no fallback
 URL; callers must inject an explicit database URL. Automatic migration is disabled by default and
 pending migrations block persistence readiness. Cleanup is explicit and sequence ordered. It never
 deletes published XML or summary files.
 
 The database stores metadata and hashes, not artifact bytes, raw bodies, credentials, access logs,
 or unrestricted paths. SQLite is supported only for local process durability. A future PostgreSQL
-adapter is possible behind the protocols but is not implemented. A future durable worker may make
-the database scheduling-authoritative only through a separate architecture decision.
+adapter is possible behind the protocols but is not implemented.
 
 ### Background jobs
 
-The internal process-local job boundary owns bounded admission, FIFO coordination, cooperative
-cancellation, lookup, and bounded in-memory retention. Optional persistence records its accepted
-transitions, progress, and terminal metadata, but does not schedule or resume work. Restart
-reconciliation marks interrupted work and preserves completed evidence. A future durable worker
-boundary remains separate; FastAPI background tasks do not become the crawler's execution model.
+The internal process-local job boundary remains the authority in in-memory mode. In durable mode,
+the durable job-service facade persists submissions and SQLite queue rows become the only scheduler
+authority; no process-local registry task is created for the same job. FastAPI background tasks do
+not become the crawler's execution model.
+
+### Durable execution
+
+The durable domain owns immutable configuration, worker identity, scheduling states, lease
+outcomes, recovery reports, retry evaluations, and diagnostics. The durable repository owns short
+SQLite transactions for submission sequences, FIFO claims, lease creation, heartbeats, durable
+cancellation, terminal transitions, retry availability, and stale recovery. The worker owns only
+polling, bounded task concurrency, cooperative cancellation forwarding, heartbeat scheduling, and
+invocation of the accepted run-service factory. It does not reimplement crawl or run semantics.
+
+Queue order is based on transactional integer sequences. UTC timestamps provide cross-restart
+lease expiry and retry eligibility, but are not the FIFO authority. A retry receives a new
+availability sequence and retains the external job ID while creating a new execution-attempt row.
+Each claim receives a cryptographically random token and increasing generation. Token plus worker,
+job, generation, active state, and expiry fence heartbeat and terminal writes. Lease tokens never
+enter API projections or portable diagnostics.
+
+Startup order is persistence readiness, worker registration, stale-lease recovery, ready state,
+then polling. Recovery preserves completed stage and artifact metadata but does not restore a crawl
+frontier or reuse a task/token. Shutdown stops claims, enters draining, and waits a bounded grace
+period, optionally requesting cooperative cancellation. No task starts at import time.
+
+Persistence preparation receives an explicit `durable_queue_authority` selection. Its default is
+false and retains legacy in-memory interrupted-job reconciliation. Durable composition sets it true
+so that reconciler does not terminalize queued or leased rows before durable stale recovery. This
+selection is part of enforcing one scheduler authority and is covered by restart tests.
+
+Production composition remains explicit. Durable mode requires ready current persistence; worker
+composition additionally requires an injected run-service factory. The authenticated API can run
+without a worker, and a separately composed worker need not expose an API. The default app remains
+health-only. This v1 supports one machine and SQLite coordination only; future PostgreSQL, Redis,
+distributed fencing, multi-machine supervision, and deployment-specific failover are not present.
 
 ### Exports
 
