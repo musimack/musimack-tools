@@ -276,6 +276,42 @@ The service has no FastAPI, crawl, network, persistence, or submission dependenc
 job, and persistence layers may consume these immutable results but must not move their concerns
 into this internal boundary.
 
+## Internal crawl-run composition
+
+The `domain/run*.py` records and `run/` package form an application-service layer above the
+accepted crawler, recommendation engine, XML generator, publication planner, and publication
+executor. This layer delegates every domain decision; it does not normalize again, recalculate
+eligibility, rebuild XML, or bypass filesystem planning. Its stable orchestration version is held
+once in production source and flows into requests, identity, results, summaries, and tests.
+
+The dependency graph is `crawl -> recommend -> generate_xml -> (plan_publication | publish)`;
+`write_summary` is independent after the run has useful or partial evidence. Each requested stage
+has its own pending, running, completed, completed-with-warnings, blocked, cancelled, or failed
+state. The run reconciles those records into completed, completed-with-warnings, cancelled, failed,
+or partially-completed outcomes. Earlier immutable outputs remain attached after every downstream
+failure.
+
+Progress is an injected async sink receiving immutable, monotonically numbered events. No-op,
+recording, and callback sinks are available. Sink failure is evidence, not control: the first
+failure becomes a warning and later delivery is suppressed. Crawl final counts are projected into
+run progress. The service also supplies a per-crawl observer override to the accepted crawler and
+translates every live snapshot into run-level `crawl_progress` in callback order. The constructor's
+default observer is unchanged. A final event is emitted only when the last callback differs from
+the authoritative `CrawlResult`. Cancellation uses the accepted shared cooperative token and is
+checked at stage boundaries; its event follows previously delivered crawl snapshots. There is no
+thread termination, task killing, or process-global registry.
+
+`run/identity.py` hashes canonical JSON containing only portable configuration. `run/summary.py`
+serializes deterministic JSON and Markdown in memory, then optionally writes the two fixed files
+through the accepted atomic writer and link classifier. Sitemap packages and operational summaries
+remain separate artifacts linked only by run ID. Publication stays per-file atomic; the current
+synchronous package executor cannot offer a cancellation checkpoint between its files.
+
+The boundary is intentionally not reachable from FastAPI. A future API/job layer will own request
+admission, active-run lookup, persisted progress, restart recovery, and public delivery. A future
+persistence layer may store immutable summaries and stage evidence. Neither concern belongs in the
+current in-process service.
+
 ## Future boundaries
 
 ### Frontend

@@ -672,6 +672,29 @@ def test_observer_failure_is_isolated_as_typed_error() -> None:
     assert all(error.code is CrawlErrorCode.PROGRESS_OBSERVER_FAILURE for error in result.errors)
 
 
+def test_per_crawl_observer_override_does_not_mutate_constructor_default() -> None:
+    clock = _FakeClock()
+    fetcher = _FakeFetcher({_SEED: _Page(body=_html())}, clock=clock)
+    default_observer = _Observer()
+    override_observer = _Observer()
+    orchestrator = SingleSiteCrawlOrchestrator(
+        fetcher,
+        HtmlMetadataParser(clock=clock),
+        _hard_limits(),
+        AllowAllRobotsServiceForTests(),
+        clock=clock,
+        sleep=clock.sleep,
+        observer=default_observer,
+    )
+
+    result = asyncio.run(orchestrator.crawl(_request(), observer=override_observer))
+
+    assert result.state is CrawlState.COMPLETED
+    assert default_observer.snapshots == []
+    assert override_observer.snapshots[0].state is CrawlState.RUNNING
+    assert override_observer.snapshots[-1].state is CrawlState.COMPLETED
+
+
 def test_fetcher_exception_maps_to_worker_failure() -> None:
     result, fetcher, _clock = _run(
         {_SEED: _Page(body=_html())},

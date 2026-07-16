@@ -27,11 +27,14 @@ This first implementation batch provides:
 - Per-origin robots.txt retrieval, parsing, permission decisions, and one-crawl caching
 - X-Robots-Tag parsing and combined meta/header indexability evidence
 - Pure sitemap eligibility recommendations and deterministic crawl-level projections
+- Internal crawl-run composition across crawl, recommendation, XML, and local publication stages
+- Deterministic run IDs, ordered progress events, cooperative cancellation, and partial results
+- Deterministic JSON and Markdown run summaries with optional safe atomic local writing
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
 It deliberately does **not** provide sitemap fetching, final search-engine-specific indexability
-verdicts, public crawl or recommendation API endpoints, background jobs, persistence, XML/CSV
+verdicts, public crawl or recommendation API endpoints, background jobs, persistence, CSV
 exports, manual overrides, authentication,
 frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
@@ -313,6 +316,62 @@ history, remote publication, submission, and persistence are deferred. Symlink c
 probe only link creation and skip only for recognized unsupported or privilege conditions; Windows
 junction root and ancestor tests use local temporary directories and run without symlink privilege.
 
+## Internal crawl-run workflow
+
+`CrawlRunService` is the framework-independent composition boundary for one in-process operation.
+It supports the ordered stages `crawl`, `recommend`, `generate_xml`, `plan_publication`, `publish`,
+and `write_summary`. Every v1 run starts with crawl; later stages require their explicit
+prerequisites. `write_summary` can accompany a successful, cancelled, failed, or partially
+completed run. Crawl-only, generation-only, publication dry-run, and full local-publication runs
+are supported. No FastAPI route, CLI, registry, database, background worker, or public progress
+transport exposes this service.
+
+The service accepts an injected accepted crawl orchestrator, progress sink, cancellation token,
+monotonic clock, and downstream service boundaries. Sequence numbers begin at 1. A failing progress
+sink produces one `progress_sink_failed` warning and is then suppressed; core execution continues.
+During crawl, a per-run adapter translates every accepted immutable crawler snapshot into a
+`crawl_progress` event in callback order. Equal callback snapshots are preserved. If the last live
+snapshot trails the final `CrawlResult`, one reconciled event supplies authoritative final counters
+before crawl completion. No reconciliation event is added when the last callback already matches.
+Cancellation is cooperative: it is checked before each stage and before publication execution.
+The accepted synchronous publication executor remains atomic per file and cannot be interrupted
+safely inside a file or between package files by this v1 wrapper. Completed upstream outputs are
+always retained when a later stage is cancelled, blocked, or fails.
+
+Portable identity uses SHA-256 over a canonical safe request snapshot. The display form is
+`run-<12 lowercase hex characters>`; the full digest remains in the result. Output roots, caller
+labels, timestamps, machine identity, credentials, and environment values are excluded. The
+`crawl-run-summary-v1` JSON and companion Markdown summary are deterministic UTF-8 with LF endings
+and a final newline. Their exact byte counts and hashes are returned separately. Optional summary
+writing requires a separate explicit absolute root and uses only `run-summary.json` and
+`run-summary.md`, with dry-run, `fail_if_exists`, `overwrite`, link rejection, and atomic per-file
+writes.
+
+Internal composition with an already configured accepted `crawler` is:
+
+```python
+from musimack_tools.domain.run import CrawlRunRequest, RunStage
+from musimack_tools.run.service import CrawlRunService
+
+request = CrawlRunRequest(
+    crawl_request=crawl_request,
+    requested_stages=(
+        RunStage.CRAWL,
+        RunStage.RECOMMEND,
+        RunStage.GENERATE_XML,
+        RunStage.WRITE_SUMMARY,
+    ),
+)
+result = await CrawlRunService(crawler).execute(request)
+```
+
+All orchestration tests use injected evidence, fake services, and temporary directories. The
+automatic socket/DNS guard remains active. Focused validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend\tests\unit\test_run_contracts.py backend\tests\unit\test_run_summary_writer.py backend\tests\integration\test_crawl_run_service.py
+```
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local
@@ -345,7 +404,7 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 
 ## Next recommended development batch
 
-The next bounded batch should add CSV crawl and metadata audit serialization as a separate pure
-consumer of accepted crawl and recommendation evidence. Public APIs, persistent export history,
-background jobs, manual overrides, remote publication, and sitemap submission remain separate
-future authorizations.
+The next bounded batch should add deterministic CSV crawl and metadata audit serialization as a
+separate pure consumer of accepted run evidence. Public APIs, persistent run history, background
+jobs, manual overrides, remote publication, and sitemap submission remain separate future
+authorizations.

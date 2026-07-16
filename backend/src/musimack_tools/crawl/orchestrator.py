@@ -139,6 +139,7 @@ class _Runtime:
     started_at: float
     frontier: CrawlFrontier
     robots_session: RobotsCrawlSession
+    progress_observer: ProgressObserver | None
     state: CrawlState = CrawlState.PENDING
     counters: _MutableCounters = field(default_factory=_MutableCounters)
     records: dict[str, UrlCrawlRecord] = field(default_factory=dict)
@@ -222,7 +223,12 @@ class SingleSiteCrawlOrchestrator:
         self._robots_service = robots_service
         self._indexability = indexability_parser or IndexabilityEvidenceParser()
 
-    async def crawl(self, request: CrawlRequest) -> CrawlResult:
+    async def crawl(
+        self,
+        request: CrawlRequest,
+        *,
+        observer: ProgressObserver | None = None,
+    ) -> CrawlResult:
         """Execute one crawl and return complete immutable in-memory evidence."""
         started = self._clock()
         frontier = CrawlFrontier(maximum_queued_urls=request.maximum_queued_urls)
@@ -231,6 +237,7 @@ class SingleSiteCrawlOrchestrator:
             started_at=started,
             frontier=frontier,
             robots_session=self._robots_service.create_session(),
+            progress_observer=observer if observer is not None else self._observer,
         )
         try:
             self._hard_limits.validate(request)
@@ -969,7 +976,8 @@ class SingleSiteCrawlOrchestrator:
             runtime.counters.robots_denied_urls += 1
 
     async def _emit(self, runtime: _Runtime, *, current_depth: int | None) -> None:
-        if self._observer is None:
+        observer = runtime.progress_observer
+        if observer is None:
             return
         snapshot = ProgressSnapshot(
             state=runtime.state,
@@ -985,7 +993,7 @@ class SingleSiteCrawlOrchestrator:
             recent_error_code=runtime.errors[-1].code if runtime.errors else None,
         )
         try:
-            await self._observer.on_progress(snapshot)
+            await observer.on_progress(snapshot)
         except Exception as error:  # noqa: BLE001 - observer failures are isolated evidence.
             runtime.errors.append(
                 CrawlError(

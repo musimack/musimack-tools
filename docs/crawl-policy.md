@@ -553,6 +553,39 @@ path, or its own recursive hash. The publication result carries the manifest has
 This local publication policy does not authorize an API, download delivery, remote upload, sitemap
 submission, persistence, scheduling, or export history.
 
+## Crawl-run orchestration policy
+
+An internal run request composes accepted crawl evidence; it does not alter normalization, scope,
+robots permission, fetch safety, redirect, byte, concurrency, or frontier semantics. Every v1 run
+explicitly requests `crawl`. Recommendation, XML, planning, and publication stages must list their
+ordered prerequisites. Scope approval and network-safety approval remain separate inside the
+accepted crawler.
+
+Cancellation is cooperative. A request present before start cancels crawl and blocks its dependent
+stages. Cancellation returned by the crawler preserves its partial `CrawlResult`. Cancellation
+after crawl cancels the next requested dependent stage and blocks later ones. It is checked again
+before publication mutation. The accepted synchronous publication executor completes its own
+atomic file operations and currently exposes no safe checkpoint between package files, so v1 does
+not claim mid-package cancellation. Summary serialization may still run after cancellation and
+records the blocked stages.
+
+The run service adapts the accepted asynchronous crawl observer for each execution. Every immutable
+callback snapshot is preserved in delivery order as a run event, including discovered, queued,
+fetched, parsed, byte, queue, active-fetch, depth, and recent-error evidence actually available from
+the crawler. Exact duplicate callbacks are preserved. If final crawl evidence advances beyond the
+last callback, one reconciliation event appears before crawl completion; otherwise no duplicate
+final event is added. Sink failure never enters crawler error evidence. Cancellation observation
+follows the last translated snapshot, while cancellation arriving after completed crawl evidence is
+handled by the next stage rather than retroactively changing crawl state.
+
+Portable summaries contain controlled stage states, counts, versions, warnings, and failures. They
+exclude wall-clock timestamps, absolute paths, environment data, raw stack traces, response bodies,
+and raw exception messages. They retain authoritative final counters, not the unbounded progress
+event history. Output paths never participate in run identity. Summary writing uses a
+separate explicitly configured absolute root, two fixed filenames, link/junction rejection,
+dry-run, and the accepted no-clobber or overwrite atomic writer. Sitemap publication behavior is
+unchanged.
+
 ## Current limitations and deferred controls
 
 The internal orchestrator can traverse one approved site in memory through the accepted fetch and
