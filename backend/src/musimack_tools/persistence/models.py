@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves annotations at runtime.
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -58,11 +60,18 @@ class RunModel(Base):
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     final_result_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     summary_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     configuration_snapshot_id: Mapped[str] = mapped_column(
         ForeignKey("configuration_snapshots.snapshot_id", ondelete="RESTRICT"), nullable=False
     )
 
-    __table_args__ = (Index("ix_runs_lifecycle", "lifecycle"),)
+    __table_args__ = (
+        Index("ix_runs_lifecycle", "lifecycle"),
+        Index("ix_runs_seed", "normalized_seed_url"),
+        Index("ix_runs_started", "started_at", "run_id"),
+        Index("ix_runs_terminal", "terminal_at", "run_id"),
+    )
 
 
 class JobModel(Base):
@@ -86,6 +95,9 @@ class JobModel(Base):
     created_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     started_sequence: Mapped[int | None] = mapped_column(Integer)
     terminal_sequence: Mapped[int | None] = mapped_column(Integer)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     eviction_state: Mapped[str] = mapped_column(String(32), nullable=False, default="retained")
     safe_caller_label: Mapped[str | None] = mapped_column(String(128))
     configuration_snapshot_id: Mapped[str] = mapped_column(
@@ -97,6 +109,9 @@ class JobModel(Base):
     __table_args__ = (
         UniqueConstraint("run_id", "attempt_number", name="uq_jobs_run_attempt"),
         Index("ix_jobs_state_sequence", "state", "created_sequence"),
+        Index("ix_jobs_run", "run_id", "created_sequence"),
+        Index("ix_jobs_submitted", "submitted_at", "job_id"),
+        Index("ix_jobs_terminal_at", "terminal_at", "job_id"),
     )
 
 
@@ -115,6 +130,8 @@ class RunStageModel(Base):
     safe_code: Mapped[str | None] = mapped_column(String(128))
     started_sequence: Mapped[int | None] = mapped_column(Integer)
     completed_sequence: Mapped[int | None] = mapped_column(Integer)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint("run_id", "stage", name="uq_run_stages_run_stage"),
@@ -170,6 +187,7 @@ class WarningModel(Base):
     normalized_url: Mapped[str | None] = mapped_column(Text)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="warning")
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint(
@@ -198,6 +216,7 @@ class FailureModel(Base):
     normalized_url: Mapped[str | None] = mapped_column(Text)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="error")
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (Index("ix_failures_parent_sequence", "parent_type", "parent_id", "sequence"),)
 
@@ -290,11 +309,11 @@ class ArtifactRecordModel(Base):
     observed_byte_count: Mapped[int | None] = mapped_column(Integer)
     expected_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     observed_sha256: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False)
-    available_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
-    last_verified_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
-    expires_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
-    deleted_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_state: Mapped[str] = mapped_column(String(32), nullable=False)
     reason_code: Mapped[str | None] = mapped_column(String(128))
     storage_version: Mapped[str] = mapped_column(String(64), nullable=False)

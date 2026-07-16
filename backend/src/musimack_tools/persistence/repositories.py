@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select, text
@@ -81,6 +82,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         request: CrawlRunRequest,
     ) -> PersistenceOperationResult:
         def operation() -> None:
+            now = datetime.now(UTC)
             canonical, digest = canonical_configuration(request)
             with self._runtime.transaction() as session:
                 config = session.get(ConfigurationSnapshotModel, digest)
@@ -138,6 +140,9 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                         created_sequence=sequence,
                         started_sequence=None,
                         terminal_sequence=None,
+                        submitted_at=now,
+                        started_at=None,
+                        terminal_at=None,
                         eviction_state=RetentionState.RETAINED.value,
                         safe_caller_label=(
                             safe_message(request.caller_label, 128)
@@ -156,7 +161,10 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         def operation() -> None:
             with self._runtime.transaction() as session:
                 job = self._required_job(session, snapshot.job_id)
-                self._map_job_snapshot(job, snapshot)
+                self._map_job_snapshot(job, snapshot, now=datetime.now(UTC))
+                if job.started_at is not None:
+                    run = self._required_run(session, job.run_id)
+                    run.started_at = run.started_at or job.started_at
 
         return safely_record("record_transition", operation)
 
@@ -167,6 +175,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         event: RunProgressEvent,
     ) -> PersistenceOperationResult:
         def operation() -> None:
+            now = datetime.now(UTC)
             with self._runtime.transaction() as session:
                 job = self._required_job(session, job_id)
                 snapshot = event.snapshot
@@ -208,6 +217,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                 run.lifecycle = snapshot.lifecycle.value
                 run.warning_count = snapshot.warning_count
                 run.failure_count = snapshot.failure_count
+                run.started_at = run.started_at or now
                 if snapshot.active_stage is not None and snapshot.stage_state is not None:
                     self._upsert_stage(
                         session,
@@ -215,6 +225,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                         snapshot.active_stage.value,
                         snapshot.stage_state.value,
                         event.sequence,
+                        now,
                     )
                 session.flush()
                 self._truncate_progress(session, job_id)
@@ -229,10 +240,14 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         failure: JobCoordinationFailure | None,
     ) -> PersistenceOperationResult:
         def operation() -> None:
+            now = datetime.now(UTC)
             with self._runtime.transaction() as session:
                 job = self._required_job(session, snapshot.job_id)
-                self._map_job_snapshot(job, snapshot)
+                self._map_job_snapshot(job, snapshot, now=now)
                 job.terminal_sequence = self._next_terminal_sequence(session)
+                job.terminal_at = now
+                run = self._required_run(session, job.run_id)
+                run.terminal_at = now
                 if result is not None:
                     self._record_run_result(session, snapshot.job_id, result)
                 for index, warning in enumerate(warnings, start=1):
@@ -257,6 +272,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                             normalized_url=None,
                             sequence=1,
                             severity="error",
+                            occurred_at=now,
                         )
                     )
 
@@ -327,6 +343,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                     or 0
                 )
                 for job in jobs:
+                    now = datetime.now(UTC)
                     completed = int(
                         session.scalar(
                             select(func.count())
@@ -355,9 +372,11 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                     job.cancellation_requested = False
                     job.failure_count += 1
                     job.terminal_sequence = self._next_terminal_sequence(session)
+                    job.terminal_at = now
                     run = self._required_run(session, job.run_id)
                     run.lifecycle = job.run_lifecycle
                     run.failure_count += 1
+                    run.terminal_at = now
                     session.add(
                         FailureModel(
                             parent_type="job",
@@ -370,6 +389,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                             normalized_url=None,
                             sequence=job.failure_count,
                             severity="error",
+                            occurred_at=now,
                         )
                     )
                     pending = session.scalars(
@@ -481,7 +501,9 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         return int(session.scalar(select(func.max(JobModel.terminal_sequence))) or 0) + 1
 
     @staticmethod
-    def _map_job_snapshot(job: JobModel, snapshot: JobSnapshot) -> None:
+    def _map_job_snapshot(
+        job: JobModel, snapshot: JobSnapshot, *, now: datetime | None = None
+    ) -> None:
         job.state = snapshot.state.value
         job.queue_position = snapshot.queue_position
         job.run_lifecycle = (
@@ -497,14 +519,16 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         job.failure_count = snapshot.failure_count
         if snapshot.state in {JobState.STARTING, JobState.RUNNING} and job.started_sequence is None:
             job.started_sequence = job.created_sequence
+            job.started_at = now or datetime.now(UTC)
 
     @staticmethod
-    def _upsert_stage(
+    def _upsert_stage(  # noqa: PLR0913 - persisted stage evidence remains explicit.
         session: Session,
         run_id: str,
         stage: str,
         state: str,
         sequence: int,
+        occurred_at: datetime | None = None,
     ) -> None:
         item = session.scalar(
             select(RunStageModel).where(
@@ -533,14 +557,22 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                     }
                     else None
                 ),
+                started_at=(occurred_at if state == RunStageState.RUNNING.value else None),
+                terminal_at=(
+                    occurred_at
+                    if state not in {RunStageState.PENDING.value, RunStageState.RUNNING.value}
+                    else None
+                ),
             )
             session.add(item)
         else:
             item.state = state
             if state == RunStageState.RUNNING.value and item.started_sequence is None:
                 item.started_sequence = sequence
+                item.started_at = occurred_at
             if state not in {RunStageState.PENDING.value, RunStageState.RUNNING.value}:
                 item.completed_sequence = sequence
+                item.terminal_at = occurred_at
 
     def _truncate_progress(self, session: Session, job_id: str) -> None:
         limit = self._retention.maximum_progress_rows_per_job
@@ -556,6 +588,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
             session.execute(delete(ProgressSnapshotModel).where(ProgressSnapshotModel.id.in_(ids)))
 
     def _record_run_result(self, session: Session, job_id: str, result: CrawlRunResult) -> None:
+        now = datetime.now(UTC)
         run = self._required_run(session, result.run_id)
         run.lifecycle = result.lifecycle.value
         run.stage_states_json = stage_states_json(result)
@@ -573,6 +606,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         run.failure_count = len(result.failures)
         run.final_result_available = True
         run.summary_available = bool(result.summaries)
+        run.terminal_at = run.terminal_at or now
         for order, stage in enumerate(result.stages):
             item = session.scalar(
                 select(RunStageModel).where(
@@ -592,6 +626,8 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                         safe_code=None,
                         started_sequence=None,
                         completed_sequence=None,
+                        started_at=None,
+                        terminal_at=now,
                     )
                 )
             else:
@@ -622,6 +658,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                     normalized_url=None,
                     sequence=index,
                     severity="error",
+                    occurred_at=now,
                 )
             )
         self._record_summaries(session, job_id, result)
@@ -661,6 +698,7 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                     normalized_url=safe_url(url),
                     sequence=sequence,
                     severity="warning",
+                    occurred_at=datetime.now(UTC),
                 )
             )
 

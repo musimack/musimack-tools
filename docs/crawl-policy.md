@@ -732,3 +732,11 @@ robots permission, indexability, recommendation, XML serialization, or publicati
 Registration failures are artifact-management evidence and do not retroactively exclude URLs or
 delete successfully published files. Retrieval is authenticated internal delivery only and never
 authorizes a crawl, remote publication, sitemap submission, or public sharing.
+
+## History does not change crawl policy
+
+Durable history is a read-only projection of already accepted persistence evidence. Filtering,
+pagination, retention state, interruption state, or artifact availability cannot authorize a URL,
+change normalized identity, broaden scope, bypass DNS/SSRF controls, alter robots or indexability
+decisions, modify recommendation precedence, or resume a frontier. A historical warning or failure
+is safe evidence, not permission to refetch. History API requests perform no public HTTP or DNS.

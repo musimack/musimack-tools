@@ -480,7 +480,38 @@ Persistence failure adds bounded coordination evidence without erasing the in-me
 result.
 
 Alembic revision `0001_persistence` owns the frozen initial schema, `0002_durable_execution` adds
-durable coordination, and `0003_artifact_storage` adds file lifecycle metadata and histories.
+durable coordination, `0003_artifact_storage` adds file lifecycle metadata and histories, and
+`0004_history_api` adds nullable historical timestamps plus indexes used by bounded job/run
+queries. It does not create duplicate history tables.
+
+## Durable history query boundary
+
+SQLite is the historical source of truth. `SQLAlchemyHistoryRepository` opens a short-lived
+session per query and returns frozen DTOs; ORM objects and lazy relationships never leave the
+persistence boundary. It reads accepted `jobs`, `runs`, `durable_jobs`, execution attempts,
+recovery events, stages, warnings, failures, summaries, and artifact records. The in-memory job
+registry is not consulted for historical truth.
+
+`HistoryService` owns page bounds, filter normalization, cursor validation, not-found semantics,
+related-record truncation, safe logging, and diagnostics. Its exact contracts are
+`seo-toolkit-history-service-v1`, `seo-toolkit-history-api-v1`, and
+`seo-toolkit-history-pagination-v1`. Job order is durable created sequence descending then job ID
+descending. Run order is the latest persisted job sequence descending then run ID descending.
+Under stable data, the cursor predicate prevents duplicates and omissions across pages. Concurrent
+inserts sort ahead of an existing cursor and therefore do not disturb continuation; updates to
+filter fields may change membership, which is a documented live-query limitation.
+
+History is explicitly composed and disabled by default. Ten routes mount only beneath the existing
+authenticated internal prefix. The default application remains health-only. Production without
+optional features has 11 paths, artifacts-only 14, history-only 21, and artifacts plus history 24.
+History diagnostics include bounded aggregate evidence, current migration/database readiness, and
+the process-local time/reason of the last query outcome; diagnostics are operational evidence, not
+an alternate source of historical truth.
+
+Availability is explicit: full, metadata-only, result-unavailable, evicted, interrupted, retained,
+or artifact missing/expired/deleted. A durable row survives process restart, registry reset, and
+terminal payload eviction. Phase 16 remains authoritative for download eligibility and lifecycle.
+No projection exposes a root, relative path, hash, lease token, database URL, SQL, or raw error.
 `alembic.ini` has no fallback
 URL; callers must inject an explicit database URL. Automatic migration is disabled by default and
 pending migrations block persistence readiness. Cleanup is explicit and sequence ordered. It never

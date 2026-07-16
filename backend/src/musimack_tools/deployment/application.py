@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from musimack_tools.artifacts.service import ArtifactService
     from musimack_tools.deployment.persistence_runtime import PreparedPersistence
     from musimack_tools.deployment.worker import PreparedDurableExecution
+    from musimack_tools.history.service import HistoryService
 
 Network = IPv4Network | IPv6Network
 
@@ -55,6 +56,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     persistence: PreparedPersistence | None = None,
     durable: PreparedDurableExecution | None = None,
     artifacts: ArtifactService | None = None,
+    history: HistoryService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -131,6 +133,24 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.artifact_readiness = readiness
+    if history is not None and history.configuration.enabled:
+        from musimack_tools.api.history import create_history_router  # noqa: PLC0415
+
+        diagnostics = history.diagnostics()
+        if not diagnostics.database_ready or not diagnostics.migration_ready:
+            raise _configuration_error("history_not_ready")
+        application.include_router(
+            create_history_router(
+                history,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.history_diagnostics = diagnostics
 
     add_internal_cors(
         application,

@@ -63,6 +63,14 @@ class ApiErrorCode(StrEnum):
     ARTIFACT_NOT_FOUND = "artifact_not_found"
     ARTIFACT_NOT_AVAILABLE = "artifact_not_available"
     ARTIFACT_RETRIEVAL_FAILED = "artifact_retrieval_failed"
+    HISTORY_DISABLED = "history_disabled"
+    HISTORY_INVALID_PAGE_SIZE = "history_invalid_page_size"
+    HISTORY_INVALID_CURSOR = "history_invalid_cursor"
+    HISTORY_CURSOR_VERSION_UNSUPPORTED = "history_cursor_version_unsupported"
+    HISTORY_CURSOR_FILTER_MISMATCH = "history_cursor_filter_mismatch"
+    HISTORY_JOB_NOT_FOUND = "history_job_not_found"
+    HISTORY_RUN_NOT_FOUND = "history_run_not_found"
+    HISTORY_QUERY_FAILED = "history_query_failed"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):

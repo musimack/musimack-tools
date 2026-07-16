@@ -71,6 +71,7 @@ from musimack_tools.persistence.durable_models import (
 from musimack_tools.persistence.models import (
     JobModel,
     ProgressSnapshotModel,
+    RunModel,
     RunStageModel,
 )
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
@@ -343,6 +344,7 @@ class SQLAlchemyDurableExecutionRepository:
         return tuple(claims)
 
     def mark_running(self, claim: DurableClaim) -> LeaseOperationResult:
+        now = require_aware_utc(self._clock())
         with self._immediate_session() as session:
             lease, outcome = self._validated_lease(session, claim)
             if lease is None:
@@ -352,6 +354,10 @@ class SQLAlchemyDurableExecutionRepository:
             base = self._required_job(session, claim.job_id)
             base.state = JobState.RUNNING.value
             base.run_lifecycle = RunLifecycle.RUNNING.value
+            base.started_at = base.started_at or now
+            run = session.get(RunModel, base.run_id)
+            if run is not None:
+                run.started_at = run.started_at or now
         return LeaseOperationResult(LeaseOutcome.ACCEPTED)
 
     def heartbeat(self, claim: DurableClaim) -> LeaseOperationResult:
@@ -408,6 +414,7 @@ class SQLAlchemyDurableExecutionRepository:
             return bool(job is not None and job.cancellation_requested)
 
     def request_cancellation(self, job_id: str) -> JobCancellationResult:
+        now = require_aware_utc(self._clock())
         with self._immediate_session() as session:
             durable = session.get(DurableJobModel, job_id)
             base = session.get(JobModel, job_id)
@@ -439,6 +446,10 @@ class SQLAlchemyDurableExecutionRepository:
                 durable.terminal_disposition = DurableJobState.CANCELLED.value
                 base.state = JobState.CANCELLED.value
                 base.terminal = True
+                base.terminal_at = now
+                run = session.get(RunModel, base.run_id)
+                if run is not None:
+                    run.terminal_at = now
                 outcome = JobCancellationOutcome.CANCELLED_WHILE_QUEUED
                 explanation = "The durable queued job was cancelled before claim"
             else:
@@ -621,7 +632,9 @@ class SQLAlchemyDurableExecutionRepository:
     def load_request(self, claim: DurableClaim) -> CrawlRunRequest:
         return deserialize_run_request(claim.request_json)
 
-    def complete(self, claim: DurableClaim, result: CrawlRunResult) -> DurableJobState:
+    def complete(  # noqa: PLR0915 - durable terminal state evidence remains explicit.
+        self, claim: DurableClaim, result: CrawlRunResult
+    ) -> DurableJobState:
         now = require_aware_utc(self._clock())
         failure_codes = tuple(item.code.value for item in result.failures)
         terminal_success = result.lifecycle in {
@@ -697,6 +710,10 @@ class SQLAlchemyDurableExecutionRepository:
                 base.state = JobState.QUEUED.value
                 base.terminal = False
                 base.result_available = False
+                base.terminal_at = None
+                run = session.get(RunModel, base.run_id)
+                if run is not None:
+                    run.terminal_at = None
             else:
                 durable.durable_state = state.value
                 durable.terminal_disposition = state.value
@@ -704,6 +721,7 @@ class SQLAlchemyDurableExecutionRepository:
                 base.state = snapshot_state.value
                 base.terminal = True
                 base.result_available = True
+                base.terminal_at = now
             self._release_active_lease(session, claim, now, state.value)
         _LOGGER.info(
             "durable_execution_finished",
@@ -755,10 +773,15 @@ class SQLAlchemyDurableExecutionRepository:
                 durable.availability_sequence = self._allocate(session, "availability")
                 base.state = JobState.QUEUED.value
                 base.terminal = False
+                base.terminal_at = None
             else:
                 durable.terminal_disposition = state.value
                 base.state = JobState(state.value).value
                 base.terminal = True
+                base.terminal_at = now
+                run = session.get(RunModel, base.run_id)
+                if run is not None:
+                    run.terminal_at = now
             durable.durable_state = state.value
             self._release_active_lease(session, claim, now, state.value)
         _LOGGER.info(
@@ -852,6 +875,7 @@ class SQLAlchemyDurableExecutionRepository:
                         durable.availability_sequence = self._allocate(session, "availability")
                         base.state = JobState.QUEUED.value
                         base.terminal = False
+                        base.terminal_at = None
                         retried += 1
                     else:
                         partial = self._has_completed_stage(session, base.run_id)
@@ -866,6 +890,10 @@ class SQLAlchemyDurableExecutionRepository:
                     durable.terminal_disposition = state.value
                     base.state = JobState(state.value).value
                     base.terminal = True
+                    base.terminal_at = now
+                    run = session.get(RunModel, base.run_id)
+                    if run is not None:
+                        run.terminal_at = now
                 if attempt is not None:
                     attempt.outcome = state.value
                     attempt.retryable = state is DurableJobState.RETRY_WAIT

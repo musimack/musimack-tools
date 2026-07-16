@@ -568,7 +568,8 @@ exact contracts are `seo-toolkit-durable-execution-v1` and
 `seo-toolkit-worker-protocol-v1`.
 
 Durable mode requires enabled, ready persistence at the current Alembic head. Phase 16 advances
-that head to `0003_artifact_storage` while retaining the Phase 15 durable tables unchanged.
+that head to `0004_history_api`; the Phase 17 revision adds only historical timestamps and query
+indexes while retaining accepted durable and artifact tables as the source of truth.
 Persistence startup must be called with `durable_queue_authority=True`; this bypasses only the
 legacy in-memory interrupted-job reconciler so queued and leased records reach durable stale
 recovery. The default remains `False`, preserving accepted in-memory restart behavior.
@@ -706,9 +707,38 @@ startup-disabled by default, scans only the bounded managed layout, and reports 
 registering or deleting them. Database revision `0003_artifact_storage` downgrades cleanly to
 `0002_durable_execution`, with data loss limited to Phase 16 tables.
 
+## Durable job and run history
+
+Phase 17 adds an optional, private, restart-safe history layer over SQLite. It is disabled by
+default and versioned as `seo-toolkit-history-service-v1`, `seo-toolkit-history-api-v1`, and
+`seo-toolkit-history-pagination-v1`. Explicit composition requires current durable persistence;
+there is no fallback database, import-time task, process-local history cache, or public route.
+
+Jobs use deterministic `submitted_sequence_desc_job_id_desc-v1` ordering. Runs use
+`submitted_sequence_desc_run_id_desc-v1`, based on the latest persisted job submission for the
+run. Opaque base64url cursors contain a strictly parsed format/version, query kind, ordering,
+filter fingerprint, and last ordering key. Cursors contain no SQL or secrets, are not represented
+as cryptographically tamper-proof, and are rejected when malformed or reused with different
+filters or ordering. Page sizes and all related attempt, stage, warning, failure, and artifact
+collections are bounded.
+
+Authenticated production composition adds ten history paths beneath
+`/api/internal/v1/history`: job list/detail/attempts, run list/detail/stages/warnings/failures/
+artifacts, and diagnostics. History-only production has 21 total paths; artifacts-only has 14;
+artifacts plus history has 24; production without either feature remains 11; the default app
+remains `/api/health` only. Existing bearer authentication, trusted-network/proxy enforcement,
+correlation IDs, security headers, and safe error envelopes apply unchanged.
+
+Historical projections omit lease tokens, storage paths, hashes, SQL, raw exceptions, request
+headers, environment values, and credentials. Result eviction returns retained metadata with an
+explicit availability state instead of becoming job-not-found. Artifact references are summaries
+of Phase 16 authority and never duplicate artifact lifecycle decisions. Revision
+`0004_history_api` adds nullable wall-clock evidence and only indexes exercised by history queries;
+it creates no duplicate history tables.
+
 ## Next recommended development batch
 
-The next bounded batch should add deterministic CSV crawl and metadata audit serialization as a
+The next bounded batch may add deterministic CSV crawl and metadata audit serialization as a
 separate pure consumer of accepted run evidence. Full durable-result reconstruction, public
 persistence or worker APIs, PostgreSQL, multi-machine workers, manual overrides, remote
 publication, and sitemap submission remain separate future authorizations.
