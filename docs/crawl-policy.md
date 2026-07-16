@@ -620,3 +620,23 @@ Job state is process-local. There is no restart durability, persistent queue, cr
 distributed execution, or public admission route. Progress and terminal history are bounded, so
 older evidence may be intentionally evicted. These operational policies do not grant network
 authorization or relax existing scope and destination-safety decisions.
+
+## Application profiles and bounded projections
+
+Application profiles select values already accepted by crawl, fetch, recommendation, XML,
+publication, and summary contracts. They do not redefine normalization, scope, robots permission,
+network safety, frontier ordering, recommendation precedence, XML serialization, or filesystem
+publication. Application maxima are additional admission gates; lower layers remain authoritative.
+Values above a gate are rejected with supplied-value evidence and are never silently clamped.
+
+Preparation and validation make no network, DNS, registry, or filesystem mutation. Operational
+preflight may read current registry state and inspect existing output paths, but it allocates no job
+attempt, reserves no active or queue capacity, and creates no directory or temporary file. Its
+likely-start, likely-queue, duplicate, conflict, and readiness findings can become stale.
+Submission performs validation again and is the authoritative outcome.
+
+Default application status and result projections are deliberately bounded. They report counts,
+states, stable error and warning codes, logical filenames, hashes, and version identifiers. They do
+not expose URL records, recommendation rows, progress histories, raw HTML, response bodies, XML
+bytes, summary bytes, stack traces, cancellation tokens, locks, tasks, or absolute machine paths.
+Detailed export and record delivery require a separately authorized boundary.

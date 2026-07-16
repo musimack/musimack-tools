@@ -343,6 +343,45 @@ No job operation is exposed through FastAPI. A future authenticated adapter may 
 internal contracts into HTTP without moving execution rules into route handlers. Persistence,
 restart recovery, external workers, and distributed coordination remain separate boundaries.
 
+## Internal application-service boundary
+
+The `domain/application.py`, `domain/capabilities.py`, and `domain/diagnostics.py` records define a
+portable boundary above the accepted job manager. The `application/` package owns profiles,
+preparation, validation, advisory preflight, readiness, capabilities, projections, diagnostic
+serialization, and facade composition. It does not own crawling, scheduling, eligibility, XML,
+publication execution, or run lifecycle.
+
+The application boundary is versioned as `seo-toolkit-application-service-v1`; deterministic
+portable diagnostics use `seo-toolkit-diagnostics-v1`.
+
+Raw requests contain operator-oriented seed, scope, profile, bounded overrides, stage intent, and
+optional local-output configuration. `ApplicationRequestPreparer` normalizes through accepted URL
+and scope utilities, applies immutable profile defaults, rejects overrides outside configured and
+absolute maxima, constructs existing domain configurations, and computes the accepted run ID. Raw
+requests never become job submissions before this validation succeeds.
+
+Validation is pure and deterministically ordered by error, warning, then information severity.
+Preflight reads immutable registry snapshots and status records, and uses the accepted link-path
+classifier for output roots. It creates no directories or files, allocates no attempt, and reserves
+no capacity. Queue and duplicate findings are advisory because registry state can change before
+authoritative submission.
+
+`SeoToolkitApplicationService` composes `InternalJobService`; it does not add another scheduler.
+Status projection consumes the immutable job snapshot and latest bounded progress. Result
+projection consumes the retained job result and emits only counts, lifecycle/stage states, stable
+codes, logical filenames, hashes, and versions. Detailed crawl records and payload bytes stay
+behind the accepted internal job result contract.
+
+Readiness distinguishes ready, degraded, and not-ready checks. Capabilities are declared as stable
+typed constants and never inferred by runtime filesystem scanning. Diagnostics serialize bounded
+records as deterministic sorted UTF-8 JSON or Markdown and redact any defensive `Path` occurrence.
+Neither format contains timestamps, stack traces, or a self-hash.
+
+The facade remains internal. A future authenticated API adapter, CLI adapter, or React frontend may
+translate these contracts without moving validation or projections into transport handlers.
+Authentication, persistence, durable workers, and public authorization require separate future
+boundaries.
+
 ## Future boundaries
 
 ### Frontend

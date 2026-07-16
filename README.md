@@ -404,6 +404,60 @@ Focused validation is:
 .\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_job_domain.py backend\tests\integration\test_job_service.py
 ```
 
+## Internal application service
+
+`SeoToolkitApplicationService` is the framework-independent boundary intended for future API,
+CLI, or UI adapters. It accepts an immutable operator-oriented request, applies a named profile,
+validates explicit overrides against additional application maxima, and prepares the accepted
+`CrawlRunRequest`. Preparation is pure: it performs no DNS, network, job submission, directory
+creation, temporary-file creation, or filesystem write.
+
+The four v1 profiles are:
+
+| Profile | URLs | Depth | Duration | Bytes | Concurrency | Queue | Delay | Redirects | Response bytes | Default stages |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `quick_audit` | 100 | 3 | 60s | 25 MB | 2 | 500 | 0.5s | 5 | 2 MB | crawl, recommend |
+| `standard_crawl` | 5,000 | 10 | 1,800s | 500 MB | 4 | 10,000 | 0.5s | 10 | 5 MB | crawl, recommend, XML |
+| `deep_crawl` | 25,000 | 25 | 3,600s | 2 GB | 8 | 50,000 | 0.5s | 10 | 10 MB | crawl, recommend, XML |
+| `sitemap_only` | 10,000 | 15 | 2,400s | 1 GB | 4 | 20,000 | 0.5s | 10 | 5 MB | crawl, recommend, XML, summary |
+
+Absolute application ceilings are 50,000 URLs, depth 50, 7,200 seconds, 5 GB accepted bytes,
+16 concurrent fetches, 100,000 queued URLs, at least 0.1 seconds between per-origin starts,
+20 redirects, and 50 MB per response. Values are rejected rather than clamped. The fetch-specific
+profile values describe required configured dependency bounds; they do not bypass the accepted
+fetcher configuration.
+
+Validation returns ordered error, warning, and information evidence plus normalized scope, stages,
+limits, and deterministic run ID. Preflight reads registry capacity, duplicate state, and requested
+local output roots without allocating an attempt, reserving a queue position, or writing anything.
+It is advisory and may be stale immediately; submission remains authoritative.
+
+The facade composes submission, status, progress, cancellation, bounded result projection,
+registry status, readiness, capabilities, waiting, and shutdown. Default projections contain only
+counts, states, stable codes, logical filenames, and hashes—not crawl records, HTML, response
+bodies, XML bytes, summary bytes, tasks, locks, tokens, stack traces, or absolute local paths.
+Deterministic diagnostics use `seo-toolkit-diagnostics-v1`, sorted UTF-8 JSON or Markdown, LF
+newlines, final newlines, and separately returned SHA-256 hashes. The application contract is
+`seo-toolkit-application-service-v1`.
+
+Internal usage begins with:
+
+```python
+raw = RawApplicationCrawlRequest("https://example.com", crawl_profile="quick_audit")
+report = application.validate_request(raw)
+preflight = await application.preflight(raw)
+submission = await application.submit(raw)
+```
+
+Focused validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_application_service_domain.py backend\tests\integration\test_application_service.py
+```
+
+No public application route, CLI, authentication, persistence, worker, scheduler, or frontend has
+been added.
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local
