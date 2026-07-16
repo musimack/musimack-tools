@@ -597,9 +597,26 @@ parse boundaries. It is not exposed through the API. The following remain deferr
 - enforcement of robots Crawl-delay values
 - a pre-redirect robots callback inside ordinary page redirect sequences; the accepted fetcher
   still revalidates scope and network safety at every redirect target
-- background job ownership, persistence, durable progress streaming, restart recovery, XML, and CSV
+- persistent job ownership, durable progress streaming, restart recovery, and CSV
 - manual include/exclude overrides and approval workflows
 
 No caller should treat scope `decision.allowed` as sufficient permission to connect. The safe
 fetcher combines it with the current DNS, address, port, redirect, time, and resource controls;
 future production authorization must also include infrastructure egress controls.
+
+## Job coordination does not change crawl policy
+
+The internal `crawl-job-registry-v1` manager queues and invokes accepted run requests without
+altering their normalized seed, scope, safety, robots, fetch, frontier, recommendation, XML, or
+publication configuration. Queue order and attempt number do not participate in deterministic run
+identity. Duplicate detection uses that complete accepted run ID, never the seed URL alone.
+
+Cancellation remains cooperative. Queued cancellation prevents execution; a starting or running
+job receives the exact registry-owned token accepted by the run service. No task termination
+changes partial-result or stage semantics. Retention stores immutable results or configured subsets
+without rewriting evidence.
+
+Job state is process-local. There is no restart durability, persistent queue, cross-process lock,
+distributed execution, or public admission route. Progress and terminal history are bounded, so
+older evidence may be intentionally evicted. These operational policies do not grant network
+authorization or relax existing scope and destination-safety decisions.

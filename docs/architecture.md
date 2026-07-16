@@ -308,9 +308,40 @@ remain separate artifacts linked only by run ID. Publication stays per-file atom
 synchronous package executor cannot offer a cancellation checkpoint between its files.
 
 The boundary is intentionally not reachable from FastAPI. A future API/job layer will own request
-admission, active-run lookup, persisted progress, restart recovery, and public delivery. A future
+adapter will own public request admission and delivery. Persisted progress and restart recovery
+remain future work. A future
 persistence layer may store immutable summaries and stage evidence. Neither concern belongs in the
 current in-process service.
+
+## Process-local job manager
+
+The job layer sits above, and does not reinterpret, `CrawlRunService`. Immutable contracts in
+`domain/job.py` and `domain/job_registry.py` describe submissions, snapshots, progress, retained
+results, coordination evidence, policies, counters, and shutdown. `jobs/identity.py` derives an
+attempt identity from the accepted deterministic run ID. `jobs/registry.py` owns mutable
+process-local state, `jobs/service.py` is the framework-independent facade, and
+`jobs/coordinator.py` defines the injected run-service factory boundary.
+
+One `asyncio.Lock` serializes admission, attempt allocation, queue transitions, progress updates,
+completion, retention, and snapshot creation. It is never held across run execution or a caller
+wait. Active jobs are bounded exactly, queued jobs use a bounded FIFO `deque`, and completion starts
+the next entry. Each job owns one cancellation token and completion event. Frozen snapshots expose
+tuples and records, never locks, events, tokens, or tasks.
+
+A job-specific progress adapter updates the latest event and optional bounded history. Unexpected
+progress-storage failures become safe coordination warnings and do not fail the run. Unexpected
+run-service exceptions become typed job failures, and queue processing continues. Final run
+lifecycle maps deterministically to distinct terminal job states.
+
+Terminal records use monotonic completion order and oldest-first bounded eviction. Full-result,
+summary-only, and metadata-only policies do not mutate accepted results. Shutdown stops admission,
+either cancels queued work and requests active cooperative cancellation or drains accepted work,
+then awaits every tracked coordinator task. Registry state disappears at process exit and cannot
+coordinate multiple processes.
+
+No job operation is exposed through FastAPI. A future authenticated adapter may translate these
+internal contracts into HTTP without moving execution rules into route handlers. Persistence,
+restart recovery, external workers, and distributed coordination remain separate boundaries.
 
 ## Future boundaries
 
@@ -336,10 +367,10 @@ not acquire SQLite-specific behavior.
 
 ### Background jobs
 
-Long-running crawl jobs are absent. A future job boundary should own bounded job admission,
-bounded per-job workers, cooperative cancellation, persisted progress, interruption recovery,
-and server-sent progress events. FastAPI background tasks should not become the crawler's core
-execution model.
+The internal process-local job boundary owns bounded admission, FIFO coordination, cooperative
+cancellation, lookup, and bounded retention. A future adapter may add authenticated API delivery;
+a future durable worker boundary may add persisted progress and interruption recovery. FastAPI
+background tasks should not become the crawler's core execution model.
 
 ### Exports
 

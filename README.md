@@ -30,11 +30,14 @@ This first implementation batch provides:
 - Internal crawl-run composition across crawl, recommendation, XML, and local publication stages
 - Deterministic run IDs, ordered progress events, cooperative cancellation, and partial results
 - Deterministic JSON and Markdown run summaries with optional safe atomic local writing
+- An internal process-local job manager with bounded execution, FIFO queueing, cooperative
+  cancellation, progress lookup, and terminal-result retention
 - Pytest, Ruff, and MyPy validation
 - Architecture and crawl-policy documentation
 
 It deliberately does **not** provide sitemap fetching, final search-engine-specific indexability
-verdicts, public crawl or recommendation API endpoints, background jobs, persistence, CSV
+verdicts, public crawl, recommendation, or job API endpoints, persistent background workers,
+persistence, CSV
 exports, manual overrides, authentication,
 frontend application code, browser automation, or Docker configuration. The crawl orchestrator is
 an internal Python boundary for one bounded site crawl. Tests inject fake fetching and use only
@@ -159,8 +162,8 @@ pending duplicate destination.
 The orchestrator enforces total duration and accepted-byte limits, worker concurrency, and a
 minimum start delay per origin. Cooperative cancellation stops new work and retains completed and
 skipped records. Progress observers receive immutable snapshots and cannot control execution.
-Results remain entirely in memory; no job service, persistence, API endpoint, or restart recovery
-exists yet.
+Results remain entirely in memory; the internal job service can coordinate multiple runs, but no
+public API endpoint, persistence, worker process, or restart recovery exists.
 
 ## Robots and indexability evidence
 
@@ -323,8 +326,8 @@ It supports the ordered stages `crawl`, `recommend`, `generate_xml`, `plan_publi
 and `write_summary`. Every v1 run starts with crawl; later stages require their explicit
 prerequisites. `write_summary` can accompany a successful, cancelled, failed, or partially
 completed run. Crawl-only, generation-only, publication dry-run, and full local-publication runs
-are supported. No FastAPI route, CLI, registry, database, background worker, or public progress
-transport exposes this service.
+are supported. An internal process-local registry can coordinate the service, but no FastAPI route,
+CLI, database, external worker, or public progress transport exposes it.
 
 The service accepts an injected accepted crawl orchestrator, progress sink, cancellation token,
 monotonic clock, and downstream service boundaries. Sequence numbers begin at 1. A failing progress
@@ -372,6 +375,35 @@ automatic socket/DNS guard remains active. Focused validation is:
 .\.venv\Scripts\python.exe -m pytest backend\tests\unit\test_run_contracts.py backend\tests\unit\test_run_summary_writer.py backend\tests\integration\test_crawl_run_service.py
 ```
 
+## Internal job management
+
+`InternalJobService` and its injected `InMemoryJobRegistry` coordinate accepted run requests in
+one Python process. Submission does not wait for completion. Up to the configured active limit
+starts immediately; excess work enters a bounded FIFO queue, and completion starts the next entry.
+One-based queue positions always reflect current FIFO order.
+
+The default duplicate policy rejects a non-terminal job with the same deterministic run ID.
+Configuration may instead allow another attempt or return the active attempt. Job IDs have the
+portable form `job-<12-character-run-prefix>-<four-digit-attempt>` and the exact registry contract
+is `crawl-job-registry-v1`.
+
+Internal async methods provide immutable status, latest progress, optional bounded progress
+history, retained results, counters, cancellation, waiting, and shutdown evidence. Queued
+cancellation prevents execution. Active cancellation signals the exact registry-owned cooperative
+token; tasks are not killed. Terminal retention is bounded and oldest-first, with full-result,
+summary-only, and metadata-only payload options. Evicted IDs return typed `not_found`.
+
+Default shutdown stops admission, cancels queued jobs, requests active cancellation, and waits for
+tracked coordinator tasks to settle. An alternative drains accepted work in FIFO order. All state
+is process-local and disappears on restart. There is no public job API, persistent queue,
+scheduler, external worker, authentication, or distributed coordination.
+
+Focused validation is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend\tests\unit\test_job_domain.py backend\tests\integration\test_job_service.py
+```
+
 ## Crawl-safety status
 
 URL scope and network safety are separate approvals. The internal fetch boundary rejects local
@@ -405,6 +437,6 @@ See [docs/crawl-policy.md](docs/crawl-policy.md) for the precise current contrac
 ## Next recommended development batch
 
 The next bounded batch should add deterministic CSV crawl and metadata audit serialization as a
-separate pure consumer of accepted run evidence. Public APIs, persistent run history, background
-jobs, manual overrides, remote publication, and sitemap submission remain separate future
+separate pure consumer of accepted run evidence. Public APIs, persistent run history, external
+workers, manual overrides, remote publication, and sitemap submission remain separate future
 authorizations.
