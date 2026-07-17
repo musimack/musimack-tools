@@ -48,6 +48,7 @@ import {
   InternalLinkInventoryPage,
   NewInternalLinkPage,
 } from '../pages/InternalLinkPages';
+import { BlogStrategyProjectPage } from '../pages/BlogStrategyPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -72,7 +73,9 @@ function DocumentTitle() {
                 ? 'Artifact detail'
                 : location.pathname.startsWith('/audits/')
                   ? 'Metadata audit'
-                  : null;
+                  : location.pathname.startsWith('/blog-strategy')
+                    ? 'Blog strategy'
+                    : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -107,6 +110,9 @@ export function AppRoutes() {
         ))}
         <Route element={<Protected permission="jobs.submit" />}>
           <Route path="/jobs/new" element={<NewCrawlPage />} />
+        </Route>
+        <Route element={<Protected permission="blog_strategy.view" />}>
+          <Route path="/blog-strategy/:projectId" element={<BlogStrategyProjectPage />} />
         </Route>
         <Route element={<Protected permission="jobs.view" />}>
           <Route path="/jobs/:jobId" element={<JobDetailPage />} />

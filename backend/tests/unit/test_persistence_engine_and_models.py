@@ -206,6 +206,11 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "authentication_sessions",
             "authentication_audit_events",
             "login_attempts",
+            "blog_strategy_projects",
+            "blog_strategy_pages",
+            "blog_strategy_topic_families",
+            "blog_strategy_overlap_notes",
+            "blog_strategy_events",
         }
     finally:
         runtime.dispose()

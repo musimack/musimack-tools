@@ -15,6 +15,7 @@ from musimack_tools.persistence.migrations import (
     ARTIFACT_STORAGE_REVISION,
     AUTHENTICATION_AUTHORIZATION_REVISION,
     BROKEN_LINK_REDIRECT_ANALYSIS_REVISION,
+    BLOG_STRATEGY_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
     INTERNAL_LINK_ANALYSIS_REVISION,
@@ -156,6 +157,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "authentication_sessions",
             "authentication_audit_events",
             "login_attempts",
+            "blog_strategy_projects",
+            "blog_strategy_pages",
+            "blog_strategy_topic_families",
+            "blog_strategy_overlap_notes",
+            "blog_strategy_events",
         }
         foreign_keys = {
             (table, constraint["referred_table"])
@@ -257,6 +263,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             ("summary_metadata", "runs"),
             ("user_credentials", "users"),
             ("authentication_sessions", "users"),
+            ("blog_strategy_pages", "blog_strategy_projects"),
+            ("blog_strategy_pages", "blog_strategy_topic_families"),
+            ("blog_strategy_topic_families", "blog_strategy_projects"),
+            ("blog_strategy_overlap_notes", "blog_strategy_projects"),
+            ("blog_strategy_events", "blog_strategy_projects"),
         }
         unique_names = {
             constraint["name"]
@@ -332,6 +343,10 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "ix_link_target_order",
             "ix_link_chain_order",
             "ix_link_recommendation_order",
+            "ix_blog_strategy_pages_project",
+            "ix_blog_strategy_families_project",
+            "ix_blog_strategy_overlaps_project",
+            "ix_blog_strategy_events_project",
         } <= index_names
     finally:
         engine.dispose()
@@ -385,6 +400,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
     assert internal_link_script.revision == "0010_internal_link_analysis"
     assert internal_link_script.down_revision == BROKEN_LINK_REDIRECT_ANALYSIS_REVISION
     assert internal_link_script.doc == "Add durable internal-link analysis."
+    blog_script = ScriptDirectory.from_config(config).get_revision(BLOG_STRATEGY_REVISION)
+    assert blog_script is not None
+    assert blog_script.revision == "0011_blog_strategy"
+    assert blog_script.down_revision == INTERNAL_LINK_ANALYSIS_REVISION
+    assert blog_script.doc == "Add the isolated Blog Strategy BS-01 persistence foundation."
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -409,6 +429,7 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE internal_link_page_metrics" in sql
     assert "CREATE TABLE internal_link_edges" in sql
     assert "CREATE TABLE internal_link_opportunities" in sql
+    assert "CREATE TABLE blog_strategy_projects" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -482,7 +503,7 @@ def test_page_evidence_migration_downgrades_only_page_evidence_tables(tmp_path: 
         engine.dispose()
 
 
-def test_metadata_audit_migration_downgrades_only_phase_20_tables(  # noqa: PLR0915
+def test_metadata_audit_migration_downgrades_only_phase_20_tables(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "metadata-audit-migration.db"
@@ -518,7 +539,37 @@ def test_metadata_audit_migration_downgrades_only_phase_20_tables(  # noqa: PLR0
     engine = create_engine(url)
     try:
         assert not schema_is_current(engine)
+        assert current_revision(engine) == METADATA_AUDIT_REVISION
         assert phase_tables <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+def test_blog_strategy_migration_downgrades_only_bs01_tables(tmp_path: Path) -> None:
+    database = tmp_path / "blog-strategy-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, BLOG_STRATEGY_REVISION)
+    tables = {
+        "blog_strategy_projects",
+        "blog_strategy_pages",
+        "blog_strategy_topic_families",
+        "blog_strategy_overlap_notes",
+        "blog_strategy_events",
+    }
+    engine = create_engine(url)
+    try:
+        assert schema_is_current(engine)
+        assert tables <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, INTERNAL_LINK_ANALYSIS_REVISION)
+    engine = create_engine(url)
+    try:
+        remaining = set(inspect(engine).get_table_names())
+        assert tables.isdisjoint(remaining)
+        assert "internal_link_audits" in remaining
+        assert current_revision(engine) == INTERNAL_LINK_ANALYSIS_REVISION
     finally:
         engine.dispose()
     command.downgrade(configuration, AUTHENTICATION_AUTHORIZATION_REVISION)
@@ -536,10 +587,10 @@ def test_metadata_audit_migration_downgrades_only_phase_20_tables(  # noqa: PLR0
         assert not schema_is_current(engine)
     finally:
         engine.dispose()
-    command.upgrade(configuration, METADATA_AUDIT_REVISION)
+    command.upgrade(configuration, BLOG_STRATEGY_REVISION)
     engine = create_engine(url)
     try:
-        assert not schema_is_current(engine)
+        assert schema_is_current(engine)
     finally:
         engine.dispose()
 

@@ -83,6 +83,14 @@ class Permission(StrEnum):
     AUTH_AUDIT_VIEW = "auth_audit.view"
     SETTINGS_VIEW = "settings.view"
     SETTINGS_MANAGE = "settings.manage"
+    BLOG_STRATEGY_VIEW = "blog_strategy.view"
+    BLOG_STRATEGY_EDIT = "blog_strategy.edit"
+    BLOG_STRATEGY_IMPORT = "blog_strategy.import"
+    BLOG_STRATEGY_REVIEW = "blog_strategy.review"
+    BLOG_STRATEGY_FAMILIES_MANAGE = "blog_strategy.families_manage"
+    BLOG_STRATEGY_OVERLAPS_MANAGE = "blog_strategy.overlaps_manage"
+    BLOG_STRATEGY_APPROVE = "blog_strategy.approve"
+    BLOG_STRATEGY_EXPORT = "blog_strategy.export"
 
 
 _VIEWER = frozenset(
@@ -97,9 +105,19 @@ _VIEWER = frozenset(
         Permission.SESSIONS_REVOKE_OWN,
         Permission.PASSWORD_CHANGE_OWN,
         Permission.SETTINGS_VIEW,
+        Permission.BLOG_STRATEGY_VIEW,
     }
 )
-_OPERATOR = _VIEWER | {Permission.JOBS_SUBMIT, Permission.JOBS_CANCEL}
+_OPERATOR = _VIEWER | {
+    Permission.JOBS_SUBMIT,
+    Permission.JOBS_CANCEL,
+    Permission.BLOG_STRATEGY_EDIT,
+    Permission.BLOG_STRATEGY_IMPORT,
+    Permission.BLOG_STRATEGY_REVIEW,
+    Permission.BLOG_STRATEGY_FAMILIES_MANAGE,
+    Permission.BLOG_STRATEGY_OVERLAPS_MANAGE,
+    Permission.BLOG_STRATEGY_EXPORT,
+}
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.VIEWER: _VIEWER,
     UserRole.OPERATOR: _OPERATOR,

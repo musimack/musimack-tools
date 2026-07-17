@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from musimack_tools.api.dependencies import InternalApiApplication
     from musimack_tools.artifacts.service import ArtifactService
     from musimack_tools.authentication.service import AuthenticationService
+    from musimack_tools.blog_strategy.service import BlogStrategyService
     from musimack_tools.deployment.persistence_runtime import PreparedPersistence
     from musimack_tools.deployment.worker import PreparedDurableExecution
     from musimack_tools.history.service import HistoryService
@@ -72,6 +73,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     sitemap_audits: SitemapAuditService | None = None,
     link_audits: LinkAuditService | None = None,
     internal_link_audits: InternalLinkAuditService | None = None,
+    blog_strategy: BlogStrategyService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -310,6 +312,21 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.internal_link_diagnostics = internal_link_diagnostics
+    if blog_strategy is not None:
+        from musimack_tools.api.blog_strategy import create_blog_strategy_router  # noqa: PLC0415
+
+        application.include_router(
+            create_blog_strategy_router(
+                blog_strategy,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.blog_strategy_version = "blog-strategy-bs01-v1"
 
     add_internal_cors(
         application,

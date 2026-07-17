@@ -6,6 +6,7 @@ import { AuditsPage } from '../pages/AuditPages';
 import { SitemapAuditsPage } from '../pages/SitemapAuditPages';
 import { LinkAuditsPage } from '../pages/LinkAuditPages';
 import { InternalLinksPage } from '../pages/InternalLinkPages';
+import { BlogStrategyProjectsPage } from '../pages/BlogStrategyPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -29,6 +30,13 @@ export const workspaceRoutes: readonly WorkspaceRoute[] = [
     description: 'Review broken links and redirect paths',
     permission: 'runs.view',
     component: LinkAuditsPage,
+  },
+  {
+    path: '/blog-strategy',
+    label: 'Blog Strategy',
+    description: 'Organize client blog inventories and decisions',
+    permission: 'blog_strategy.view',
+    component: BlogStrategyProjectsPage,
   },
   {
     path: '/sitemap-audits',

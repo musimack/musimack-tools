@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from musimack_tools.persistence import (
     auth_models,  # noqa: F401 -- registers mapped tables.
+    blog_strategy_models,  # noqa: F401 -- registers mapped tables.
     durable_models,  # noqa: F401 -- registers mapped tables.
     internal_link_models,  # noqa: F401 -- registers mapped tables.
     link_audit_models,  # noqa: F401 -- registers mapped tables.

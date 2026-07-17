@@ -238,6 +238,22 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
         if method == "POST" and path.endswith(("/internal-links", "/execute", "/exports")):
             return Permission.JOBS_SUBMIT
         return Permission.RUNS_VIEW
+    if "/blog-strategy" in path:
+        if method == "GET":
+            return Permission.BLOG_STRATEGY_VIEW
+        if path.endswith(("/import", "/import-preview")):
+            return Permission.BLOG_STRATEGY_IMPORT
+        if "/topic-families" in path:
+            return Permission.BLOG_STRATEGY_FAMILIES_MANAGE
+        if "/overlaps" in path:
+            return Permission.BLOG_STRATEGY_OVERLAPS_MANAGE
+        if path.endswith("/approve"):
+            return Permission.BLOG_STRATEGY_APPROVE
+        if path.endswith("/export"):
+            return Permission.BLOG_STRATEGY_EXPORT
+        if "/pages/" in path:
+            return Permission.BLOG_STRATEGY_REVIEW
+        return Permission.BLOG_STRATEGY_EDIT
     if path.endswith("/jobs"):
         return Permission.JOBS_SUBMIT if method == "POST" else Permission.JOBS_VIEW
     if path.endswith("/recommendations"):

@@ -27,6 +27,14 @@ export const permissions = [
   'auth_audit.view',
   'settings.view',
   'settings.manage',
+  'blog_strategy.view',
+  'blog_strategy.edit',
+  'blog_strategy.import',
+  'blog_strategy.review',
+  'blog_strategy.families_manage',
+  'blog_strategy.overlaps_manage',
+  'blog_strategy.approve',
+  'blog_strategy.export',
 ] as const;
 export type Permission = (typeof permissions)[number];
 

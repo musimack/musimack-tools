@@ -179,6 +179,10 @@ class ApiErrorCode(StrEnum):
     INTERNAL_LINK_EXPORT_FAILED = "internal_link_export_failed"
     INTERNAL_LINK_PERSISTENCE_FAILED = "internal_link_persistence_failed"
     INTERNAL_LINK_QUERY_FAILED = "internal_link_query_failed"
+    BLOG_STRATEGY_NOT_FOUND = "blog_strategy_not_found"
+    BLOG_STRATEGY_CONFLICT = "blog_strategy_conflict"
+    BLOG_STRATEGY_INVALID = "blog_strategy_invalid"
+    BLOG_STRATEGY_UNAVAILABLE = "blog_strategy_unavailable"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):

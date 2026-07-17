@@ -1,0 +1,22 @@
+{
+  "client": "BeWell Chiropractic",
+  "website": "https://crokinchiro.com/",
+  "primary_market": "Tigard, Oregon",
+  "pages": [
+    {"slug": "back-pain-guide", "title": "Back Pain Guide", "topic": "Back pain", "role": "primary_guide", "family": "Back Pain", "action": "preserve"},
+    {"slug": "morning-back-stiffness", "title": "Morning Back Stiffness", "topic": "Back stiffness", "role": "supporting_article", "family": "Back Pain", "action": "refresh"},
+    {"slug": "desk-back-pain", "title": "Desk Work and Back Pain", "topic": "Desk-related back pain", "role": "supporting_article", "family": "Back Pain", "action": "expand"},
+    {"slug": "back-pain-causes", "title": "Common Back Pain Causes", "topic": "Back pain causes", "role": "supporting_article", "family": "Back Pain", "action": "consolidate"},
+    {"slug": "why-back-hurts", "title": "Why Does My Back Hurt?", "topic": "Back pain causes", "role": "supporting_article", "family": "Back Pain", "action": "consolidate"},
+    {"slug": "neck-pain-guide", "title": "Neck Pain Guide", "topic": "Neck pain", "role": "primary_guide", "family": "Neck Pain", "action": "preserve"},
+    {"slug": "neck-pain-faq", "title": "Neck Pain FAQ", "topic": "Neck pain questions", "role": "faq", "family": "Neck Pain", "action": "expand"},
+    {"slug": "tigard-neck-care", "title": "Neck Care in Tigard", "topic": "Local neck care", "role": "local_article", "family": "Neck Pain", "action": "reposition"},
+    {"slug": "chiropractic-cures-migraines", "title": "Can Chiropractic Cure Migraines?", "topic": "Migraine claims", "role": "customer_education", "family": "Neck Pain", "action": "claim_review", "claim_risk": "high"},
+    {"slug": "office-announcement", "title": "Old Office Announcement", "topic": "Office news", "role": "announcement", "excluded": true, "action": "redirect_or_remove"}
+  ],
+  "overlaps": [
+    {"pages": ["morning-back-stiffness", "desk-back-pain"], "type": "possible_overlap", "state": "dismissed", "notes": "Complementary contexts, not cannibalization."},
+    {"pages": ["back-pain-causes", "why-back-hurts"], "type": "possible_duplicate", "state": "resolved", "preferred": "back-pain-causes"},
+    {"pages": ["tigard-neck-care", "neck-pain-guide"], "type": "service_page_conflict", "state": "open"}
+  ]
+}
