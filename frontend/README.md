@@ -1,5 +1,11 @@
 # Musimack SEO Toolkit frontend
 
+## Metadata-audit workflow
+
+The authenticated workspace includes **Audits** and direct routes under `/audits/metadata`: creation, dashboard, pages, page evidence, issues, exact duplicate groups, and exports. Navigation is permission-aware, refresh restores the session through `/auth/me`, mutations are never retried, and no bearer credential or token is stored in the browser or placed in a URL.
+
+The UI displays server-calculated severity, applicability, duplicates, and summaries. Filters and opaque cursors use bounded URL query state; metadata bodies, credentials, and server paths do not. Tables have captions and labels, status is conveyed with text, long URLs wrap, filters stack on narrow screens, and reduced-motion preferences remain honored. This is accessibility-oriented, not a claim of WCAG certification.
+
 This directory contains the accepted private frontend foundation for the Musimack SEO Toolkit.
 It is a React 19, strict TypeScript, and Vite application with a small native-fetch API boundary,
 cookie-based authentication, centralized permission-aware routing, an accessible responsive shell,

@@ -17,7 +17,8 @@ ARTIFACT_STORAGE_REVISION = "0003_artifact_storage"
 HISTORY_API_REVISION = "0004_history_api"
 AUTHENTICATION_AUTHORIZATION_REVISION = "0005_authentication_authorization"
 PAGE_CRAWL_EVIDENCE_REVISION = "0006_page_crawl_evidence"
-PERSISTENCE_HEAD_REVISION = PAGE_CRAWL_EVIDENCE_REVISION
+METADATA_AUDIT_REVISION = "0007_metadata_audit"
+PERSISTENCE_HEAD_REVISION = METADATA_AUDIT_REVISION
 
 
 def alembic_configuration(database_url: str, *, backend_root: Path) -> Config:

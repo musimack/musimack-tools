@@ -16,6 +16,7 @@ from musimack_tools.persistence.migrations import (
     AUTHENTICATION_AUTHORIZATION_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
+    METADATA_AUDIT_REVISION,
     PAGE_CRAWL_EVIDENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
     alembic_configuration,
@@ -110,6 +111,14 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "crawl_page_parse_warnings",
             "crawl_page_evidence_summaries",
             "crawl_page_evidence_events",
+            "metadata_audits",
+            "metadata_audit_pages",
+            "metadata_audit_issues",
+            "metadata_duplicate_groups",
+            "metadata_duplicate_group_members",
+            "metadata_audit_summaries",
+            "metadata_audit_exports",
+            "metadata_audit_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -157,6 +166,19 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             ("crawl_page_evidence_summaries", "runs"),
             ("crawl_page_evidence_events", "jobs"),
             ("crawl_page_evidence_events", "runs"),
+            ("metadata_audits", "jobs"),
+            ("metadata_audits", "runs"),
+            ("metadata_audit_pages", "metadata_audits"),
+            ("metadata_audit_pages", "crawl_page_evidence"),
+            ("metadata_audit_issues", "metadata_audits"),
+            ("metadata_audit_issues", "metadata_audit_pages"),
+            ("metadata_duplicate_groups", "metadata_audits"),
+            ("metadata_duplicate_group_members", "metadata_duplicate_groups"),
+            ("metadata_duplicate_group_members", "metadata_audit_pages"),
+            ("metadata_audit_summaries", "metadata_audits"),
+            ("metadata_audit_exports", "metadata_audits"),
+            ("metadata_audit_exports", "artifact_records"),
+            ("metadata_audit_events", "metadata_audits"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -180,6 +202,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "uq_page_evidence_run_url",
             "uq_page_redirect_evidence_sequence",
             "uq_page_warning_evidence_sequence",
+            "uq_metadata_audit_identity",
+            "uq_metadata_audit_page_evidence",
+            "uq_metadata_audit_issue_code",
+            "uq_metadata_duplicate_value",
+            "uq_metadata_audit_export",
         } <= unique_names
         index_names = {
             index["name"]
@@ -199,6 +226,10 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "ix_page_evidence_indexability",
             "ix_page_redirect_evidence",
             "ix_page_warning_evidence",
+            "ix_metadata_audits_order",
+            "ix_metadata_audit_pages_order",
+            "ix_metadata_audit_issues_order",
+            "ix_metadata_duplicate_order",
         } <= index_names
     finally:
         engine.dispose()
@@ -228,6 +259,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert page_script.revision == "0006_page_crawl_evidence"
     assert page_script.down_revision == AUTHENTICATION_AUTHORIZATION_REVISION
     assert page_script.doc == "add durable page crawl evidence"
+    audit_script = ScriptDirectory.from_config(config).get_revision(METADATA_AUDIT_REVISION)
+    assert audit_script is not None
+    assert audit_script.revision == "0007_metadata_audit"
+    assert audit_script.down_revision == PAGE_CRAWL_EVIDENCE_REVISION
+    assert audit_script.doc == "add durable metadata audit"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -244,6 +280,7 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE users" in sql
     assert "CREATE TABLE authentication_sessions" in sql
     assert "CREATE TABLE crawl_page_evidence" in sql
+    assert "CREATE TABLE metadata_audits" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -315,6 +352,47 @@ def test_page_evidence_migration_downgrades_only_page_evidence_tables(tmp_path: 
         assert "authentication_sessions" in tables
     finally:
         engine.dispose()
+
+
+def test_metadata_audit_migration_downgrades_only_phase_20_tables(  # noqa: PLR0915
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "metadata-audit-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, METADATA_AUDIT_REVISION)
+    phase_tables = {
+        "metadata_audits",
+        "metadata_audit_pages",
+        "metadata_audit_issues",
+        "metadata_duplicate_groups",
+        "metadata_duplicate_group_members",
+        "metadata_audit_summaries",
+        "metadata_audit_exports",
+        "metadata_audit_events",
+    }
+    engine = create_engine(url)
+    try:
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert current_revision(engine) == METADATA_AUDIT_REVISION
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, PAGE_CRAWL_EVIDENCE_REVISION)
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert phase_tables.isdisjoint(tables)
+        assert "crawl_page_evidence" in tables
+        assert current_revision(engine) == PAGE_CRAWL_EVIDENCE_REVISION
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, METADATA_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert schema_is_current(engine)
+        assert phase_tables <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
     command.downgrade(configuration, AUTHENTICATION_AUTHORIZATION_REVISION)
     engine = create_engine(url)
     try:
@@ -325,6 +403,12 @@ def test_page_evidence_migration_downgrades_only_page_evidence_tables(tmp_path: 
     finally:
         engine.dispose()
     command.upgrade(configuration, PAGE_CRAWL_EVIDENCE_REVISION)
+    engine = create_engine(url)
+    try:
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, METADATA_AUDIT_REVISION)
     engine = create_engine(url)
     try:
         assert schema_is_current(engine)

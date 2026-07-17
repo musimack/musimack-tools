@@ -403,6 +403,225 @@ class CrawlPageEvidenceEventModel(Base):
     __table_args__ = (Index("ix_page_evidence_events_run", "run_id", "event_id"),)
 
 
+class MetadataAuditModel(Base):
+    __tablename__ = "metadata_audits"
+
+    audit_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.job_id", ondelete="CASCADE"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.run_id", ondelete="CASCADE"))
+    seed_url: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
+    configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    taxonomy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    duplicate_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    issue_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    partial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    failure_code: Mapped[str | None] = mapped_column(String(128))
+    export_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "configuration_hash", name="uq_metadata_audit_identity"),
+        CheckConstraint(
+            "state IN ('planned','running','completed','completed_with_warnings',"
+            "'partially_completed','failed','cancelled')",
+            name="ck_metadata_audit_state",
+        ),
+        Index("ix_metadata_audits_run", "run_id", "created_at"),
+        Index("ix_metadata_audits_job", "job_id", "created_at"),
+        Index("ix_metadata_audits_order", "created_at", "audit_id"),
+    )
+
+
+class MetadataAuditPageModel(Base):
+    __tablename__ = "metadata_audit_pages"
+
+    audit_page_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audits.audit_id", ondelete="CASCADE")
+    )
+    evidence_id: Mapped[str] = mapped_column(
+        ForeignKey("crawl_page_evidence.evidence_id", ondelete="RESTRICT")
+    )
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    url_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    final_url: Mapped[str | None] = mapped_column(Text)
+    fetch_outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    content_type: Mapped[str | None] = mapped_column(String(256))
+    content_type_category: Mapped[str] = mapped_column(String(16), nullable=False)
+    title_value: Mapped[str | None] = mapped_column(Text)
+    title_presence: Mapped[str] = mapped_column(String(16), nullable=False)
+    title_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    title_length: Mapped[int | None] = mapped_column(Integer)
+    description_value: Mapped[str | None] = mapped_column(Text)
+    description_presence: Mapped[str] = mapped_column(String(16), nullable=False)
+    description_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    description_length: Mapped[int | None] = mapped_column(Integer)
+    canonical_value: Mapped[str | None] = mapped_column(Text)
+    canonical_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    indexability_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    recommendation_state: Mapped[str | None] = mapped_column(String(32))
+    issue_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    highest_severity: Mapped[str | None] = mapped_column(String(16))
+    partial: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    audit_page_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("audit_id", "evidence_id", name="uq_metadata_audit_page_evidence"),
+        Index("ix_metadata_audit_pages_order", "audit_id", "highest_severity", "url_identity"),
+        Index("ix_metadata_audit_pages_status", "audit_id", "http_status", "url_identity"),
+        Index("ix_metadata_audit_pages_content", "audit_id", "content_type_category"),
+        Index("ix_metadata_audit_pages_indexability", "audit_id", "indexability_state"),
+    )
+
+
+class MetadataAuditIssueModel(Base):
+    __tablename__ = "metadata_audit_issues"
+
+    issue_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audits.audit_id", ondelete="CASCADE")
+    )
+    audit_page_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audit_pages.audit_page_id", ondelete="CASCADE")
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    safe_summary: Mapped[str] = mapped_column(String(256), nullable=False)
+    safe_detail: Mapped[str] = mapped_column(String(512), nullable=False)
+    determinacy: Mapped[str] = mapped_column(String(16), nullable=False)
+    evidence_json: Mapped[str] = mapped_column(Text, nullable=False)
+    duplicate_group_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    taxonomy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("audit_page_id", "code", name="uq_metadata_audit_issue_code"),
+        CheckConstraint(
+            "category IN ('title','meta_description','canonical','robots','indexability',"
+            "'status','content_type')",
+            name="ck_metadata_audit_issue_category",
+        ),
+        CheckConstraint(
+            "severity IN ('critical','high','medium','low','information')",
+            name="ck_metadata_audit_issue_severity",
+        ),
+        Index(
+            "ix_metadata_audit_issues_order",
+            "audit_id",
+            "severity",
+            "category",
+            "code",
+            "audit_page_id",
+        ),
+        Index("ix_metadata_audit_issues_group", "duplicate_group_id", "issue_id"),
+    )
+
+
+class MetadataDuplicateGroupModel(Base):
+    __tablename__ = "metadata_duplicate_groups"
+
+    group_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audits.audit_id", ondelete="CASCADE")
+    )
+    duplicate_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    normalized_value_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sample_value: Mapped[str] = mapped_column(Text, nullable=False)
+    member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample_members_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "audit_id",
+            "duplicate_type",
+            "normalized_value_hash",
+            name="uq_metadata_duplicate_value",
+        ),
+        CheckConstraint(
+            "duplicate_type IN ('title','meta_description')", name="ck_metadata_duplicate_type"
+        ),
+        Index("ix_metadata_duplicate_order", "audit_id", "member_count", "group_id"),
+    )
+
+
+class MetadataDuplicateGroupMemberModel(Base):
+    __tablename__ = "metadata_duplicate_group_members"
+
+    group_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_duplicate_groups.group_id", ondelete="CASCADE"), primary_key=True
+    )
+    audit_page_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audit_pages.audit_page_id", ondelete="CASCADE"), primary_key=True
+    )
+    url_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        Index("ix_metadata_duplicate_members_order", "group_id", "url_identity", "audit_page_id"),
+    )
+
+
+class MetadataAuditSummaryModel(Base):
+    __tablename__ = "metadata_audit_summaries"
+
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audits.audit_id", ondelete="CASCADE"), primary_key=True
+    )
+    summary_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class MetadataAuditExportModel(Base):
+    __tablename__ = "metadata_audit_exports"
+
+    export_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audits.audit_id", ondelete="CASCADE")
+    )
+    export_format: Mapped[str] = mapped_column(String(16), nullable=False)
+    artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifact_records.artifact_id", ondelete="SET NULL")
+    )
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("audit_id", "export_format", name="uq_metadata_audit_export"),
+    )
+
+
+class MetadataAuditEventModel(Base):
+    __tablename__ = "metadata_audit_events"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("metadata_audits.audit_id", ondelete="CASCADE")
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    safe_reason_code: Mapped[str | None] = mapped_column(String(128))
+    affected_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (Index("ix_metadata_audit_events", "audit_id", "event_id"),)
+
+
 class WarningModel(Base):
     __tablename__ = "warnings"
 

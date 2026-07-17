@@ -1,5 +1,13 @@
 # Foundation Architecture
 
+## Phase 20 metadata-audit boundary
+
+`crawl_page_evidence` is the only page authority. The explicit metadata-audit service validates a terminal run, snapshots immutable configuration, evaluates bounded batches, persists pages/issues/groups/summary/events, and then permits bounded exports. Applicability and severity are centralized in the domain; API handlers and the frontend do not recompute them.
+
+The persistence head is `0007_metadata_audit`. Eight audit tables reference jobs, runs, page evidence, and artifacts without storing raw HTML, bodies, complete headers, parser objects, or artifact bytes. Ordering identifiers are `created_at_desc_audit_id_desc-v1`, `highest_severity_desc_url_identity_asc-v1`, `severity_desc_category_asc_code_asc_url_identity_asc-v1`, and `member_count_desc_group_id_asc-v1`.
+
+Ten internal operations mount only when explicitly enabled. The default application remains health-only. No scheduler, background audit worker, public route, WebSocket, SSE, Docker, CI, cloud, Redis, or PostgreSQL boundary is introduced.
+
 ## Repository and product boundary
 
 `musimack-tools` is a standalone repository and application. It is not a package, worktree, or

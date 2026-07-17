@@ -7,6 +7,7 @@ from pathlib import Path  # noqa: TC003 -- Pydantic resolves this field type at 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import (
     PersistenceConfiguration,
@@ -59,6 +60,18 @@ class PersistenceSettings(BaseSettings):
     page_evidence_preserve_terminal_failures: bool = True
     page_evidence_persist_partial_runs: bool = True
     page_evidence_cleanup_batch_size: int = Field(default=500, ge=1, le=10_000)
+    metadata_audit_enabled: bool = False
+    metadata_audit_title_short_threshold: int = Field(default=20, ge=1, le=999)
+    metadata_audit_title_long_threshold: int = Field(default=60, ge=2, le=1_000)
+    metadata_audit_description_short_threshold: int = Field(default=70, ge=1, le=1_999)
+    metadata_audit_description_long_threshold: int = Field(default=160, ge=2, le=2_000)
+    metadata_audit_batch_size: int = Field(default=250, ge=1, le=10_000)
+    metadata_audit_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    metadata_audit_max_page_size: int = Field(default=200, ge=1, le=1_000)
+    metadata_audit_max_pages: int = Field(default=100_000, ge=1, le=1_000_000)
+    metadata_audit_max_issues_per_page: int = Field(default=100, ge=1, le=1_000)
+    metadata_audit_max_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    metadata_audit_duplicate_sample_size: int = Field(default=20, ge=1, le=1_000)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -102,5 +115,19 @@ class PersistenceSettings(BaseSettings):
                 preserve_terminal_failures=self.page_evidence_preserve_terminal_failures,
                 persist_partial_runs=self.page_evidence_persist_partial_runs,
                 cleanup_batch_size=self.page_evidence_cleanup_batch_size,
+            ),
+            metadata_audit=MetadataAuditConfiguration(
+                enabled=self.metadata_audit_enabled,
+                title_short_threshold=self.metadata_audit_title_short_threshold,
+                title_long_threshold=self.metadata_audit_title_long_threshold,
+                description_short_threshold=self.metadata_audit_description_short_threshold,
+                description_long_threshold=self.metadata_audit_description_long_threshold,
+                batch_size=self.metadata_audit_batch_size,
+                default_page_size=self.metadata_audit_default_page_size,
+                maximum_page_size=self.metadata_audit_max_page_size,
+                maximum_pages=self.metadata_audit_max_pages,
+                maximum_issues_per_page=self.metadata_audit_max_issues_per_page,
+                maximum_export_rows=self.metadata_audit_max_export_rows,
+                duplicate_sample_size=self.metadata_audit_duplicate_sample_size,
             ),
         )

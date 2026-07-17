@@ -1,5 +1,11 @@
 # Current Crawl Policy
 
+## Audit reuse of crawl evidence
+
+Metadata audits consume the bounded Phase 20A projection only after a run is terminal. They issue no DNS, HTTP, redirect, robots, or parsing work. Failed fetches never imply missing HTML metadata; non-HTML pages never receive HTML metadata findings; missing evidence remains distinct from empty evidence; partial or truncated evidence carries explicit partial determinacy.
+
+Canonical-target findings are limited to targets already represented by durable evidence. Sitemap recommendation state remains separate and is never recomputed by the audit engine. Phase 21 sitemap comparison, link graphs, broken links, images, schema, keywords, content scoring, and AI rewriting remain deferred.
+
 This document describes URL, scope, and internal single-URL network-safety policy. A successful
 scope decision alone is **not** authorization to perform a network request.
 

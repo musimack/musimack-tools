@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 
 if TYPE_CHECKING:
@@ -120,6 +121,7 @@ class PersistenceConfiguration:
     create_parent_directory: bool = False
     retention: PersistenceRetentionPolicy = field(default_factory=PersistenceRetentionPolicy)
     page_evidence: PageEvidenceConfiguration = field(default_factory=PageEvidenceConfiguration)
+    metadata_audit: MetadataAuditConfiguration = field(default_factory=MetadataAuditConfiguration)
     persistence_version: str = PERSISTENCE_VERSION
     schema_version: str = DATABASE_SCHEMA_VERSION
 

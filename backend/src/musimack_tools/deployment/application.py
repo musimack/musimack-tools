@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from musimack_tools.deployment.persistence_runtime import PreparedPersistence
     from musimack_tools.deployment.worker import PreparedDurableExecution
     from musimack_tools.history.service import HistoryService
+    from musimack_tools.metadata_audit.service import MetadataAuditService
 
 Network = IPv4Network | IPv6Network
 
@@ -64,6 +65,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     artifacts: ArtifactService | None = None,
     history: HistoryService | None = None,
     authentication: AuthenticationService | None = None,
+    metadata_audits: MetadataAuditService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -224,6 +226,24 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.history_diagnostics = diagnostics
+    if metadata_audits is not None and metadata_audits.configuration.enabled:
+        from musimack_tools.api.metadata_audit import create_metadata_audit_router  # noqa: PLC0415
+
+        audit_diagnostics = metadata_audits.get_diagnostics()
+        if not audit_diagnostics["persistence_ready"] or not audit_diagnostics["migration_ready"]:
+            raise _configuration_error("metadata_audit_not_ready")
+        application.include_router(
+            create_metadata_audit_router(
+                metadata_audits,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.metadata_audit_diagnostics = audit_diagnostics
 
     add_internal_cors(
         application,

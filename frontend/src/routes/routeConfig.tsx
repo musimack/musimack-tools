@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import type { Permission } from '../auth/contracts';
 import { OverviewPage, SettingsPage, UsersPage } from '../pages/WorkspacePages';
 import { ArtifactsPage, HistoryPage, JobsPage } from '../pages/WorkflowPages';
+import { AuditsPage } from '../pages/AuditPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -12,6 +13,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/audits',
+    label: 'Audits',
+    description: 'Review deterministic metadata findings',
+    permission: 'runs.view',
+    component: AuditsPage,
+  },
   {
     path: '/',
     label: 'Overview',

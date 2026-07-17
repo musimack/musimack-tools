@@ -218,6 +218,12 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
         return Permission.ARTIFACTS_VIEW
     if "/history" in path:
         return Permission.HISTORY_VIEW
+    if "/audits/metadata" in path:
+        if method == "POST" and path.endswith("/metadata"):
+            return Permission.JOBS_SUBMIT
+        if method == "POST" and path.endswith("/exports"):
+            return Permission.ARTIFACTS_VIEW
+        return Permission.RUNS_VIEW
     if path.endswith("/jobs"):
         return Permission.JOBS_SUBMIT if method == "POST" else Permission.JOBS_VIEW
     if path.endswith("/recommendations"):

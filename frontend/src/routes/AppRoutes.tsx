@@ -15,6 +15,16 @@ import {
   NewCrawlPage,
   RecommendationPage,
 } from '../pages/WorkflowPages';
+import {
+  AuditDashboardPage,
+  AuditDuplicateDetailPage,
+  AuditDuplicatesPage,
+  AuditIssuesPage,
+  AuditPageDetailPage,
+  AuditPagesPage,
+  AuditsPage,
+  NewAuditPage,
+} from '../pages/AuditPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -31,7 +41,9 @@ function DocumentTitle() {
         ? 'History detail'
         : location.pathname.startsWith('/artifacts/')
           ? 'Artifact detail'
-          : null;
+          : location.pathname.startsWith('/audits/')
+            ? 'Metadata audit'
+            : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -81,6 +93,21 @@ export function AppRoutes() {
         </Route>
         <Route element={<Protected permission="artifacts.view" />}>
           <Route path="/artifacts/:artifactId" element={<ArtifactDetailPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route path="/audits/metadata" element={<AuditsPage />} />
+          <Route path="/audits/metadata/:auditId" element={<AuditDashboardPage />} />
+          <Route path="/audits/metadata/:auditId/pages" element={<AuditPagesPage />} />
+          <Route path="/audits/metadata/:auditId/pages/:pageId" element={<AuditPageDetailPage />} />
+          <Route path="/audits/metadata/:auditId/issues" element={<AuditIssuesPage />} />
+          <Route path="/audits/metadata/:auditId/duplicates" element={<AuditDuplicatesPage />} />
+          <Route
+            path="/audits/metadata/:auditId/duplicates/:groupId"
+            element={<AuditDuplicateDetailPage />}
+          />
+        </Route>
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/audits/metadata/new" element={<NewAuditPage />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

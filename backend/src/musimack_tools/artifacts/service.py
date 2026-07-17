@@ -1,6 +1,6 @@
 """Safe local artifact registration, verification, retrieval, cleanup, and reconciliation."""
 
-# ruff: noqa: TRY004, TRY301 - bounded parsing/deletion uses local control-flow exceptions.
+# ruff: noqa: PLR0913, TRY004, TRY301 - bounded artifact contracts use explicit keyword inputs.
 
 from __future__ import annotations
 
@@ -147,7 +147,7 @@ class ArtifactService:
             validate_filename(identifier)
         return f"jobs/{job_id}/runs/{run_id}/artifacts/{filename}"
 
-    def register(  # noqa: PLR0913
+    def register(
         self,
         *,
         job_id: str,
@@ -214,6 +214,62 @@ class ArtifactService:
             artifact_type.value,
         )
         return verified
+
+    def store_bytes(
+        self,
+        *,
+        job_id: str,
+        run_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        content: bytes,
+        root_id: str | None = None,
+    ) -> ArtifactRecord:
+        """Write bounded generated content under an accepted root and register it atomically."""
+        if not self.configuration.type_enabled(artifact_type):
+            raise ArtifactError(ArtifactFailureCode.TYPE_UNSUPPORTED, "Artifact type is disabled.")
+        readiness = {item.root_id: item for item in self.readiness()}
+        selected_root_id = root_id or self.configuration.default_root_id
+        if selected_root_id not in readiness or not readiness[selected_root_id].ready:
+            raise ArtifactError(
+                ArtifactFailureCode.ROOT_UNAVAILABLE, "Artifact root is unavailable."
+            )
+        policy = ARTIFACT_TYPE_POLICIES[artifact_type]
+        if len(content) > min(policy.maximum_bytes, self.configuration.maximum_file_bytes):
+            raise ArtifactError(ArtifactFailureCode.SIZE_EXCEEDED, "Artifact size limit exceeded.")
+        relative_path = self.managed_relative_path(job_id, run_id, filename)
+        root = self._root(root_id)
+        target = resolve_artifact_path(root.path, relative_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.tmp")
+        try:
+            with temporary.open("xb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(target)
+        except FileExistsError:
+            if not target.is_file() or target.read_bytes() != content:
+                raise ArtifactError(
+                    ArtifactFailureCode.REGISTRATION_CONFLICT,
+                    "Generated artifact conflicts with existing content.",
+                ) from None
+        except OSError:
+            raise ArtifactError(
+                ArtifactFailureCode.ROOT_NOT_WRITABLE,
+                "Generated artifact could not be written.",
+            ) from None
+        finally:
+            temporary.unlink(missing_ok=True)
+        return self.register(
+            job_id=job_id,
+            run_id=run_id,
+            artifact_type=artifact_type,
+            relative_path=relative_path,
+            expected_byte_count=len(content),
+            expected_sha256=hashlib.sha256(content).hexdigest(),
+            root_id=root.root_id,
+        )
 
     def verify(self, artifact_id: str) -> ArtifactRecord:
         record = self._required(artifact_id)
@@ -662,7 +718,7 @@ class ArtifactService:
             raise ArtifactError(ArtifactFailureCode.NOT_FOUND, "Artifact was not found.")
         return record
 
-    def _validate_contract(  # noqa: PLR0913
+    def _validate_contract(
         self,
         job_id: str,
         run_id: str,

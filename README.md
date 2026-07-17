@@ -1,5 +1,13 @@
 # Musimack SEO Toolkit
 
+## Metadata audits
+
+Phase 20 adds an opt-in, private metadata-audit product over Phase 20A durable page evidence. An authenticated operator with `jobs.submit` explicitly audits a terminal run; readers use `runs.view`, while export creation and downloads remain within existing artifact permissions. The engine never re-fetches pages or reparses HTML.
+
+The taxonomy covers title, meta description, canonical, robots, indexability, HTTP status, and content type. Title length defaults to 20–60 characters and description length to 70–160 characters; these are configurable heuristics, not search-engine rules. Exact duplicate groups use Unicode NFKC normalization, trimmed/collapsed whitespace, Unicode case-folding, preserved punctuation and stop words, and exclusion of empty values.
+
+Audits persist through migration `0007_metadata_audit`. Private `/api/internal/v1/audits/metadata` routes provide bounded cursor queries and CSV, JSON, and Markdown exports. CSV cells starting with `=`, `+`, `-`, or `@` receive a leading apostrophe before standard CSV escaping. Exports are limited to 100,000 issue rows and registered with the existing artifact integrity/download service.
+
 The Musimack SEO Toolkit is a standalone internal application for reusable SEO analysis
 tools. Its first planned module is the **Sitemap Generator and Metadata Crawler**, which will
 eventually crawl approved websites, collect response and page metadata, explain sitemap
