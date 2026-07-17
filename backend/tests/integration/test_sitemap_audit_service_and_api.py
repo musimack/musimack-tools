@@ -16,6 +16,8 @@ from musimack_tools.api.dependencies import permission_for_request
 from musimack_tools.artifacts.repository import SQLAlchemyArtifactRepository
 from musimack_tools.artifacts.service import ArtifactService
 from musimack_tools.authentication.service import AuthenticationService
+from musimack_tools.blog_strategy.repository import BlogStrategyRepository
+from musimack_tools.blog_strategy.service import BlogStrategyService
 from musimack_tools.core.config import Settings
 from musimack_tools.crawl.normalization import normalize_url
 from musimack_tools.crawl.scope import create_scope_policy
@@ -713,6 +715,35 @@ def test_routes_are_private_coherent_and_permission_mapped(tmp_path: Path) -> No
             ("GET", "/api/internal/v1/audits/sitemaps/{audit_id}/exports"),
         }
         assert len(paths) == 22
+        blog_strategy = BlogStrategyService(BlogStrategyRepository(runtime))
+        combined_paths = create_production_app(
+            _SecurityTestService(),
+            settings,
+            Settings(),
+            sitemap_audits=service,
+            blog_strategy=blog_strategy,
+        ).openapi()["paths"]
+        assert (
+            len(
+                {
+                    path
+                    for path in combined_paths
+                    if path.startswith("/api/internal/v1/audits/sitemaps")
+                }
+            )
+            == 10
+        )
+        assert (
+            len(
+                {
+                    path
+                    for path in combined_paths
+                    if path.startswith("/api/internal/v1/blog-strategy")
+                }
+            )
+            == 14
+        )
+        assert len(combined_paths) == 36
         assert artifacts is not None
         history = HistoryService(
             HistoryConfiguration(enabled=True), SQLAlchemyHistoryRepository(runtime)

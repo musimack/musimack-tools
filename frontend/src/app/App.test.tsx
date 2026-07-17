@@ -53,6 +53,22 @@ describe('authenticated application routing', () => {
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 
+  test('shows Sitemap Audits and Blog Strategy together when both are authorized', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(
+          principalJson({
+            permissions: [...viewerPermissions, 'blog_strategy.view'],
+          }),
+        ),
+      ),
+    );
+    renderAt('/');
+    expect(await screen.findByRole('link', { name: 'Sitemap Audits' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Blog Strategy' })).toBeInTheDocument();
+  });
+
   test('protects sitemap creation while allowing retained-audit navigation', async () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(principalJson())));
     renderAt('/sitemap-audits/new');
