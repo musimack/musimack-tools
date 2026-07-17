@@ -11,11 +11,11 @@ live network access.
 The sitemap and crawl systems remain authoritative for discovery, fetching, redirects, canonical
 URLs, metadata, indexability, and other page evidence. Blog Strategy stores only selected inventory
 records and their provenance. `PageEvidenceProvider.preview()` is the narrow, read-only integration
-boundary. Its fixture adapter proves selection and idempotency. After rebasing onto Phase 21, the
-sitemap repository exposes comparison-oriented crawl evidence for a selected run, but it does not
-provide a stable shared query that also supplies the complete Blog Strategy metadata and provenance
-projection. The production adapter therefore remains deferred rather than coupling BS-01 to a
-concrete sitemap repository or creating a competing evidence model.
+boundary. Its fixture adapter proves selection and idempotency. Phase 22 adds durable source-link
+evidence, but the shared page projection still lacks H1, publication and modified dates, author,
+word count, page type/source classification, and an import-ready completeness/provenance contract.
+The production adapter therefore remains deferred rather than coupling BS-01 to a concrete audit
+repository or creating a competing evidence model.
 
 BS-01 does not score or automatically detect cannibalization. Related or complementary articles are
 not automatically cannibalization. Manual overlap notes describe concerns, and a human's review
@@ -74,7 +74,7 @@ or `@` receives a leading apostrophe to prevent formula injection. Generation re
 package and verifies the worksheet count/name, row count, header freeze, filters, formulas, styles,
 and hidden-sheet state.
 
-The Phase 21 durable artifact store still requires crawl job/run foreign keys. BS-01 therefore
+The Phase 22 durable artifact store still requires crawl job/run foreign keys. BS-01 therefore
 keeps workbook bytes behind the private service/API response rather than inventing a second artifact
 registry or synthetic crawl records. Durable download registration remains deferred until the
 shared artifact authority supports project-owned artifacts.
@@ -101,10 +101,10 @@ retains administrator permissions by existing policy.
 
 ## Persistence, fixtures, and validation
 
-Migration `0009_blog_strategy` adds only Blog Strategy projects, pages, topic families, manual overlap
-notes, and events. It follows the published Phase 21 head `0008_sitemap_audit`, modifies no earlier
-migration, and downgrades only its own tables. The repository has one migration head:
-`0009_blog_strategy`.
+Migration `0010_blog_strategy` adds only Blog Strategy projects, pages, topic families, manual overlap
+notes, and events. It follows the published Phase 22 head
+`0009_broken_link_redirect_analysis`, modifies no earlier migration, and downgrades only its own
+tables. The repository has one migration head: `0010_blog_strategy`.
 
 The synthetic BeWell Chiropractic fixture contains ten invented pages, two substantive topic
 families, two primary guides, supporting and complementary articles, an FAQ, a Tigard local article,
@@ -149,3 +149,34 @@ no formulas or hidden sheets, formula-injection protection, and safe HTTP(S) hyp
 Known limitations are the fixture-only evidence adapter, non-durable project export download, manual
 classification, manual overlap judgment, and the absence of AI, competitor, GSC, research, scoring,
 and opportunity-matrix features. These boundaries are deliberate BS-01 scope, not inferred evidence.
+
+## Phase 22 reconciliation
+
+The branch was rebased from accepted BS-01 HEAD `d8743f65831f1c39f9b6e7b07c3c9a03a14b6401`
+onto published `origin/main` baseline `93996b9938f23fb5b8dda3b338123e343e1b0245`
+(`Add broken-link and redirect analysis`). Both reviewed BS-01 commits remain separate. The Blog
+Strategy migration was renamed from `0009_blog_strategy` on `0008_sitemap_audit` to
+`0010_blog_strategy` on `0009_broken_link_redirect_analysis`, leaving one linear Alembic head.
+
+Shared Alembic registration, persistence constants, application composition, centralized permission
+mapping, API error codes, frontend permission contracts, protected routes, and navigation preserve
+Sitemap Audit, Link Audit, and Blog Strategy together. Focused composition coverage asserts all 10
+Sitemap Audit paths, all 12 Link Audit paths (14 operations), and all 14 Blog Strategy paths in one
+private production application. Frontend navigation coverage asserts all three workspaces coexist.
+No dependency manifest or lockfile changed during reconciliation.
+
+The production evidence adapter remains deferred because Phase 22's durable page/link evidence does
+not yet expose the complete Blog Strategy intake projection listed above. The durable workbook
+adapter remains deferred because artifact records still require real crawl job/run ownership. The
+fixture provider and bounded private XLSX response remain the accepted safe boundaries. BS-02 and
+Phase 23 work remain unstarted.
+
+Phase 22 reconciliation validation passed on 2026-07-17: Ruff formatting/lint, strict mypy across
+232 source files, all 1,554 collected backend tests (1,551 passed and three Windows
+symlink-capability skips), focused migration and three-module composition tests, one Alembic head,
+clean Python dependency and application-import checks, frontend formatting/lint/typecheck, all 126
+frontend tests, production build, clean `npm ci`, and zero high-severity dependency audit findings.
+The synthetic BeWell workflow regenerated and programmatically reopened the workbook with one
+`Blog Strategy` worksheet, 27 columns, nine included rows, filters, a frozen header, no formulas or
+hidden sheets, formula-injection protection, and safe HTTP(S) hyperlinks. Tests remained isolated
+from public HTTP, DNS, and third-party services.
