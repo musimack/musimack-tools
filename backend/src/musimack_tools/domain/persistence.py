@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
@@ -126,6 +127,7 @@ class PersistenceConfiguration:
     metadata_audit: MetadataAuditConfiguration = field(default_factory=MetadataAuditConfiguration)
     sitemap_audit: SitemapAuditConfiguration = field(default_factory=SitemapAuditConfiguration)
     link_audit: LinkAuditConfiguration = field(default_factory=LinkAuditConfiguration)
+    internal_link: InternalLinkConfiguration = field(default_factory=InternalLinkConfiguration)
     persistence_version: str = PERSISTENCE_VERSION
     schema_version: str = DATABASE_SCHEMA_VERSION
 

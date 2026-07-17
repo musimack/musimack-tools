@@ -4,6 +4,10 @@
 
 Phase 22 narrowly extends terminal page-evidence persistence with parser-owned source-link occurrences. Its analysis service reads only persisted links, pages, redirect hops, and the original scope snapshot; it does not own network or HTML parsing. Migration `0009_broken_link_redirect_analysis` stores derived targets, chains, findings, recommendations, exports, and lifecycle events. The private API and protected frontend reuse accepted authentication, authorization, pagination, artifact, and route-composition authorities.
 
+## Phase 23 internal-link graph boundary
+
+Phase 23 consumes the Phase 22 source-link authority and accepted page, redirect, canonical, indexability, scope, seed, depth, and discovery projections. Migration `0010_internal_link_analysis` stores a versioned derived graph and bounded analysis results; source crawl evidence remains immutable. The service owns deterministic metrics and recommendations only, with no network, parser, semantic inference, or live-site write behavior. See [internal-link-analysis.md](internal-link-analysis.md) and [ADR 0069](decisions/0069-durable-internal-link-graph.md).
+
 ## Phase 21 existing-sitemap audit boundary
 
 The sitemap-audit service is an opt-in adapter over accepted authorities rather than a second crawler. It resolves a terminal run and durable `crawl_page_evidence`, constructs the run seed's exact-host scope, and sends robots and sitemap requests only through `SafeSingleUrlFetcher`. Its queue is deterministic: explicit, robots directives, common locations, then child references in parent order. Normalized requested URLs prevent repeat fetches; normalized final URLs prevent redirect-alias loops.

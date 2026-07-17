@@ -5,6 +5,7 @@ import { ArtifactsPage, HistoryPage, JobsPage } from '../pages/WorkflowPages';
 import { AuditsPage } from '../pages/AuditPages';
 import { SitemapAuditsPage } from '../pages/SitemapAuditPages';
 import { LinkAuditsPage } from '../pages/LinkAuditPages';
+import { InternalLinksPage } from '../pages/InternalLinkPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -15,6 +16,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/internal-links',
+    label: 'Internal Links',
+    description: 'Analyze internal-link graph evidence',
+    permission: 'runs.view',
+    component: InternalLinksPage,
+  },
   {
     path: '/link-audits',
     label: 'Link Audits',

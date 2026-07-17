@@ -20,7 +20,8 @@ PAGE_CRAWL_EVIDENCE_REVISION = "0006_page_crawl_evidence"
 METADATA_AUDIT_REVISION = "0007_metadata_audit"
 SITEMAP_AUDIT_REVISION = "0008_sitemap_audit"
 BROKEN_LINK_REDIRECT_ANALYSIS_REVISION = "0009_broken_link_redirect_analysis"
-PERSISTENCE_HEAD_REVISION = BROKEN_LINK_REDIRECT_ANALYSIS_REVISION
+INTERNAL_LINK_ANALYSIS_REVISION = "0010_internal_link_analysis"
+PERSISTENCE_HEAD_REVISION = INTERNAL_LINK_ANALYSIS_REVISION
 
 
 def alembic_configuration(database_url: str, *, backend_root: Path) -> Config:

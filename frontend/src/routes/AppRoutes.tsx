@@ -42,6 +42,12 @@ import {
   RedirectChainsPage,
   RedirectLoopsPage,
 } from '../pages/LinkAuditPages';
+import {
+  InternalLinkDashboardPage,
+  InternalLinkExportsPage,
+  InternalLinkInventoryPage,
+  NewInternalLinkPage,
+} from '../pages/InternalLinkPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -52,19 +58,21 @@ function DocumentTitle() {
       '/unauthorized': 'Unauthorized',
       '/service-unavailable': 'Service Unavailable',
     };
-    const workflowTitle = location.pathname.startsWith('/link-audits')
-      ? 'Link audit'
-      : location.pathname.startsWith('/sitemap-audits')
-        ? 'Sitemap audit'
-        : location.pathname.startsWith('/jobs/')
-          ? 'Job workflow'
-          : location.pathname.startsWith('/history/')
-            ? 'History detail'
-            : location.pathname.startsWith('/artifacts/')
-              ? 'Artifact detail'
-              : location.pathname.startsWith('/audits/')
-                ? 'Metadata audit'
-                : null;
+    const workflowTitle = location.pathname.startsWith('/internal-links')
+      ? 'Internal links'
+      : location.pathname.startsWith('/link-audits')
+        ? 'Link audit'
+        : location.pathname.startsWith('/sitemap-audits')
+          ? 'Sitemap audit'
+          : location.pathname.startsWith('/jobs/')
+            ? 'Job workflow'
+            : location.pathname.startsWith('/history/')
+              ? 'History detail'
+              : location.pathname.startsWith('/artifacts/')
+                ? 'Artifact detail'
+                : location.pathname.startsWith('/audits/')
+                  ? 'Metadata audit'
+                  : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -104,6 +112,17 @@ export function AppRoutes() {
           <Route path="/jobs/:jobId" element={<JobDetailPage />} />
           <Route path="/jobs/:jobId/progress" element={<JobDetailPage />} />
           <Route path="/jobs/:jobId/results" element={<JobResultPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route path="/internal-links/:auditId" element={<InternalLinkDashboardPage />} />
+          <Route path="/internal-links/:auditId/exports" element={<InternalLinkExportsPage />} />
+          <Route
+            path="/internal-links/:auditId/:resource"
+            element={<InternalLinkInventoryPage />}
+          />
+        </Route>
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/internal-links/new" element={<NewInternalLinkPage />} />
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/jobs/:jobId/results/recommendations" element={<RecommendationPage />} />

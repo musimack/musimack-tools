@@ -2,7 +2,7 @@
 
 ## Broken-link and redirect analysis
 
-Phase 22 is implemented for human review. The opt-in **Link Audits** workflow derives a durable link graph, broken-target classifications, redirect chains and loops, impact metrics, and evidence-backed recommendations from one terminal crawl. It persists parser-owned link occurrences but performs no new crawl, DNS request, fetch, or HTML parse.
+Phase 23 is implemented for human review. The opt-in **Internal Links** workflow derives durable page metrics, reachability, orphan, hub, authority, anchor, and opportunity evidence from one terminal crawl. It reuses parser-owned link occurrences and performs no new crawl, DNS request, fetch, HTML parse, semantic inference, or live-site change. Phase 22 **Link Audits** remain available for broken targets and redirects.
 
 The private API is confined to `/api/internal/v1/audits/links`; viewers inspect retained results with `runs.view`, while creation, execution, and export generation require `jobs.submit`. Broken-links CSV, redirect-chain CSV, redirect-map CSV, JSON, and Markdown outputs use existing authenticated artifacts. See [`docs/link-audit.md`](docs/link-audit.md) and the [loopback QA guide](docs/link-audit-browser-qa.md).
 

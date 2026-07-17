@@ -7,6 +7,7 @@ from pathlib import Path  # noqa: TC003 -- Pydantic resolves this field type at 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
@@ -94,6 +95,11 @@ class PersistenceSettings(BaseSettings):
     link_audit_minimum_sitewide_crawl_pages: int = Field(default=10, ge=2, le=1_000_000)
     link_audit_sitewide_ratio: float = Field(default=0.5, gt=0, le=1)
     link_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
+    internal_link_enabled: bool = False
+    internal_link_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    internal_link_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
+    internal_link_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    internal_link_retention_days: int = Field(default=180, ge=1, le=3_650)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -175,5 +181,12 @@ class PersistenceSettings(BaseSettings):
                 minimum_sitewide_crawl_pages=self.link_audit_minimum_sitewide_crawl_pages,
                 sitewide_ratio=self.link_audit_sitewide_ratio,
                 retention_days=self.link_audit_retention_days,
+            ),
+            internal_link=InternalLinkConfiguration(
+                enabled=self.internal_link_enabled,
+                default_page_size=self.internal_link_default_page_size,
+                maximum_page_size=self.internal_link_maximum_page_size,
+                maximum_export_rows=self.internal_link_maximum_export_rows,
+                retention_days=self.internal_link_retention_days,
             ),
         )

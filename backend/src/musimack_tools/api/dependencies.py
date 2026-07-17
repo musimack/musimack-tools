@@ -234,6 +234,10 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
         if method == "POST" and path.endswith(("/links", "/execute", "/exports")):
             return Permission.JOBS_SUBMIT
         return Permission.RUNS_VIEW
+    if "/audits/internal-links" in path:
+        if method == "POST" and path.endswith(("/internal-links", "/execute", "/exports")):
+            return Permission.JOBS_SUBMIT
+        return Permission.RUNS_VIEW
     if path.endswith("/jobs"):
         return Permission.JOBS_SUBMIT if method == "POST" else Permission.JOBS_VIEW
     if path.endswith("/recommendations"):

@@ -49,6 +49,7 @@ describe('authenticated application routing', () => {
     expect(screen.getByRole('link', { name: 'Jobs' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Sitemap Audits' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Link Audits' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Internal Links' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 

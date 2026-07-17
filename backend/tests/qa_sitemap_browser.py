@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -41,20 +42,23 @@ from musimack_tools.domain.fetching import (
     ResponseHeaders,
 )
 from musimack_tools.domain.history import HistoryConfiguration
+from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.job import JobState
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.domain.run import RunStage, RunStageRecord, RunStageState
-from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
+from musimack_tools.domain.sitemap_audit import DiscoveryOptions, SitemapAuditConfiguration
 from musimack_tools.history.service import HistoryService
+from musimack_tools.internal_link.service import InternalLinkAuditService
 from musimack_tools.jobs.registry import InMemoryJobRegistry
 from musimack_tools.jobs.service import InternalJobService
 from musimack_tools.link_audit.service import LinkAuditService
 from musimack_tools.metadata_audit.service import MetadataAuditService
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.history_repository import SQLAlchemyHistoryRepository
+from musimack_tools.persistence.internal_link_repository import SQLAlchemyInternalLinkRepository
 from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
@@ -82,6 +86,10 @@ _ADMIN_PASSWORD = "MUSIMACK_QA_ADMIN_PASSWORD"  # noqa: S105 - environment varia
 _SITEMAP = "https://example.com/sitemap.xml"
 _ROBOTS = "https://example.com/robots.txt"
 _NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
+
+
+def _qa_html(title: str) -> str:
+    return f"<title>{title}</title><meta name='description' content='{title} QA evidence'>"
 
 
 class DeterministicQaSitemapFetcher:
@@ -223,6 +231,11 @@ def create_qa_app() -> FastAPI:
         SQLAlchemyLinkAuditRepository(runtime),
         artifacts,
     )
+    internal_links = InternalLinkAuditService(
+        configuration.internal_link,
+        SQLAlchemyInternalLinkRepository(runtime),
+        artifacts,
+    )
     app = create_production_app(
         application_service,
         settings,
@@ -233,6 +246,7 @@ def create_qa_app() -> FastAPI:
         metadata_audits=metadata,
         sitemap_audits=sitemaps,
         link_audits=links,
+        internal_link_audits=internal_links,
     )
 
     async def shutdown() -> None:
@@ -304,6 +318,32 @@ def seed() -> None:
                     "<a href='/mixed'>Mixed</a><a href='/broken-redirect'>Broken redirect</a>"
                     "<a href='/external-redirect'>External redirect</a><a href='/loop'>Loop</a>"
                     "<a href='/sitewide-missing'>Sitewide missing</a>"
+                    "<a href='/deep-one'>Deep path</a>"
+                    "<a href='/redirect-only-source'>Redirect-only</a>"
+                    "<a href='/nofollow-only' rel='nofollow'>Nofollow-only</a>"
+                    "<a href='/authority-target'>Authority</a><a href='/hub'>Hub</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a>"
+                    "<a href='/anchor-target'>click here</a><a href='/anchor-target'></a>"
+                    "<a href='/anchor-target'>https://example.com/anchor-target</a>"
+                    "<a href='/shared-anchor-one'>read more</a>"
+                    "<a href='/shared-anchor-two'>read more</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Product guide</a>"
+                    "<a href='/concentrated-target'>Overview</a>"
+                    "<a href='/high-outlinks'>High outlinks</a>"
                 ),
                 x_robots=(),
             ),
@@ -314,6 +354,8 @@ def seed() -> None:
             PageRecordOptions(
                 body=(
                     "<title>Second source</title><a href='/sitewide-missing'>Repeated sitewide</a>"
+                    "<a href='/authority-target'>Authority target</a>"
+                    "<a href='/anchor-target'>click here</a>"
                 ),
                 discovery_order=1,
                 x_robots=(),
@@ -409,6 +451,135 @@ def seed() -> None:
                     14,
                     scope,
                 ),
+                _scoped_page(
+                    "https://example.com/deep-one",
+                    PageRecordOptions(
+                        body="<title>Deep one</title><a href='/deep-two'>Next</a>",
+                        discovery_order=15,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/deep-two",
+                    PageRecordOptions(
+                        body="<title>Deep two</title><a href='/deep-three'>Next</a>",
+                        discovery_order=16,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/deep-three",
+                    PageRecordOptions(body=_qa_html("Deep three"), discovery_order=17, x_robots=()),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/true-orphan",
+                    PageRecordOptions(
+                        body=_qa_html("True orphan"), discovery_order=18, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/sitemap-only",
+                    PageRecordOptions(
+                        body=_qa_html("Sitemap only"), discovery_order=19, x_robots=()
+                    ),
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/redirect-only-source",
+                    "https://example.com/redirect-only-target",
+                    (301,),
+                    20,
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/redirect-only-target",
+                    PageRecordOptions(
+                        body=_qa_html("Redirect only"), discovery_order=21, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/nofollow-only",
+                    PageRecordOptions(
+                        body=_qa_html("Nofollow only"), discovery_order=22, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/authority-target",
+                    PageRecordOptions(
+                        body=_qa_html("Authority target"), discovery_order=23, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/hub",
+                    PageRecordOptions(
+                        body=(
+                            "<title>Hub</title><a href='/authority-target'>Authority</a>"
+                            "<a href='/anchor-target'>click here</a>"
+                        ),
+                        discovery_order=24,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/anchor-target",
+                    PageRecordOptions(
+                        body=_qa_html("Anchor target"), discovery_order=25, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/shared-anchor-one",
+                    PageRecordOptions(
+                        body=_qa_html("Shared anchor one"), discovery_order=26, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/shared-anchor-two",
+                    PageRecordOptions(
+                        body=_qa_html("Shared anchor two"), discovery_order=27, x_robots=()
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/high-outlinks",
+                    PageRecordOptions(
+                        body="<title>High outlinks</title>"
+                        + "".join(f"<a href='/out-{index}'>Out</a>" for index in range(6)),
+                        discovery_order=28,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                *(
+                    _scoped_page(
+                        f"https://example.com/out-{index}",
+                        PageRecordOptions(
+                            body=_qa_html(f"Outbound target {index}"),
+                            discovery_order=29 + index,
+                            x_robots=(),
+                        ),
+                        scope,
+                    )
+                    for index in range(6)
+                ),
+                _scoped_page(
+                    "https://example.com/concentrated-target",
+                    PageRecordOptions(
+                        body=_qa_html("Concentrated target"),
+                        discovery_order=35,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
             )
         )
         result = replace(
@@ -430,8 +601,23 @@ def seed() -> None:
         persisted = repository.record_terminal(terminal, result, (), None)
         if not persisted.succeeded:
             raise RuntimeError("QA terminal run seed failed")
+        sitemap_service = SitemapAuditService(
+            SitemapAuditConfiguration(enabled=True),
+            SQLAlchemySitemapAuditRepository(runtime),
+            DeterministicQaSitemapFetcher(),
+        )
+        asyncio.run(
+            sitemap_service.create_and_run(
+                snapshot.run_id,
+                DiscoveryOptions(
+                    explicit_url=_SITEMAP,
+                    discover_robots=False,
+                    discover_common_locations=False,
+                ),
+            )
+        )
         print(f"Seeded QA crawl run: {snapshot.run_id}")
-        print("Seeded 20-case Phase 22 link and redirect fixture")
+        print("Seeded Phase 22 link fixture and 22-case Phase 23 internal-link fixture")
         print(f"Deterministic sitemap fixture: {_SITEMAP}")
     finally:
         runtime.dispose()
@@ -450,6 +636,15 @@ def _persistence_configuration() -> PersistenceConfiguration:
             minimum_sitewide_source_pages=2,
             minimum_sitewide_crawl_pages=2,
             sitewide_ratio=0.1,
+        ),
+        internal_link=InternalLinkConfiguration(
+            enabled=True,
+            default_page_size=5,
+            minimum_hub_destinations=2,
+            minimum_authority_referrers=2,
+            minimum_sitewide_pages=2,
+            maximum_graph_depth=2,
+            maximum_outlinks=5,
         ),
     )
 

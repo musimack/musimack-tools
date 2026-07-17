@@ -17,6 +17,7 @@ from musimack_tools.persistence.migrations import (
     BROKEN_LINK_REDIRECT_ANALYSIS_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
+    INTERNAL_LINK_ANALYSIS_REVISION,
     METADATA_AUDIT_REVISION,
     PAGE_CRAWL_EVIDENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
@@ -136,6 +137,15 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "link_audit_recommendations",
             "link_audit_exports",
             "link_audit_events",
+            "internal_link_audits",
+            "internal_link_page_metrics",
+            "internal_link_edges",
+            "internal_link_reachability",
+            "internal_link_findings",
+            "internal_link_anchor_aggregates",
+            "internal_link_opportunities",
+            "internal_link_exports",
+            "internal_link_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -229,6 +239,19 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             ("link_audit_exports", "link_audits"),
             ("link_audit_exports", "artifact_records"),
             ("link_audit_events", "link_audits"),
+            ("internal_link_audits", "jobs"),
+            ("internal_link_audits", "runs"),
+            ("internal_link_page_metrics", "internal_link_audits"),
+            ("internal_link_page_metrics", "crawl_page_evidence"),
+            ("internal_link_edges", "internal_link_audits"),
+            ("internal_link_reachability", "internal_link_audits"),
+            ("internal_link_findings", "internal_link_audits"),
+            ("internal_link_findings", "internal_link_edges"),
+            ("internal_link_anchor_aggregates", "internal_link_audits"),
+            ("internal_link_opportunities", "internal_link_audits"),
+            ("internal_link_exports", "internal_link_audits"),
+            ("internal_link_exports", "artifact_records"),
+            ("internal_link_events", "internal_link_audits"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -355,6 +378,13 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
     assert link_script.revision == "0009_broken_link_redirect_analysis"
     assert link_script.down_revision == SITEMAP_AUDIT_REVISION
     assert link_script.doc == "add durable broken-link and redirect analysis"
+    internal_link_script = ScriptDirectory.from_config(config).get_revision(
+        INTERNAL_LINK_ANALYSIS_REVISION
+    )
+    assert internal_link_script is not None
+    assert internal_link_script.revision == "0010_internal_link_analysis"
+    assert internal_link_script.down_revision == BROKEN_LINK_REDIRECT_ANALYSIS_REVISION
+    assert internal_link_script.doc == "Add durable internal-link analysis."
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -375,6 +405,10 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE sitemap_audits" in sql
     assert "CREATE TABLE crawl_link_evidence" in sql
     assert "CREATE TABLE link_audits" in sql
+    assert "CREATE TABLE internal_link_audits" in sql
+    assert "CREATE TABLE internal_link_page_metrics" in sql
+    assert "CREATE TABLE internal_link_edges" in sql
+    assert "CREATE TABLE internal_link_opportunities" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -568,7 +602,7 @@ def test_link_audit_migration_downgrades_only_phase_22_tables(tmp_path: Path) ->
     try:
         assert current_revision(engine) == BROKEN_LINK_REDIRECT_ANALYSIS_REVISION
         assert phase_tables <= set(inspect(engine).get_table_names())
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
     finally:
         engine.dispose()
     command.downgrade(configuration, SITEMAP_AUDIT_REVISION)
@@ -584,7 +618,7 @@ def test_link_audit_migration_downgrades_only_phase_22_tables(tmp_path: Path) ->
     engine = create_engine(url)
     try:
         assert phase_tables <= set(inspect(engine).get_table_names())
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
     finally:
         engine.dispose()
 
