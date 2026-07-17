@@ -34,6 +34,7 @@ from musimack_tools.domain.page_evidence import (
     encode_cursor,
     project_crawl_result,
 )
+from musimack_tools.persistence.link_audit_models import CrawlLinkEvidenceModel
 from musimack_tools.persistence.models import (
     CrawlPageEvidenceEventModel,
     CrawlPageEvidenceModel,
@@ -76,6 +77,16 @@ def persist_projected_evidence(
         )
         expected = tuple(page.evidence_id for page in projection.pages)
         if identifiers != expected:
+            raise ValueError(PageEvidenceReasonCode.CONFLICT)
+        link_identifiers = tuple(
+            session.scalars(
+                select(CrawlLinkEvidenceModel.link_id)
+                .where(CrawlLinkEvidenceModel.run_id == run_id)
+                .order_by(CrawlLinkEvidenceModel.discovery_sequence)
+            )
+        )
+        expected_links = tuple(link.link_id for link in projection.links)
+        if link_identifiers != expected_links:
             raise ValueError(PageEvidenceReasonCode.CONFLICT)
         _LOGGER.info(
             "page_evidence_persistence_idempotent job_id=%s run_id=%s page_count=%d",
@@ -131,6 +142,17 @@ def persist_projected_evidence(
             job_id,
             run_id,
             min(configuration.batch_size, len(projection.pages) - start),
+        )
+
+    for start in range(0, len(projection.links), configuration.batch_size):
+        for link in projection.links[start : start + configuration.batch_size]:
+            session.add(CrawlLinkEvidenceModel(**asdict(link)))
+        session.flush()
+        _LOGGER.info(
+            "link_evidence_batch_persisted job_id=%s run_id=%s batch_count=%d",
+            job_id,
+            run_id,
+            min(configuration.batch_size, len(projection.links) - start),
         )
 
     pages = projection.pages

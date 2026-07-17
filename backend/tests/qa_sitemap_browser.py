@@ -1,6 +1,6 @@
-"""Explicit local-only authenticated browser-QA composition for Phase 21."""
+"""Explicit local-only authenticated browser-QA composition for Phases 21 and 22."""
 
-# ruff: noqa: T201, TRY003 - explicit QA CLI reports safe values and fails with operator guidance.
+# ruff: noqa: PLR0913, T201, TRY003 - explicit QA CLI reports safe values and fails with operator guidance.
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from musimack_tools.application.service import SeoToolkitApplicationService
 from musimack_tools.artifacts.repository import SQLAlchemyArtifactRepository
 from musimack_tools.artifacts.service import ArtifactService
 from musimack_tools.authentication.service import AuthenticationService
+from musimack_tools.crawl.html import HtmlMetadataParser
+from musimack_tools.crawl.normalization import normalize_url
+from musimack_tools.crawl.scope import create_scope_policy
 from musimack_tools.deployment.application import create_production_app
 from musimack_tools.deployment.persistence_runtime import PreparedPersistence
 from musimack_tools.deployment.settings import ProductionSettings, authentication_configuration
@@ -21,16 +24,25 @@ from musimack_tools.domain.artifacts import (
     ArtifactStorageConfiguration,
     ArtifactStorageRootConfiguration,
 )
+from musimack_tools.domain.authentication import UserRole, UserState
 from musimack_tools.domain.crawl import (
     CrawlConfigurationSnapshot,
     CrawlCounters,
     CrawlRequest,
     CrawlResult,
     CrawlState,
+    UrlCrawlRecord,
 )
-from musimack_tools.domain.fetching import FetchOutcome, FetchRequest, FetchResult, ResponseHeaders
+from musimack_tools.domain.fetching import (
+    FetchOutcome,
+    FetchRequest,
+    FetchResult,
+    RedirectHop,
+    ResponseHeaders,
+)
 from musimack_tools.domain.history import HistoryConfiguration
 from musimack_tools.domain.job import JobState
+from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import PersistenceConfiguration
@@ -39,9 +51,11 @@ from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
 from musimack_tools.history.service import HistoryService
 from musimack_tools.jobs.registry import InMemoryJobRegistry
 from musimack_tools.jobs.service import InternalJobService
+from musimack_tools.link_audit.service import LinkAuditService
 from musimack_tools.metadata_audit.service import MetadataAuditService
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.history_repository import SQLAlchemyHistoryRepository
+from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
 from musimack_tools.persistence.sitemap_audit_repository import SQLAlchemySitemapAuditRepository
@@ -204,6 +218,11 @@ def create_qa_app() -> FastAPI:
         DeterministicQaSitemapFetcher(),
         artifacts,
     )
+    links = LinkAuditService(
+        configuration.link_audit,
+        SQLAlchemyLinkAuditRepository(runtime),
+        artifacts,
+    )
     app = create_production_app(
         application_service,
         settings,
@@ -213,6 +232,7 @@ def create_qa_app() -> FastAPI:
         authentication=authentication,
         metadata_audits=metadata,
         sitemap_audits=sitemaps,
+        link_audits=links,
     )
 
     async def shutdown() -> None:
@@ -237,6 +257,22 @@ def bootstrap() -> None:
             _required(_ADMIN_PASSWORD),
         )
         print(f"Bootstrapped QA administrator: {user.email}")
+        operator = service.create_user(
+            "qa-operator@localhost.test",
+            "QA Operator",
+            UserRole.OPERATOR,
+            _required(_ADMIN_PASSWORD),
+            UserState.ACTIVE,
+        )
+        viewer = service.create_user(
+            "qa-viewer@localhost.test",
+            "QA Viewer",
+            UserRole.VIEWER,
+            _required(_ADMIN_PASSWORD),
+            UserState.ACTIVE,
+        )
+        print(f"Bootstrapped QA operator: {operator.email}")
+        print(f"Bootstrapped QA viewer: {viewer.email}")
     finally:
         runtime.dispose()
 
@@ -251,31 +287,127 @@ def seed() -> None:
         submission = repository.record_submission(snapshot, request)
         if not submission.succeeded:
             raise RuntimeError("QA run submission seed failed")
+        scope = create_scope_policy(normalize_url("https://example.com/"))
+        home = _scoped_page(
+            "https://example.com/",
+            PageRecordOptions(
+                body=(
+                    "<title>QA home</title><meta name='description' content='QA home'>"
+                    "<a href='/working'>Working</a><a href='/missing'>404</a>"
+                    "<a href='/gone'>410</a><a href='/server-error'>500</a>"
+                    "<a href='/unverified'>Unverified</a><a href='/manual.pdf'>PDF</a>"
+                    "<a href='https://outside.example/path'>External</a>"
+                    "<a href='https://example.com:8443/private'>Out of scope</a>"
+                    "<a href='mailto:qa@example.com'>Mail</a><a href='tel:+15551234567'>Phone</a>"
+                    "<a href='#details'>Fragment</a><a href='/permanent'>Permanent</a>"
+                    "<a href='/temporary'>Temporary</a><a href='/chain'>Chain</a>"
+                    "<a href='/mixed'>Mixed</a><a href='/broken-redirect'>Broken redirect</a>"
+                    "<a href='/external-redirect'>External redirect</a><a href='/loop'>Loop</a>"
+                    "<a href='/sitewide-missing'>Sitewide missing</a>"
+                ),
+                x_robots=(),
+            ),
+            scope,
+        )
+        repeated = _scoped_page(
+            "https://example.com/source-two",
+            PageRecordOptions(
+                body=(
+                    "<title>Second source</title><a href='/sitewide-missing'>Repeated sitewide</a>"
+                ),
+                discovery_order=1,
+                x_robots=(),
+            ),
+            scope,
+        )
         crawl = crawl_result(
             (
-                page_record(
-                    options=PageRecordOptions(
-                        body=(
-                            "<title>QA home</title><meta name='description' content='QA home'>"
-                            "<link rel='canonical' href='/'>"
-                        ),
-                        x_robots=(),
-                    )
+                home,
+                repeated,
+                _scoped_page(
+                    "https://example.com/working",
+                    PageRecordOptions(discovery_order=2, x_robots=()),
+                    scope,
                 ),
-                page_record(
-                    "https://example.com/about",
+                _scoped_page(
+                    "https://example.com/missing",
+                    PageRecordOptions(status=404, discovery_order=3, x_robots=()),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/gone",
+                    PageRecordOptions(status=410, discovery_order=4, x_robots=()),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/server-error",
+                    PageRecordOptions(status=500, discovery_order=5, x_robots=()),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/manual.pdf",
                     PageRecordOptions(
-                        body=(
-                            "<title>About QA</title><meta name='description' content='About'>"
-                            "<link rel='canonical' href='/about'>"
-                        ),
-                        discovery_order=1,
+                        body=None,
+                        content_type="application/pdf",
+                        discovery_order=6,
                         x_robots=(),
                     ),
+                    scope,
                 ),
-                page_record(
-                    "https://example.com/retired",
-                    PageRecordOptions(discovery_order=2, x_robots=("noindex",)),
+                _scoped_page(
+                    "https://example.com/sitewide-missing",
+                    PageRecordOptions(status=404, discovery_order=7, x_robots=()),
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/permanent",
+                    "https://example.com/working",
+                    (301,),
+                    8,
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/temporary",
+                    "https://example.com/working",
+                    (302,),
+                    9,
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/chain",
+                    "https://example.com/working",
+                    (301, 301),
+                    10,
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/mixed",
+                    "https://example.com/working",
+                    (301, 302),
+                    11,
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/broken-redirect",
+                    "https://example.com/missing",
+                    (301,),
+                    12,
+                    scope,
+                    final_status=404,
+                ),
+                _redirect_page(
+                    "https://example.com/external-redirect",
+                    "https://outside.example/final",
+                    (302,),
+                    13,
+                    scope,
+                ),
+                _redirect_page(
+                    "https://example.com/loop",
+                    "https://example.com/loop",
+                    (301,),
+                    14,
+                    scope,
                 ),
             )
         )
@@ -299,6 +431,7 @@ def seed() -> None:
         if not persisted.succeeded:
             raise RuntimeError("QA terminal run seed failed")
         print(f"Seeded QA crawl run: {snapshot.run_id}")
+        print("Seeded 20-case Phase 22 link and redirect fixture")
         print(f"Deterministic sitemap fixture: {_SITEMAP}")
     finally:
         runtime.dispose()
@@ -311,7 +444,65 @@ def _persistence_configuration() -> PersistenceConfiguration:
         page_evidence=PageEvidenceConfiguration(enabled=True),
         metadata_audit=MetadataAuditConfiguration(enabled=True),
         sitemap_audit=SitemapAuditConfiguration(enabled=True),
+        link_audit=LinkAuditConfiguration(
+            enabled=True,
+            default_page_size=5,
+            minimum_sitewide_source_pages=2,
+            minimum_sitewide_crawl_pages=2,
+            sitewide_ratio=0.1,
+        ),
     )
+
+
+def _scoped_page(
+    url: str,
+    options: PageRecordOptions,
+    scope: CrawlScopePolicy,
+) -> UrlCrawlRecord:
+    record = page_record(url, options)
+    fetch = record.fetch_result
+    if fetch is None or fetch.body is None:
+        return record
+    return replace(record, parse_result=HtmlMetadataParser().parse(fetch, scope=scope))
+
+
+def _redirect_page(
+    source: str,
+    final: str,
+    statuses: tuple[int, ...],
+    discovery_order: int,
+    scope: CrawlScopePolicy,
+    *,
+    final_status: int = 200,
+) -> UrlCrawlRecord:
+    record = page_record(
+        source,
+        PageRecordOptions(final_url=final, status=final_status, discovery_order=discovery_order),
+    )
+    fetch = record.fetch_result
+    if fetch is None:
+        raise RuntimeError("QA redirect fixture has no fetch evidence")
+    nodes = [source]
+    nodes.extend(
+        f"https://example.com/redirect-hop-{discovery_order}-{index}"
+        for index in range(1, len(statuses))
+    )
+    nodes.append(final)
+    hops = tuple(
+        RedirectHop(
+            source_url=nodes[index],
+            status_code=status,
+            raw_location=nodes[index + 1],
+            destination_url=nodes[index + 1],
+            allowed=True,
+            failure_code=None,
+            explanation="deterministic QA redirect",
+        )
+        for index, status in enumerate(statuses)
+    )
+    fetch = replace(fetch, redirect_chain=hops, final_url=final, status_code=final_status)
+    parse = HtmlMetadataParser().parse(fetch, scope=scope) if fetch.body is not None else None
+    return replace(record, fetch_result=fetch, parse_result=parse, final_fetched_url=final)
 
 
 def _required(name: str) -> str:

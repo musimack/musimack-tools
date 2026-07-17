@@ -10,6 +10,7 @@ from sqlalchemy import Table, inspect, text
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.persistence import (  # noqa: F401 - registers optional normalized tables.
     durable_models,
+    link_audit_models,
     sitemap_audit_models,
 )
 from musimack_tools.persistence.base import Base
@@ -172,6 +173,14 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "sitemap_audit_comparisons",
             "sitemap_audit_exports",
             "sitemap_audit_events",
+            "crawl_link_evidence",
+            "link_audits",
+            "link_audit_targets",
+            "link_audit_redirect_chains",
+            "link_audit_findings",
+            "link_audit_recommendations",
+            "link_audit_exports",
+            "link_audit_events",
             "warnings",
             "failures",
             "summary_metadata",

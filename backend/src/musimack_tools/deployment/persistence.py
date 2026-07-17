@@ -7,6 +7,7 @@ from pathlib import Path  # noqa: TC003 -- Pydantic resolves this field type at 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import (
@@ -84,6 +85,15 @@ class PersistenceSettings(BaseSettings):
     sitemap_audit_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
     sitemap_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
     sitemap_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
+    link_audit_enabled: bool = False
+    link_audit_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    link_audit_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
+    link_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    link_audit_maximum_redirect_chain_depth: int = Field(default=10, ge=1, le=20)
+    link_audit_minimum_sitewide_source_pages: int = Field(default=5, ge=2, le=100_000)
+    link_audit_minimum_sitewide_crawl_pages: int = Field(default=10, ge=2, le=1_000_000)
+    link_audit_sitewide_ratio: float = Field(default=0.5, gt=0, le=1)
+    link_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -154,5 +164,16 @@ class PersistenceSettings(BaseSettings):
                 maximum_page_size=self.sitemap_audit_maximum_page_size,
                 maximum_export_rows=self.sitemap_audit_maximum_export_rows,
                 retention_days=self.sitemap_audit_retention_days,
+            ),
+            link_audit=LinkAuditConfiguration(
+                enabled=self.link_audit_enabled,
+                default_page_size=self.link_audit_default_page_size,
+                maximum_page_size=self.link_audit_maximum_page_size,
+                maximum_export_rows=self.link_audit_maximum_export_rows,
+                maximum_redirect_chain_depth=self.link_audit_maximum_redirect_chain_depth,
+                minimum_sitewide_source_pages=self.link_audit_minimum_sitewide_source_pages,
+                minimum_sitewide_crawl_pages=self.link_audit_minimum_sitewide_crawl_pages,
+                sitewide_ratio=self.link_audit_sitewide_ratio,
+                retention_days=self.link_audit_retention_days,
             ),
         )

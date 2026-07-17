@@ -19,6 +19,7 @@ from musimack_tools.domain.page_evidence import (
 )
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.persistence.engine import create_persistence_runtime
+from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.migrations import upgrade_to_head
 from musimack_tools.persistence.page_evidence_repository import SQLAlchemyPageEvidenceRepository
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
@@ -65,8 +66,11 @@ def test_persistence_is_idempotent_and_restart_safe(tmp_path: Path) -> None:
     runtime, configuration, _request, snapshot = _runtime(tmp_path)
     crawl = crawl_result(
         (
-            page_record(),
-            page_record("https://example.com/about", PageRecordOptions(discovery_order=1)),
+            page_record(options=PageRecordOptions(body="<a href='/about'>About</a>")),
+            page_record(
+                "https://example.com/about",
+                PageRecordOptions(body="<a href='/'>Home</a>", discovery_order=1),
+            ),
         )
     )
     repository = SQLAlchemyPageEvidenceRepository(runtime)
@@ -74,6 +78,7 @@ def test_persistence_is_idempotent_and_restart_safe(tmp_path: Path) -> None:
     repeated = repository.persist_run_page_evidence(snapshot.job_id, snapshot.run_id, crawl)
     assert summary.total_records == repeated.total_records == 2
     assert summary.run_id == repeated.run_id
+    assert len(SQLAlchemyLinkAuditRepository(runtime).source_links(snapshot.run_id)) == 2
     runtime.dispose()
     restarted = create_persistence_runtime(configuration)
     try:
@@ -191,6 +196,7 @@ def test_cleanup_is_dry_run_bounded_and_preserves_summary(tmp_path: Path) -> Non
         assert planned.planned == 1 and planned.deleted == 0
         executed = repository.cleanup_expired(now=future, dry_run=False)
         assert executed.deleted == 1
+        assert SQLAlchemyLinkAuditRepository(runtime).source_links(snapshot.run_id) == ()
         assert repository.get_summary(snapshot.run_id) is not None
     finally:
         runtime.dispose()

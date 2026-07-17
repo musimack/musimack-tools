@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 from musimack_tools.persistence.migrations import (
     ARTIFACT_STORAGE_REVISION,
     AUTHENTICATION_AUTHORIZATION_REVISION,
+    BROKEN_LINK_REDIRECT_ANALYSIS_REVISION,
     DURABLE_EXECUTION_REVISION,
     INITIAL_PERSISTENCE_REVISION,
     METADATA_AUDIT_REVISION,
@@ -79,7 +80,7 @@ def test_empty_database_reports_pending_migration(tmp_path: Path) -> None:
         engine.dispose()
 
 
-def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
+def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  # noqa: PLR0915
     tmp_path: Path,
 ) -> None:
     url = _url(tmp_path / "audit.db")
@@ -127,6 +128,14 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "sitemap_audit_comparisons",
             "sitemap_audit_exports",
             "sitemap_audit_events",
+            "crawl_link_evidence",
+            "link_audits",
+            "link_audit_targets",
+            "link_audit_redirect_chains",
+            "link_audit_findings",
+            "link_audit_recommendations",
+            "link_audit_exports",
+            "link_audit_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -202,6 +211,24 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             ("sitemap_audit_exports", "sitemap_audits"),
             ("sitemap_audit_exports", "artifact_records"),
             ("sitemap_audit_events", "sitemap_audits"),
+            ("crawl_link_evidence", "jobs"),
+            ("crawl_link_evidence", "runs"),
+            ("crawl_link_evidence", "crawl_page_evidence"),
+            ("link_audits", "jobs"),
+            ("link_audits", "runs"),
+            ("link_audit_targets", "link_audits"),
+            ("link_audit_targets", "crawl_link_evidence"),
+            ("link_audit_targets", "crawl_page_evidence"),
+            ("link_audit_redirect_chains", "link_audits"),
+            ("link_audit_redirect_chains", "link_audit_targets"),
+            ("link_audit_findings", "link_audits"),
+            ("link_audit_findings", "link_audit_targets"),
+            ("link_audit_findings", "link_audit_redirect_chains"),
+            ("link_audit_recommendations", "link_audits"),
+            ("link_audit_recommendations", "link_audit_targets"),
+            ("link_audit_exports", "link_audits"),
+            ("link_audit_exports", "artifact_records"),
+            ("link_audit_events", "link_audits"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -237,6 +264,17 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "uq_sitemap_comparison_sequence",
             "uq_sitemap_audit_export_format",
             "uq_sitemap_audit_event_sequence",
+            "uq_crawl_link_source_sequence",
+            "uq_crawl_link_run_sequence",
+            "uq_link_audit_target_identity",
+            "uq_link_audit_target_sequence",
+            "uq_link_chain_target",
+            "uq_link_chain_sequence",
+            "uq_link_finding_sequence",
+            "uq_link_recommendation_target",
+            "uq_link_recommendation_sequence",
+            "uq_link_audit_export_format",
+            "uq_link_audit_event_sequence",
         } <= unique_names
         index_names = {
             index["name"]
@@ -265,6 +303,12 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "ix_sitemap_entries_document_order",
             "ix_sitemap_findings_audit_order",
             "ix_sitemap_comparison_order",
+            "ix_crawl_link_run_order",
+            "ix_crawl_link_target",
+            "ix_link_audits_run_created",
+            "ix_link_target_order",
+            "ix_link_chain_order",
+            "ix_link_recommendation_order",
         } <= index_names
     finally:
         engine.dispose()
@@ -304,6 +348,13 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert sitemap_script.revision == "0008_sitemap_audit"
     assert sitemap_script.down_revision == METADATA_AUDIT_REVISION
     assert sitemap_script.doc == "add durable sitemap audit"
+    link_script = ScriptDirectory.from_config(config).get_revision(
+        BROKEN_LINK_REDIRECT_ANALYSIS_REVISION
+    )
+    assert link_script is not None
+    assert link_script.revision == "0009_broken_link_redirect_analysis"
+    assert link_script.down_revision == SITEMAP_AUDIT_REVISION
+    assert link_script.doc == "add durable broken-link and redirect analysis"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -322,6 +373,8 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE crawl_page_evidence" in sql
     assert "CREATE TABLE metadata_audits" in sql
     assert "CREATE TABLE sitemap_audits" in sql
+    assert "CREATE TABLE crawl_link_evidence" in sql
+    assert "CREATE TABLE link_audits" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -475,7 +528,7 @@ def test_sitemap_audit_migration_downgrades_only_phase_21_tables(tmp_path: Path)
     try:
         assert current_revision(engine) == SITEMAP_AUDIT_REVISION
         assert phase_tables <= set(inspect(engine).get_table_names())
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
     finally:
         engine.dispose()
     command.downgrade(configuration, METADATA_AUDIT_REVISION)
@@ -488,6 +541,46 @@ def test_sitemap_audit_migration_downgrades_only_phase_21_tables(tmp_path: Path)
     finally:
         engine.dispose()
     command.upgrade(configuration, SITEMAP_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_link_audit_migration_downgrades_only_phase_22_tables(tmp_path: Path) -> None:
+    database = tmp_path / "link-audit-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    phase_tables = {
+        "crawl_link_evidence",
+        "link_audits",
+        "link_audit_targets",
+        "link_audit_redirect_chains",
+        "link_audit_findings",
+        "link_audit_recommendations",
+        "link_audit_exports",
+        "link_audit_events",
+    }
+    command.upgrade(configuration, BROKEN_LINK_REDIRECT_ANALYSIS_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == BROKEN_LINK_REDIRECT_ANALYSIS_REVISION
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, SITEMAP_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert phase_tables.isdisjoint(tables)
+        assert "sitemap_audits" in tables
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, BROKEN_LINK_REDIRECT_ANALYSIS_REVISION)
     engine = create_engine(url)
     try:
         assert phase_tables <= set(inspect(engine).get_table_names())

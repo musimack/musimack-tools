@@ -24,6 +24,7 @@ PAGE_EVIDENCE_RETENTION_VERSION = "seo-toolkit-page-crawl-evidence-retention-v1"
 PAGE_EVIDENCE_PROJECTION_VERSION = "seo-toolkit-page-crawl-evidence-projection-v1"
 PAGE_EVIDENCE_PAGINATION_VERSION = "seo-toolkit-page-crawl-evidence-pagination-v1"
 PAGE_EVIDENCE_ORDERING = "crawl_discovery_sequence_asc_url_identity_asc-v1"
+LINK_EVIDENCE_VERSION = "seo-toolkit-link-evidence-v1"
 _MAX_BATCH_SIZE = 10_000
 _MAX_PAGE_SIZE = 1_000
 _MAX_PAGES_PER_RUN = 1_000_000
@@ -245,12 +246,47 @@ class PageEvidenceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PageLinkEvidenceRecord:
+    """One bounded parser-authoritative source-link occurrence."""
+
+    link_id: str
+    job_id: str
+    run_id: str
+    source_evidence_id: str
+    source_requested_url: str
+    source_final_url: str | None
+    source_url_identity: str
+    source_discovery_sequence: int
+    source_crawl_depth: int
+    link_sequence: int
+    discovery_sequence: int
+    element_type: str
+    raw_href: str | None
+    resolved_url: str | None
+    target_url_identity: str | None
+    target_scheme: str | None
+    target_host: str | None
+    internal: bool | None
+    in_scope: bool | None
+    scope_reason_code: str | None
+    anchor_text: str | None
+    rel_values_json: str
+    nofollow: bool
+    fragment: str | None
+    link_type: str
+    resolution_warning: str | None
+    created_at: datetime
+    evidence_version: str = LINK_EVIDENCE_VERSION
+
+
+@dataclass(frozen=True, slots=True)
 class PageEvidenceRunProjection:
     job_id: str
     run_id: str
     pages: tuple[PageEvidenceRecord, ...]
     source_page_count: int
     truncated: bool
+    links: tuple[PageLinkEvidenceRecord, ...] = ()
     ordering: str = PAGE_EVIDENCE_ORDERING
 
 
@@ -432,13 +468,95 @@ def project_crawl_result(
         crawl_cancelled=crawl.state.value == "cancelled",
     )
     pages = tuple(_project_page(context, record) for record in selected)
+    links: list[PageLinkEvidenceRecord] = []
+    for record, page in zip(selected, pages, strict=True):
+        links.extend(_project_links(context, record, page, len(links)))
     return PageEvidenceRunProjection(
         job_id=job_id,
         run_id=run_id,
         pages=pages,
         source_page_count=len(ordered),
         truncated=len(selected) != len(ordered),
+        links=tuple(links),
     )
+
+
+def _project_links(
+    context: _ProjectionContext,
+    record: UrlCrawlRecord,
+    page: PageEvidenceRecord,
+    start_sequence: int,
+) -> tuple[PageLinkEvidenceRecord, ...]:
+    parse = record.parse_result
+    if parse is None:
+        return ()
+    values: list[PageLinkEvidenceRecord] = []
+    for offset, link in enumerate(parse.links):
+        resolved = _bounded(link.normalized_url, 4096)[0]
+        raw = _bounded(link.raw_href, 4096)[0]
+        split = urlsplit(resolved or raw or "")
+        raw_split = urlsplit(raw or "")
+        link_type = (
+            "fragment"
+            if link.fragment_only
+            else "javascript"
+            if link.javascript
+            else "invalid"
+            if link.malformed or link.href_empty
+            else "mailto"
+            if split.scheme.casefold() == "mailto"
+            else "tel"
+            if split.scheme.casefold() == "tel"
+            else "data"
+            if split.scheme.casefold() == "data"
+            else "http"
+            if split.scheme.casefold() in {"http", "https"}
+            else "unsupported"
+        )
+        warning = (
+            "invalid_href"
+            if link.malformed or link.href_empty
+            else "unsupported_scheme"
+            if link.unsupported_scheme
+            else "fragment_only_link"
+            if link.fragment_only
+            else None
+        )
+        anchor = _bounded(link.anchor_text, 512)[0]
+        values.append(
+            PageLinkEvidenceRecord(
+                link_id=hashlib.sha256(
+                    f"{page.evidence_id}\0{link.occurrence_index}\0{raw or ''}".encode()
+                ).hexdigest(),
+                job_id=context.job_id,
+                run_id=context.run_id,
+                source_evidence_id=page.evidence_id,
+                source_requested_url=page.requested_url,
+                source_final_url=page.final_url,
+                source_url_identity=page.requested_url_identity,
+                source_discovery_sequence=page.discovery_sequence,
+                source_crawl_depth=page.crawl_depth,
+                link_sequence=link.occurrence_index,
+                discovery_sequence=start_sequence + offset,
+                element_type=_bounded(link.element_type, 16)[0] or "a",
+                raw_href=raw,
+                resolved_url=resolved,
+                target_url_identity=_url_identity(resolved) if resolved else None,
+                target_scheme=_bounded(split.scheme.casefold() or None, 32)[0],
+                target_host=_bounded(split.hostname.casefold() if split.hostname else None, 255)[0],
+                internal=link.same_host,
+                in_scope=link.in_scope,
+                scope_reason_code=_bounded(link.scope_reason_code, 64)[0],
+                anchor_text=anchor,
+                rel_values_json=_safe_json(list(link.rel_tokens), 1024),
+                nofollow=link.nofollow,
+                fragment=_bounded(raw_split.fragment or split.fragment or None, 512)[0],
+                link_type=link_type,
+                resolution_warning=warning,
+                created_at=context.persisted_at,
+            )
+        )
+    return tuple(values)
 
 
 def _project_page(

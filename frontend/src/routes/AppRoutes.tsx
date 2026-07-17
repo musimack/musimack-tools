@@ -32,6 +32,16 @@ import {
   SitemapEntriesPage,
   SitemapFindingsPage,
 } from '../pages/SitemapAuditPages';
+import {
+  LinkAuditDashboardPage,
+  LinkExportsPage,
+  LinkOccurrencesPage,
+  LinkRecommendationsPage,
+  LinkTargetsPage,
+  NewLinkAuditPage,
+  RedirectChainsPage,
+  RedirectLoopsPage,
+} from '../pages/LinkAuditPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -42,17 +52,19 @@ function DocumentTitle() {
       '/unauthorized': 'Unauthorized',
       '/service-unavailable': 'Service Unavailable',
     };
-    const workflowTitle = location.pathname.startsWith('/sitemap-audits')
-      ? 'Sitemap audit'
-      : location.pathname.startsWith('/jobs/')
-        ? 'Job workflow'
-        : location.pathname.startsWith('/history/')
-          ? 'History detail'
-          : location.pathname.startsWith('/artifacts/')
-            ? 'Artifact detail'
-            : location.pathname.startsWith('/audits/')
-              ? 'Metadata audit'
-              : null;
+    const workflowTitle = location.pathname.startsWith('/link-audits')
+      ? 'Link audit'
+      : location.pathname.startsWith('/sitemap-audits')
+        ? 'Sitemap audit'
+        : location.pathname.startsWith('/jobs/')
+          ? 'Job workflow'
+          : location.pathname.startsWith('/history/')
+            ? 'History detail'
+            : location.pathname.startsWith('/artifacts/')
+              ? 'Artifact detail'
+              : location.pathname.startsWith('/audits/')
+                ? 'Metadata audit'
+                : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -95,6 +107,21 @@ export function AppRoutes() {
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/jobs/:jobId/results/recommendations" element={<RecommendationPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route path="/link-audits/:auditId" element={<LinkAuditDashboardPage />} />
+          <Route path="/link-audits/:auditId/targets" element={<LinkTargetsPage />} />
+          <Route path="/link-audits/:auditId/occurrences" element={<LinkOccurrencesPage />} />
+          <Route path="/link-audits/:auditId/chains" element={<RedirectChainsPage />} />
+          <Route path="/link-audits/:auditId/loops" element={<RedirectLoopsPage />} />
+          <Route
+            path="/link-audits/:auditId/recommendations"
+            element={<LinkRecommendationsPage />}
+          />
+          <Route path="/link-audits/:auditId/exports" element={<LinkExportsPage />} />
+        </Route>
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/link-audits/new" element={<NewLinkAuditPage />} />
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/sitemap-audits/:auditId" element={<SitemapAuditDashboardPage />} />

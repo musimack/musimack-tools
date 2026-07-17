@@ -1,5 +1,11 @@
 # Musimack SEO Toolkit
 
+## Broken-link and redirect analysis
+
+Phase 22 is implemented for human review. The opt-in **Link Audits** workflow derives a durable link graph, broken-target classifications, redirect chains and loops, impact metrics, and evidence-backed recommendations from one terminal crawl. It persists parser-owned link occurrences but performs no new crawl, DNS request, fetch, or HTML parse.
+
+The private API is confined to `/api/internal/v1/audits/links`; viewers inspect retained results with `runs.view`, while creation, execution, and export generation require `jobs.submit`. Broken-links CSV, redirect-chain CSV, redirect-map CSV, JSON, and Markdown outputs use existing authenticated artifacts. See [`docs/link-audit.md`](docs/link-audit.md) and the [loopback QA guide](docs/link-audit-browser-qa.md).
+
 ## Existing sitemap audits
 
 Phase 21 is implemented for human review, but is not yet accepted. The opt-in private workflow discovers an explicit sitemap, ordered `Sitemap:` directives from `robots.txt`, and `/sitemap.xml`, `/sitemap_index.xml`, and `/wp-sitemap.xml`; it then expands nested indexes through the accepted safe-fetch, DNS, SSRF, redirect, response-limit, URL-normalization, and crawl-scope authorities.

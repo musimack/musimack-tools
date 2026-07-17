@@ -48,12 +48,21 @@ describe('authenticated application routing', () => {
     expect(await screen.findByRole('navigation')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Jobs' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Sitemap Audits' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Link Audits' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 
   test('protects sitemap creation while allowing retained-audit navigation', async () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(principalJson())));
     renderAt('/sitemap-audits/new');
+    expect(
+      await screen.findByRole('heading', { name: 'That area is restricted' }),
+    ).toBeInTheDocument();
+  });
+
+  test('protects link-audit creation while allowing retained-audit navigation', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(principalJson())));
+    renderAt('/link-audits/new');
     expect(
       await screen.findByRole('heading', { name: 'That area is restricted' }),
     ).toBeInTheDocument();

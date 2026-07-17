@@ -1,5 +1,9 @@
 # Musimack SEO Toolkit frontend
 
+## Link-audit workflow
+
+The protected **Link Audits** area is available at `/link-audits`. Operators can check a completed run's durable source-link evidence, create and execute an audit, inspect summary metrics, targets, source occurrences, redirect chains and loops, recommendations, and artifact-backed exports. Viewers can inspect retained results but cannot access the `jobs.submit` creation route.
+
 ## Sitemap-audit workflow
 
 The separate protected **Sitemap Audits** area is available at `/sitemap-audits`. Operators can select a completed crawl run, optionally enter an explicit sitemap URL, preview robots/common-location discovery, and execute the audit. The dashboard presents Add, Remove, Review, and Unchanged counts, action and reason filtering, URL search, cursor pagination, root/child document inventory, URL entries, validation findings, and CSV/JSON/Markdown artifact generation. Viewers with `runs.view` can inspect retained results but cannot access the `jobs.submit` creation route.

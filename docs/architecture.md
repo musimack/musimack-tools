@@ -1,5 +1,9 @@
 # Foundation Architecture
 
+## Phase 22 link-audit boundary
+
+Phase 22 narrowly extends terminal page-evidence persistence with parser-owned source-link occurrences. Its analysis service reads only persisted links, pages, redirect hops, and the original scope snapshot; it does not own network or HTML parsing. Migration `0009_broken_link_redirect_analysis` stores derived targets, chains, findings, recommendations, exports, and lifecycle events. The private API and protected frontend reuse accepted authentication, authorization, pagination, artifact, and route-composition authorities.
+
 ## Phase 21 existing-sitemap audit boundary
 
 The sitemap-audit service is an opt-in adapter over accepted authorities rather than a second crawler. It resolves a terminal run and durable `crawl_page_evidence`, constructs the run seed's exact-host scope, and sends robots and sitemap requests only through `SafeSingleUrlFetcher`. Its queue is deterministic: explicit, robots directives, common locations, then child references in parent order. Normalized requested URLs prevent repeat fetches; normalized final URLs prevent redirect-alias loops.
