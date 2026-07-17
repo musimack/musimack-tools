@@ -47,7 +47,32 @@ describe('authenticated application routing', () => {
     renderAt('/');
     expect(await screen.findByRole('navigation')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Jobs' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sitemap Audits' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+  });
+
+  test('protects sitemap creation while allowing retained-audit navigation', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(principalJson())));
+    renderAt('/sitemap-audits/new');
+    expect(
+      await screen.findByRole('heading', { name: 'That area is restricted' }),
+    ).toBeInTheDocument();
+  });
+
+  test('allows an operator to open the explicit sitemap creation route', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(
+          principalJson({
+            role: 'operator',
+            permissions: [...viewerPermissions, 'jobs.submit', 'jobs.cancel'],
+          }),
+        ),
+      ),
+    );
+    renderAt('/sitemap-audits/new');
+    expect(await screen.findByRole('heading', { name: 'New sitemap audit' })).toBeInTheDocument();
   });
 
   test('redirects an authenticated principal lacking a route permission', async () => {

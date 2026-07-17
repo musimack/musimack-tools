@@ -4,7 +4,11 @@
 
 Metadata audits consume the bounded Phase 20A projection only after a run is terminal. They issue no DNS, HTTP, redirect, robots, or parsing work. Failed fetches never imply missing HTML metadata; non-HTML pages never receive HTML metadata findings; missing evidence remains distinct from empty evidence; partial or truncated evidence carries explicit partial determinacy.
 
-Canonical-target findings are limited to targets already represented by durable evidence. Sitemap recommendation state remains separate and is never recomputed by the audit engine. Phase 21 sitemap comparison, link graphs, broken links, images, schema, keywords, content scoring, and AI rewriting remain deferred.
+Canonical-target findings are limited to targets already represented by durable evidence. Sitemap recommendation state remains separate and is never recomputed by the metadata-audit engine. Phase 21 now consumes that durable evidence for existing-sitemap comparison; link graphs, broken links, images, schema, keywords, content scoring, and AI rewriting remain deferred.
+
+Phase 21 sitemap retrieval uses the same safe-fetch boundary as crawling: DNS validation, unsafe-address blocking, scope checks, manual redirect validation, deadlines, and response-byte limits all remain active. Discovery order is explicit URL, robots directives in document order, common locations, and child-index references in parent order. Missing robots or common candidates do not block other candidates. Exact-host scope is the conservative compatibility adapter when the original scope snapshot is not durably available.
+
+The XML policy accepts standard `urlset` and `sitemapindex`, warns on missing/nonstandard namespace, rejects HTML, DTDs, entity declarations, malformed or unsupported roots, and never expands external entities. Nested indexes stop at configured depth/document/child/total-URL limits; duplicates and loops are durable findings. Failed children retain partial evidence. Gzip sitemap decompression and image, video, and news extension semantics remain outside Phase 21.
 
 This document describes URL, scope, and internal single-URL network-safety policy. A successful
 scope decision alone is **not** authorization to perform a network request.

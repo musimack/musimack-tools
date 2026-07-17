@@ -1,5 +1,15 @@
 # Foundation Architecture
 
+## Phase 21 existing-sitemap audit boundary
+
+The sitemap-audit service is an opt-in adapter over accepted authorities rather than a second crawler. It resolves a terminal run and durable `crawl_page_evidence`, constructs the run seed's exact-host scope, and sends robots and sitemap requests only through `SafeSingleUrlFetcher`. Its queue is deterministic: explicit, robots directives, common locations, then child references in parent order. Normalized requested URLs prevent repeat fetches; normalized final URLs prevent redirect-alias loops.
+
+The lxml parser has entity resolution, DTD loading, network access, recovery, and huge-tree mode disabled. A byte preflight rejects DOCTYPE and entity declarations. Standard `urlset` and `sitemapindex` roots are supported; imperfect namespaces or XML content types are durable warnings. HTML responses and gzip paths/content are unsupported. Raw response bodies are never persisted.
+
+Migration `0008_sitemap_audit` adds seven normalized tables for audits, documents, entries, findings, comparisons, exports, and events. Comparisons join sitemap URLs to the SHA-256 identity already used by page evidence. The conservative recommendation adapter reuses `include`, `exclude`, `review`, and `indeterminate`; it does not create a competing recommendation authority. Artifact-backed CSV, JSON, and Markdown exports reuse existing integrity, authorization, path-safety, retention, and download behavior.
+
+Twelve operations across ten private paths mount only when an enabled service is supplied to production composition. The default application remains `/api/health` only. Audit reads use `runs.view`; discovery, audit acceptance/execution, and export creation use `jobs.submit`. Retention defaults to 180 days with database cascades and bounded cleanup.
+
 ## Phase 20 metadata-audit boundary
 
 `crawl_page_evidence` is the only page authority. The explicit metadata-audit service validates a terminal run, snapshots immutable configuration, evaluates bounded batches, persists pages/issues/groups/summary/events, and then permits bounded exports. Applicability and severity are centralized in the domain; API handlers and the frontend do not recompute them.

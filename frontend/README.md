@@ -1,5 +1,11 @@
 # Musimack SEO Toolkit frontend
 
+## Sitemap-audit workflow
+
+The separate protected **Sitemap Audits** area is available at `/sitemap-audits`. Operators can select a completed crawl run, optionally enter an explicit sitemap URL, preview robots/common-location discovery, and execute the audit. The dashboard presents Add, Remove, Review, and Unchanged counts, action and reason filtering, URL search, cursor pagination, root/child document inventory, URL entries, validation findings, and CSV/JSON/Markdown artifact generation. Viewers with `runs.view` can inspect retained results but cannot access the `jobs.submit` creation route.
+
+The interface clearly states that gzip decompression is unsupported. Tables use captions, form controls have labels, state and errors use text and live regions, long URLs wrap, and existing responsive/reduced-motion styles apply. API calls remain below `/api/internal/v1`; credentials are cookie-managed and never placed in URLs.
+
 ## Metadata-audit workflow
 
 The authenticated workspace includes **Audits** and direct routes under `/audits/metadata`: creation, dashboard, pages, page evidence, issues, exact duplicate groups, and exports. Navigation is permission-aware, refresh restores the session through `/auth/me`, mutations are never retried, and no bearer credential or token is stored in the browser or placed in a URL.

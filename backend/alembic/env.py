@@ -11,6 +11,7 @@ from musimack_tools.persistence import (
     auth_models,  # noqa: F401 -- registers mapped tables.
     durable_models,  # noqa: F401 -- registers mapped tables.
     models,  # noqa: F401 -- registers mapped tables.
+    sitemap_audit_models,  # noqa: F401 -- registers mapped tables.
 )
 from musimack_tools.persistence.base import Base
 

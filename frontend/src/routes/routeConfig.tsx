@@ -3,6 +3,7 @@ import type { Permission } from '../auth/contracts';
 import { OverviewPage, SettingsPage, UsersPage } from '../pages/WorkspacePages';
 import { ArtifactsPage, HistoryPage, JobsPage } from '../pages/WorkflowPages';
 import { AuditsPage } from '../pages/AuditPages';
+import { SitemapAuditsPage } from '../pages/SitemapAuditPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -13,6 +14,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/sitemap-audits',
+    label: 'Sitemap Audits',
+    description: 'Compare existing sitemap and crawl evidence',
+    permission: 'runs.view',
+    component: SitemapAuditsPage,
+  },
   {
     path: '/audits',
     label: 'Audits',

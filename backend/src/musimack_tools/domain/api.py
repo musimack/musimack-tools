@@ -121,6 +121,22 @@ class ApiErrorCode(StrEnum):
     METADATA_AUDIT_PERSISTENCE_FAILED = "metadata_audit_persistence_failed"
     METADATA_AUDIT_QUERY_FAILED = "metadata_audit_query_failed"
     METADATA_AUDIT_PARTIAL = "metadata_audit_partial"
+    SITEMAP_AUDIT_DISABLED = "sitemap_audit_disabled"
+    SITEMAP_AUDIT_VERSION_UNSUPPORTED = "sitemap_audit_version_unsupported"
+    SITEMAP_AUDIT_RUN_NOT_FOUND = "sitemap_audit_run_not_found"
+    SITEMAP_AUDIT_RUN_NOT_TERMINAL = "sitemap_audit_run_not_terminal"
+    SITEMAP_AUDIT_PAGE_EVIDENCE_UNAVAILABLE = "sitemap_audit_page_evidence_unavailable"
+    SITEMAP_AUDIT_NOT_FOUND = "sitemap_audit_not_found"
+    SITEMAP_AUDIT_ALREADY_EXISTS = "sitemap_audit_already_exists"
+    SITEMAP_AUDIT_INVALID_FILTER = "sitemap_audit_invalid_filter"
+    SITEMAP_AUDIT_INVALID_PAGE_SIZE = "sitemap_audit_invalid_page_size"
+    SITEMAP_AUDIT_INVALID_CURSOR = "sitemap_audit_invalid_cursor"
+    SITEMAP_AUDIT_CURSOR_VERSION_UNSUPPORTED = "sitemap_audit_cursor_version_unsupported"
+    SITEMAP_AUDIT_CURSOR_FILTER_MISMATCH = "sitemap_audit_cursor_filter_mismatch"
+    SITEMAP_AUDIT_EXPORT_UNSUPPORTED = "sitemap_audit_export_unsupported"
+    SITEMAP_AUDIT_EXPORT_FAILED = "sitemap_audit_export_failed"
+    SITEMAP_AUDIT_PERSISTENCE_FAILED = "sitemap_audit_persistence_failed"
+    SITEMAP_AUDIT_QUERY_FAILED = "sitemap_audit_query_failed"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):

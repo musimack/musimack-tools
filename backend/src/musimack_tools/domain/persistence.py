@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
+from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -122,6 +123,7 @@ class PersistenceConfiguration:
     retention: PersistenceRetentionPolicy = field(default_factory=PersistenceRetentionPolicy)
     page_evidence: PageEvidenceConfiguration = field(default_factory=PageEvidenceConfiguration)
     metadata_audit: MetadataAuditConfiguration = field(default_factory=MetadataAuditConfiguration)
+    sitemap_audit: SitemapAuditConfiguration = field(default_factory=SitemapAuditConfiguration)
     persistence_version: str = PERSISTENCE_VERSION
     schema_version: str = DATABASE_SCHEMA_VERSION
 

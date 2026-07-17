@@ -687,6 +687,7 @@ class AuthenticationService:
             password, iterations=self.configuration.password_hash_iterations
         )
         database.add(user)
+        database.flush()
         database.add(
             UserCredentialModel(
                 user_id=user.user_id,

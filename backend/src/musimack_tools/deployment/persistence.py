@@ -15,6 +15,7 @@ from musimack_tools.domain.persistence import (
     SQLiteJournalMode,
     SQLiteSynchronousMode,
 )
+from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
 
 _MISSING_PATH = "an explicit database path is required when persistence is enabled"
 
@@ -72,6 +73,17 @@ class PersistenceSettings(BaseSettings):
     metadata_audit_max_issues_per_page: int = Field(default=100, ge=1, le=1_000)
     metadata_audit_max_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
     metadata_audit_duplicate_sample_size: int = Field(default=20, ge=1, le=1_000)
+    sitemap_audit_enabled: bool = False
+    sitemap_audit_maximum_response_bytes: int = Field(default=5_000_000, ge=1, le=50_000_000)
+    sitemap_audit_maximum_urlset_entries: int = Field(default=50_000, ge=1, le=50_000)
+    sitemap_audit_maximum_index_children: int = Field(default=50_000, ge=1, le=50_000)
+    sitemap_audit_maximum_documents: int = Field(default=100, ge=1, le=10_000)
+    sitemap_audit_maximum_depth: int = Field(default=3, ge=0, le=20)
+    sitemap_audit_maximum_total_urls: int = Field(default=250_000, ge=1, le=1_000_000)
+    sitemap_audit_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    sitemap_audit_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
+    sitemap_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    sitemap_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -129,5 +141,18 @@ class PersistenceSettings(BaseSettings):
                 maximum_issues_per_page=self.metadata_audit_max_issues_per_page,
                 maximum_export_rows=self.metadata_audit_max_export_rows,
                 duplicate_sample_size=self.metadata_audit_duplicate_sample_size,
+            ),
+            sitemap_audit=SitemapAuditConfiguration(
+                enabled=self.sitemap_audit_enabled,
+                maximum_response_bytes=self.sitemap_audit_maximum_response_bytes,
+                maximum_urlset_entries=self.sitemap_audit_maximum_urlset_entries,
+                maximum_index_children=self.sitemap_audit_maximum_index_children,
+                maximum_documents=self.sitemap_audit_maximum_documents,
+                maximum_depth=self.sitemap_audit_maximum_depth,
+                maximum_total_urls=self.sitemap_audit_maximum_total_urls,
+                default_page_size=self.sitemap_audit_default_page_size,
+                maximum_page_size=self.sitemap_audit_maximum_page_size,
+                maximum_export_rows=self.sitemap_audit_maximum_export_rows,
+                retention_days=self.sitemap_audit_retention_days,
             ),
         )

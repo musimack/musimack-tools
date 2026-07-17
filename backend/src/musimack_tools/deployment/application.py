@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from musimack_tools.deployment.worker import PreparedDurableExecution
     from musimack_tools.history.service import HistoryService
     from musimack_tools.metadata_audit.service import MetadataAuditService
+    from musimack_tools.sitemap_audit.service import SitemapAuditService
 
 Network = IPv4Network | IPv6Network
 
@@ -66,6 +67,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     history: HistoryService | None = None,
     authentication: AuthenticationService | None = None,
     metadata_audits: MetadataAuditService | None = None,
+    sitemap_audits: SitemapAuditService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -244,6 +246,27 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.metadata_audit_diagnostics = audit_diagnostics
+    if sitemap_audits is not None and sitemap_audits.configuration.enabled:
+        from musimack_tools.api.sitemap_audit import create_sitemap_audit_router  # noqa: PLC0415
+
+        sitemap_diagnostics = sitemap_audits.diagnostics()
+        if (
+            not sitemap_diagnostics["persistence_ready"]
+            or not sitemap_diagnostics["migration_ready"]
+        ):
+            raise _configuration_error("sitemap_audit_not_ready")
+        application.include_router(
+            create_sitemap_audit_router(
+                sitemap_audits,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.sitemap_audit_diagnostics = sitemap_diagnostics
 
     add_internal_cors(
         application,

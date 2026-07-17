@@ -25,6 +25,13 @@ import {
   AuditsPage,
   NewAuditPage,
 } from '../pages/AuditPages';
+import {
+  NewSitemapAuditPage,
+  SitemapAuditDashboardPage,
+  SitemapDocumentsPage,
+  SitemapEntriesPage,
+  SitemapFindingsPage,
+} from '../pages/SitemapAuditPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -35,15 +42,17 @@ function DocumentTitle() {
       '/unauthorized': 'Unauthorized',
       '/service-unavailable': 'Service Unavailable',
     };
-    const workflowTitle = location.pathname.startsWith('/jobs/')
-      ? 'Job workflow'
-      : location.pathname.startsWith('/history/')
-        ? 'History detail'
-        : location.pathname.startsWith('/artifacts/')
-          ? 'Artifact detail'
-          : location.pathname.startsWith('/audits/')
-            ? 'Metadata audit'
-            : null;
+    const workflowTitle = location.pathname.startsWith('/sitemap-audits')
+      ? 'Sitemap audit'
+      : location.pathname.startsWith('/jobs/')
+        ? 'Job workflow'
+        : location.pathname.startsWith('/history/')
+          ? 'History detail'
+          : location.pathname.startsWith('/artifacts/')
+            ? 'Artifact detail'
+            : location.pathname.startsWith('/audits/')
+              ? 'Metadata audit'
+              : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -86,6 +95,15 @@ export function AppRoutes() {
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/jobs/:jobId/results/recommendations" element={<RecommendationPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route path="/sitemap-audits/:auditId" element={<SitemapAuditDashboardPage />} />
+          <Route path="/sitemap-audits/:auditId/documents" element={<SitemapDocumentsPage />} />
+          <Route path="/sitemap-audits/:auditId/entries" element={<SitemapEntriesPage />} />
+          <Route path="/sitemap-audits/:auditId/findings" element={<SitemapFindingsPage />} />
+        </Route>
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/sitemap-audits/new" element={<NewSitemapAuditPage />} />
         </Route>
         <Route element={<Protected permission="history.view" />}>
           <Route path="/history/jobs/:jobId" element={<HistoryJobPage />} />

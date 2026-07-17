@@ -1,5 +1,17 @@
 # Musimack SEO Toolkit
 
+## Existing sitemap audits
+
+Phase 21 is implemented for human review, but is not yet accepted. The opt-in private workflow discovers an explicit sitemap, ordered `Sitemap:` directives from `robots.txt`, and `/sitemap.xml`, `/sitemap_index.xml`, and `/wp-sitemap.xml`; it then expands nested indexes through the accepted safe-fetch, DNS, SSRF, redirect, response-limit, URL-normalization, and crawl-scope authorities.
+
+Only standard `urlset` and `sitemapindex` XML are interpreted. DTDs and entity declarations are rejected, missing or nonstandard namespaces are retained as warnings, and gzip decompression remains unsupported. Defaults are 5 MB per response, 50,000 URL-set entries, 50,000 index children, 100 documents, depth 3, and 250,000 unique sitemap URLs. Migration `0008_sitemap_audit` stores normalized documents, entries, findings, comparison decisions, exports, and lifecycle events without raw XML bodies.
+
+The comparison union uses durable crawl evidence plus sitemap inventory and reuses the accepted recommendation states. Stable Add, Remove, Review, and Unchanged results are available only below `/api/internal/v1/audits/sitemaps`; readers require `runs.view`, while discovery, creation, and export generation require `jobs.submit`. CSV, JSON, and Markdown outputs use the existing private artifact authority. The authenticated frontend exposes a separate **Sitemap Audits** workspace.
+
+Authenticated loopback browser QA uses the explicit, network-isolated test-fixture procedure in
+[`docs/sitemap-audit-browser-qa.md`](docs/sitemap-audit-browser-qa.md); the default application
+remains health-only.
+
 ## Metadata audits
 
 Phase 20 adds an opt-in, private metadata-audit product over Phase 20A durable page evidence. An authenticated operator with `jobs.submit` explicitly audits a terminal run; readers use `runs.view`, while export creation and downloads remain within existing artifact permissions. The engine never re-fetches pages or reparses HTML.

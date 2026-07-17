@@ -77,6 +77,31 @@ def test_bootstrap_sign_in_session_revocation_and_secret_storage() -> None:
     assert captured.value.code == "authentication_session_revoked"
 
 
+def test_bootstrap_orders_user_before_credential_with_sqlite_foreign_keys() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+    factory = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    service = AuthenticationService(
+        factory,
+        AuthenticationConfiguration(
+            enabled=True,
+            mode=AuthenticationMode.USER_SESSION,
+            require_secure_cookie=True,
+        ),
+    )
+    administrator = service.bootstrap_administrator(
+        "qa@example.test", "QA Administrator", "correct horse battery staple"
+    )
+    with factory() as database:
+        assert database.get(UserCredentialModel, administrator.user_id) is not None
+
+
 def test_user_lifecycle_role_change_and_failed_login_evidence() -> None:
     service, factory = _service()
     admin = service.bootstrap_administrator(

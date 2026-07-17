@@ -8,7 +8,10 @@ import pytest
 from sqlalchemy import Table, inspect, text
 
 from musimack_tools.domain.persistence import PersistenceConfiguration
-from musimack_tools.persistence import durable_models  # noqa: F401 - registers durable tables.
+from musimack_tools.persistence import (  # noqa: F401 - registers optional normalized tables.
+    durable_models,
+    sitemap_audit_models,
+)
 from musimack_tools.persistence.base import Base
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.models import (
@@ -162,6 +165,13 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "metadata_audit_summaries",
             "metadata_audit_exports",
             "metadata_audit_events",
+            "sitemap_audits",
+            "sitemap_audit_documents",
+            "sitemap_audit_entries",
+            "sitemap_audit_findings",
+            "sitemap_audit_comparisons",
+            "sitemap_audit_exports",
+            "sitemap_audit_events",
             "warnings",
             "failures",
             "summary_metadata",

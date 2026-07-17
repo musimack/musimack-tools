@@ -19,6 +19,7 @@ from musimack_tools.persistence.migrations import (
     METADATA_AUDIT_REVISION,
     PAGE_CRAWL_EVIDENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
+    SITEMAP_AUDIT_REVISION,
     alembic_configuration,
     current_revision,
     downgrade_to_base,
@@ -119,6 +120,13 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "metadata_audit_summaries",
             "metadata_audit_exports",
             "metadata_audit_events",
+            "sitemap_audits",
+            "sitemap_audit_documents",
+            "sitemap_audit_entries",
+            "sitemap_audit_findings",
+            "sitemap_audit_comparisons",
+            "sitemap_audit_exports",
+            "sitemap_audit_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -179,6 +187,21 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             ("metadata_audit_exports", "metadata_audits"),
             ("metadata_audit_exports", "artifact_records"),
             ("metadata_audit_events", "metadata_audits"),
+            ("sitemap_audits", "jobs"),
+            ("sitemap_audits", "runs"),
+            ("sitemap_audit_documents", "sitemap_audits"),
+            ("sitemap_audit_documents", "sitemap_audit_documents"),
+            ("sitemap_audit_entries", "sitemap_audits"),
+            ("sitemap_audit_entries", "sitemap_audit_documents"),
+            ("sitemap_audit_findings", "sitemap_audits"),
+            ("sitemap_audit_findings", "sitemap_audit_documents"),
+            ("sitemap_audit_findings", "sitemap_audit_entries"),
+            ("sitemap_audit_comparisons", "sitemap_audits"),
+            ("sitemap_audit_comparisons", "sitemap_audit_entries"),
+            ("sitemap_audit_comparisons", "crawl_page_evidence"),
+            ("sitemap_audit_exports", "sitemap_audits"),
+            ("sitemap_audit_exports", "artifact_records"),
+            ("sitemap_audit_events", "sitemap_audits"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -207,6 +230,13 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "uq_metadata_audit_issue_code",
             "uq_metadata_duplicate_value",
             "uq_metadata_audit_export",
+            "uq_sitemap_document_identity",
+            "uq_sitemap_entry_sequence",
+            "uq_sitemap_finding_sequence",
+            "uq_sitemap_comparison_identity",
+            "uq_sitemap_comparison_sequence",
+            "uq_sitemap_audit_export_format",
+            "uq_sitemap_audit_event_sequence",
         } <= unique_names
         index_names = {
             index["name"]
@@ -230,6 +260,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
             "ix_metadata_audit_pages_order",
             "ix_metadata_audit_issues_order",
             "ix_metadata_duplicate_order",
+            "ix_sitemap_audits_run_created",
+            "ix_sitemap_documents_audit_order",
+            "ix_sitemap_entries_document_order",
+            "ix_sitemap_findings_audit_order",
+            "ix_sitemap_comparison_order",
         } <= index_names
     finally:
         engine.dispose()
@@ -264,6 +299,11 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(
     assert audit_script.revision == "0007_metadata_audit"
     assert audit_script.down_revision == PAGE_CRAWL_EVIDENCE_REVISION
     assert audit_script.doc == "add durable metadata audit"
+    sitemap_script = ScriptDirectory.from_config(config).get_revision(SITEMAP_AUDIT_REVISION)
+    assert sitemap_script is not None
+    assert sitemap_script.revision == "0008_sitemap_audit"
+    assert sitemap_script.down_revision == METADATA_AUDIT_REVISION
+    assert sitemap_script.doc == "add durable sitemap audit"
 
 
 def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
@@ -281,6 +321,7 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE authentication_sessions" in sql
     assert "CREATE TABLE crawl_page_evidence" in sql
     assert "CREATE TABLE metadata_audits" in sql
+    assert "CREATE TABLE sitemap_audits" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -389,7 +430,7 @@ def test_metadata_audit_migration_downgrades_only_phase_20_tables(  # noqa: PLR0
     command.upgrade(configuration, METADATA_AUDIT_REVISION)
     engine = create_engine(url)
     try:
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
         assert phase_tables <= set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
@@ -411,6 +452,45 @@ def test_metadata_audit_migration_downgrades_only_phase_20_tables(  # noqa: PLR0
     command.upgrade(configuration, METADATA_AUDIT_REVISION)
     engine = create_engine(url)
     try:
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_sitemap_audit_migration_downgrades_only_phase_21_tables(tmp_path: Path) -> None:
+    database = tmp_path / "sitemap-audit-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    phase_tables = {
+        "sitemap_audits",
+        "sitemap_audit_documents",
+        "sitemap_audit_entries",
+        "sitemap_audit_findings",
+        "sitemap_audit_comparisons",
+        "sitemap_audit_exports",
+        "sitemap_audit_events",
+    }
+    command.upgrade(configuration, SITEMAP_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == SITEMAP_AUDIT_REVISION
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, METADATA_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert phase_tables.isdisjoint(tables)
+        assert "metadata_audits" in tables
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, SITEMAP_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables <= set(inspect(engine).get_table_names())
         assert schema_is_current(engine)
     finally:
         engine.dispose()
