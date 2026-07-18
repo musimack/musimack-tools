@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import codecs
+import hashlib
+import json
 import logging
 import re
 import time
@@ -30,6 +32,7 @@ from musimack_tools.domain.html import (
     LinkRecord,
     MetaRobotsRecord,
     RobotsDirective,
+    StructuredDataRecord,
     TextMetadataEvidence,
     TextObservation,
     UrlObservation,
@@ -79,6 +82,9 @@ _PARAMETERIZED_ROBOTS_DIRECTIVES = frozenset(
 _ROBOTS_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 _UNSUPPORTED_LINK_SCHEMES = frozenset({"mailto", "tel", "sms", "javascript", "data"})
 _RECOVERY_SENSITIVE_ELEMENTS = ("title", "head", "body", "html")
+_MAX_STRUCTURED_DATA_BLOCKS = 1_000
+_MAX_STRUCTURED_DATA_RAW_CHARS = 65_536
+_MAX_STRUCTURED_DATA_DEPTH = 32
 
 Clock = Callable[[], float]
 
@@ -191,6 +197,7 @@ class HtmlMetadataParser:
         robots = _extract_robots(soup, warnings)
         links = _extract_links(soup, document_url, base, scope, warnings)
         images = _extract_images(soup, base, scope)
+        structured_data = _extract_structured_data(soup)
         duration = max(0.0, self._clock() - started_at)
         result = HtmlParseResult(
             final_document_url=document_url.normalized,
@@ -213,6 +220,7 @@ class HtmlMetadataParser:
             body_byte_count=len(body),
             parse_duration_seconds=duration,
             images=images,
+            structured_data=structured_data,
         )
         _LOGGER.info(
             "html_parse_completed",
@@ -222,6 +230,7 @@ class HtmlMetadataParser:
                 "warning_count": len(warnings),
                 "link_count": len(links),
                 "image_count": len(images),
+                "structured_data_count": len(structured_data),
             },
         )
         return result
@@ -912,6 +921,325 @@ def _extract_links(
 _LAZY_SOURCE_ATTRIBUTES = ("data-src", "data-lazy-src", "data-original")
 _LAZY_SRCSET_ATTRIBUTES = ("data-srcset",)
 _IMAGE_SCHEMES = frozenset({"http", "https", "data"})
+
+
+def _extract_structured_data(  # noqa: C901, PLR0912, PLR0915
+    soup: BeautifulSoup,
+) -> tuple[StructuredDataRecord, ...]:
+    """Retain bounded JSON-LD, Microdata, and RDFa without executing content."""
+    records: list[StructuredDataRecord] = []
+    for script in soup.find_all("script"):
+        script_type = _attribute(script, "type")
+        normalized_type = (script_type or "").split(";", 1)[0].strip().casefold()
+        structured_type = normalized_type == "application/ld+json" or (
+            "json" in normalized_type and "ld" in normalized_type
+        )
+        if not structured_type:
+            continue
+        raw = script.string if script.string is not None else script.get_text()
+        records.append(_json_ld_record(len(records), script_type, raw or ""))
+        if len(records) >= _MAX_STRUCTURED_DATA_BLOCKS:
+            return tuple(records)
+
+    for node in soup.select("[itemscope]"):
+        properties: dict[str, list[str]] = {}
+        references: list[str] = []
+        diagnostics: list[str] = []
+        for child in node.select("[itemprop]"):
+            owner = child.find_parent(attrs={"itemscope": True})
+            if owner is not node:
+                continue
+            value = _structured_value(child)
+            for name in (_attribute(child, "itemprop") or "").split():
+                properties.setdefault(name, []).append(value)
+                if not value and not any(
+                    child.has_attr(attribute)
+                    for attribute in ("content", "href", "src", "resource", "datetime", "value")
+                ):
+                    diagnostics.append(f"property_missing_value:{name}")
+            reference = _attribute(child, "itemid")
+            if reference:
+                references.append(reference)
+        itemtype = tuple((_attribute(node, "itemtype") or "").split())
+        itemid = _attribute(node, "itemid")
+        if node.has_attr("itemid") and not _valid_structured_identifier(itemid):
+            diagnostics.append("microdata_invalid_itemid")
+        for reference_id in (_attribute(node, "itemref") or "").split():
+            reference_node = soup.find(id=reference_id)
+            if reference_node is None:
+                diagnostics.append(f"microdata_unresolved_itemref:{reference_id}")
+                references.append(reference_id)
+                continue
+            for child in reference_node.select("[itemprop]"):
+                value = _structured_value(child)
+                for name in (_attribute(child, "itemprop") or "").split():
+                    properties.setdefault(name, []).append(value)
+        raw = json.dumps(properties, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        records.append(
+            _structured_record(
+                len(records),
+                "microdata",
+                _locator(node),
+                None,
+                raw,
+                "parsed",
+                None,
+                (),
+                itemtype,
+                (itemid,) if itemid else (),
+                properties,
+                tuple(references),
+                (),
+                tuple(diagnostics),
+            )
+        )
+        if len(records) >= _MAX_STRUCTURED_DATA_BLOCKS:
+            return tuple(records)
+
+    for node in soup.select("[itemprop]"):
+        if node.find_parent(attrs={"itemscope": True}) is not None:
+            continue
+        properties = {
+            name: [_structured_value(node)] for name in (_attribute(node, "itemprop") or "").split()
+        }
+        raw = json.dumps(properties, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        records.append(
+            _structured_record(
+                len(records),
+                "microdata",
+                _locator(node),
+                None,
+                raw,
+                "parsed",
+                None,
+                (),
+                (),
+                (),
+                properties,
+                (),
+                (),
+                ("microdata_property_outside_scope",),
+            )
+        )
+        if len(records) >= _MAX_STRUCTURED_DATA_BLOCKS:
+            return tuple(records)
+
+    rdfa_nodes = soup.select("[typeof], [vocab], [prefix]")
+    for node in rdfa_nodes:
+        rdfa_properties: dict[str, list[str]] = {}
+        rdfa_references: list[str] = []
+        for child in node.select("[property], [rel], [rev]"):
+            for attribute in ("property", "rel", "rev"):
+                for name in (_attribute(child, attribute) or "").split():
+                    rdfa_properties.setdefault(name, []).append(_structured_value(child))
+            reference = _attribute(child, "resource") or _attribute(child, "href")
+            if reference:
+                rdfa_references.append(reference)
+        vocab = _attribute(node, "vocab")
+        prefix = _attribute(node, "prefix")
+        diagnostics = []
+        if prefix is not None and not _valid_rdfa_prefix(prefix):
+            diagnostics.append("rdfa_invalid_prefix_mapping")
+        if node.has_attr("inlist") or node.select_one("[inlist]") is not None:
+            diagnostics.append("rdfa_unsupported_pattern")
+        contexts = tuple(value for value in (vocab, prefix) if value)
+        types = tuple((_attribute(node, "typeof") or "").split())
+        identifier = _attribute(node, "about") or _attribute(node, "resource")
+        raw = json.dumps(rdfa_properties, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        records.append(
+            _structured_record(
+                len(records),
+                "rdfa",
+                _locator(node),
+                None,
+                raw,
+                "parsed",
+                None,
+                contexts,
+                types,
+                (identifier,) if identifier else (),
+                rdfa_properties,
+                tuple(rdfa_references),
+                (),
+                tuple(diagnostics),
+            )
+        )
+        if len(records) >= _MAX_STRUCTURED_DATA_BLOCKS:
+            break
+    return tuple(records)
+
+
+def _json_ld_record(index: int, script_type: str | None, raw: str) -> StructuredDataRecord:
+    duplicate_keys: list[str] = []
+
+    def pairs(values: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in values:
+            if key in result and key not in duplicate_keys:
+                duplicate_keys.append(key)
+            result[key] = value
+        return result
+
+    value: object | None = None
+    error: str | None = None
+    try:
+        value = json.loads(raw.lstrip("\ufeff").removeprefix("ï»¿"), object_pairs_hook=pairs)
+        status = "parsed"
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        status = "invalid"
+        error = f"{type(exc).__name__}:{getattr(exc, 'lineno', 0)}:{getattr(exc, 'colno', 0)}"
+    contexts: set[str] = set()
+    types: set[str] = set()
+    identifiers: set[str] = set()
+    references: set[str] = set()
+    properties: dict[str, list[str]] = {}
+    if value is not None:
+        _walk_json_ld(value, contexts, types, identifiers, references, properties)
+    return _structured_record(
+        index,
+        "json_ld",
+        f"script[{index}]",
+        script_type,
+        raw,
+        status,
+        error,
+        tuple(sorted(contexts)),
+        tuple(sorted(types)),
+        tuple(sorted(identifiers)),
+        properties,
+        tuple(sorted(references)),
+        tuple(duplicate_keys),
+        (),
+        value,
+    )
+
+
+def _walk_json_ld(  # noqa: C901, PLR0912, PLR0913
+    value: object,
+    contexts: set[str],
+    types: set[str],
+    identifiers: set[str],
+    references: set[str],
+    properties: dict[str, list[str]],
+    *,
+    depth: int = 0,
+) -> None:
+    if depth > _MAX_STRUCTURED_DATA_DEPTH:
+        return
+    if isinstance(value, list):
+        for item in value[:5_000]:
+            _walk_json_ld(
+                item, contexts, types, identifiers, references, properties, depth=depth + 1
+            )
+        return
+    if not isinstance(value, dict):
+        return
+    for key, item in list(value.items())[:5_000]:
+        values = item if isinstance(item, list) else [item]
+        if key == "@context":
+            contexts.update(str(entry) for entry in values if isinstance(entry, str))
+        elif key == "@type":
+            types.update(str(entry) for entry in values if isinstance(entry, str))
+        elif key == "@id":
+            identifiers.update(str(entry) for entry in values if isinstance(entry, str))
+        elif not key.startswith("@"):
+            for entry in values[:100]:
+                if isinstance(entry, (str, int, float, bool)) or entry is None:
+                    properties.setdefault(key, []).append(str(entry)[:4_096])
+                elif isinstance(entry, dict) and isinstance(entry.get("@id"), str):
+                    references.add(str(entry["@id"]))
+                    properties.setdefault(key, []).append("[reference]")
+                elif isinstance(entry, (dict, list)):
+                    properties.setdefault(key, []).append("[structured]")
+        _walk_json_ld(item, contexts, types, identifiers, references, properties, depth=depth + 1)
+
+
+def _structured_record(  # noqa: PLR0913
+    index: int,
+    format_name: str,
+    locator: str,
+    script_type: str | None,
+    raw: str,
+    status: str,
+    error: str | None,
+    contexts: tuple[str, ...],
+    types: tuple[str, ...],
+    identifiers: tuple[str, ...],
+    properties: dict[str, list[str]],
+    references: tuple[str, ...],
+    duplicate_keys: tuple[str, ...],
+    diagnostics: tuple[str, ...],
+    normalized: object | None = None,
+) -> StructuredDataRecord:
+    encoded = raw.encode("utf-8", errors="replace")
+    retained = raw[:_MAX_STRUCTURED_DATA_RAW_CHARS]
+    normalized_text = None
+    if normalized is not None:
+        normalized_text = json.dumps(
+            normalized, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        )
+    return StructuredDataRecord(
+        occurrence_index=index,
+        format=format_name,
+        source_locator=locator,
+        script_type=script_type,
+        raw_value=retained,
+        raw_length=len(raw),
+        parse_status=status,
+        parse_error=error,
+        contexts=contexts[:100],
+        types=types[:100],
+        identifiers=identifiers[:100],
+        properties_json=json.dumps(properties, ensure_ascii=True, sort_keys=True)[:65_536],
+        references=references[:1_000],
+        raw_fingerprint=hashlib.sha256(encoded).hexdigest(),
+        normalized_fingerprint=(
+            hashlib.sha256(normalized_text.encode()).hexdigest()
+            if normalized_text is not None
+            else None
+        ),
+        duplicate_keys=duplicate_keys[:100],
+        diagnostics=diagnostics[:100],
+        truncated=len(raw) > len(retained),
+    )
+
+
+def _valid_structured_identifier(value: str | None) -> bool:
+    if value is None or not value.strip() or value != value.strip():
+        return False
+    if value.startswith("#"):
+        return len(value) > 1 and not any(character.isspace() for character in value)
+    parsed = urlsplit(value)
+    if parsed.scheme in {"http", "https"}:
+        return bool(parsed.netloc)
+    return parsed.scheme == "urn" and bool(parsed.path)
+
+
+def _valid_rdfa_prefix(value: str) -> bool:
+    tokens = value.split()
+    if not tokens or len(tokens) % 2:
+        return False
+    for index in range(0, len(tokens), 2):
+        prefix, target = tokens[index], tokens[index + 1]
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]*:", prefix):
+            return False
+        parsed = urlsplit(target)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return False
+    return True
+
+
+def _structured_value(node: Tag) -> str:
+    for attribute in ("content", "href", "src", "resource", "datetime", "value"):
+        value = _attribute(node, attribute)
+        if value is not None:
+            return value[:4_096]
+    return " ".join(node.get_text(" ", strip=True).split())[:4_096]
+
+
+def _locator(node: Tag) -> str:
+    identifier = _attribute(node, "id")
+    return f"{node.name}#{identifier}" if identifier else node.name
 
 
 def _extract_images(  # noqa: C901, PLR0912, PLR0915

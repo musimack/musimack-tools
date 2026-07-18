@@ -44,6 +44,7 @@ from musimack_tools.persistence.models import (
     CrawlPageRedirectHopModel,
     RunModel,
 )
+from musimack_tools.persistence.structured_data_models import CrawlStructuredDataEvidenceModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -57,7 +58,7 @@ _MAX_URL_FILTER_LENGTH = 256
 _LOGGER = logging.getLogger(__name__)
 
 
-def persist_projected_evidence(  # noqa: C901
+def persist_projected_evidence(  # noqa: C901, PLR0912, PLR0915
     session: Session,
     job_id: str,
     run_id: str,
@@ -98,6 +99,16 @@ def persist_projected_evidence(  # noqa: C901
         )
         expected_images = tuple(image.image_id for image in projection.images)
         if image_identifiers != expected_images:
+            raise ValueError(PageEvidenceReasonCode.CONFLICT)
+        structured_identifiers = tuple(
+            session.scalars(
+                select(CrawlStructuredDataEvidenceModel.block_id)
+                .where(CrawlStructuredDataEvidenceModel.run_id == run_id)
+                .order_by(CrawlStructuredDataEvidenceModel.occurrence_sequence)
+            )
+        )
+        expected_structured = tuple(block.block_id for block in projection.structured_data)
+        if structured_identifiers != expected_structured:
             raise ValueError(PageEvidenceReasonCode.CONFLICT)
         _LOGGER.info(
             "page_evidence_persistence_idempotent job_id=%s run_id=%s page_count=%d",
@@ -175,6 +186,17 @@ def persist_projected_evidence(  # noqa: C901
             job_id,
             run_id,
             min(configuration.batch_size, len(projection.images) - start),
+        )
+
+    for start in range(0, len(projection.structured_data), configuration.batch_size):
+        for block in projection.structured_data[start : start + configuration.batch_size]:
+            session.add(CrawlStructuredDataEvidenceModel(**asdict(block)))
+        session.flush()
+        _LOGGER.info(
+            "structured_data_evidence_batch_persisted job_id=%s run_id=%s batch_count=%d",
+            job_id,
+            run_id,
+            min(configuration.batch_size, len(projection.structured_data) - start),
         )
 
     pages = projection.pages

@@ -231,6 +231,30 @@ class ImageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuredDataRecord:
+    """One bounded, inert structured-data block in document order."""
+
+    occurrence_index: int
+    format: str
+    source_locator: str
+    script_type: str | None
+    raw_value: str
+    raw_length: int
+    parse_status: str
+    parse_error: str | None
+    contexts: tuple[str, ...]
+    types: tuple[str, ...]
+    identifiers: tuple[str, ...]
+    properties_json: str
+    references: tuple[str, ...]
+    raw_fingerprint: str
+    normalized_fingerprint: str | None
+    duplicate_keys: tuple[str, ...]
+    diagnostics: tuple[str, ...]
+    truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
 class HtmlParseResult:
     """Complete deterministic evidence from one fetched HTML document."""
 
@@ -254,3 +278,4 @@ class HtmlParseResult:
     body_byte_count: int
     parse_duration_seconds: float
     images: tuple[ImageRecord, ...] = ()
+    structured_data: tuple[StructuredDataRecord, ...] = ()

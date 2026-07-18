@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from musimack_tools.link_audit.service import LinkAuditService
     from musimack_tools.metadata_audit.service import MetadataAuditService
     from musimack_tools.sitemap_audit.service import SitemapAuditService
+    from musimack_tools.structured_data_audit.service import StructuredDataAuditService
 
 Network = IPv4Network | IPv6Network
 
@@ -74,6 +75,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     link_audits: LinkAuditService | None = None,
     internal_link_audits: InternalLinkAuditService | None = None,
     image_audits: ImageAuditService | None = None,
+    structured_data_audits: StructuredDataAuditService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -330,6 +332,29 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.image_audit_diagnostics = image_diagnostics
+    if structured_data_audits is not None and structured_data_audits.configuration.enabled:
+        from musimack_tools.api.structured_data_audit import (  # noqa: PLC0415
+            create_structured_data_audit_router,
+        )
+
+        structured_diagnostics = structured_data_audits.diagnostics()
+        if (
+            not structured_diagnostics["persistence_ready"]
+            or not structured_diagnostics["migration_ready"]
+        ):
+            raise _configuration_error("structured_data_audit_not_ready")
+        application.include_router(
+            create_structured_data_audit_router(
+                structured_data_audits,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.structured_data_audit_diagnostics = structured_diagnostics
 
     add_internal_cors(
         application,

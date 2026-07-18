@@ -7,6 +7,7 @@ import { SitemapAuditsPage } from '../pages/SitemapAuditPages';
 import { LinkAuditsPage } from '../pages/LinkAuditPages';
 import { InternalLinksPage } from '../pages/InternalLinkPages';
 import { ImageAuditsPage } from '../pages/ImageAuditPages';
+import { StructuredDataAuditsPage } from '../pages/StructuredDataAuditPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -17,6 +18,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/structured-data-audits',
+    label: 'Structured Data',
+    description: 'Audit JSON-LD, Microdata, RDFa, entities, and profiles',
+    permission: 'runs.view',
+    component: StructuredDataAuditsPage,
+  },
   {
     path: '/image-audits',
     label: 'Images & Alt Text',

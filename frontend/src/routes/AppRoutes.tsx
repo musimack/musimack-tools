@@ -54,6 +54,12 @@ import {
   ImageAuditInventoryPage,
   NewImageAuditPage,
 } from '../pages/ImageAuditPages';
+import {
+  NewStructuredDataAuditPage,
+  StructuredDataAuditDashboardPage,
+  StructuredDataAuditExportsPage,
+  StructuredDataAuditInventoryPage,
+} from '../pages/StructuredDataAuditPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -64,23 +70,25 @@ function DocumentTitle() {
       '/unauthorized': 'Unauthorized',
       '/service-unavailable': 'Service Unavailable',
     };
-    const workflowTitle = location.pathname.startsWith('/image-audits')
-      ? 'Images and alt text'
-      : location.pathname.startsWith('/internal-links')
-        ? 'Internal links'
-        : location.pathname.startsWith('/link-audits')
-          ? 'Link audit'
-          : location.pathname.startsWith('/sitemap-audits')
-            ? 'Sitemap audit'
-            : location.pathname.startsWith('/jobs/')
-              ? 'Job workflow'
-              : location.pathname.startsWith('/history/')
-                ? 'History detail'
-                : location.pathname.startsWith('/artifacts/')
-                  ? 'Artifact detail'
-                  : location.pathname.startsWith('/audits/')
-                    ? 'Metadata audit'
-                    : null;
+    const workflowTitle = location.pathname.startsWith('/structured-data-audits')
+      ? 'Structured data'
+      : location.pathname.startsWith('/image-audits')
+        ? 'Images and alt text'
+        : location.pathname.startsWith('/internal-links')
+          ? 'Internal links'
+          : location.pathname.startsWith('/link-audits')
+            ? 'Link audit'
+            : location.pathname.startsWith('/sitemap-audits')
+              ? 'Sitemap audit'
+              : location.pathname.startsWith('/jobs/')
+                ? 'Job workflow'
+                : location.pathname.startsWith('/history/')
+                  ? 'History detail'
+                  : location.pathname.startsWith('/artifacts/')
+                    ? 'Artifact detail'
+                    : location.pathname.startsWith('/audits/')
+                      ? 'Metadata audit'
+                      : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -120,6 +128,23 @@ export function AppRoutes() {
           <Route path="/jobs/:jobId" element={<JobDetailPage />} />
           <Route path="/jobs/:jobId/progress" element={<JobDetailPage />} />
           <Route path="/jobs/:jobId/results" element={<JobResultPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route
+            path="/structured-data-audits/:auditId"
+            element={<StructuredDataAuditDashboardPage />}
+          />
+          <Route
+            path="/structured-data-audits/:auditId/exports"
+            element={<StructuredDataAuditExportsPage />}
+          />
+          <Route
+            path="/structured-data-audits/:auditId/:resource"
+            element={<StructuredDataAuditInventoryPage />}
+          />
+        </Route>
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/structured-data-audits/new" element={<NewStructuredDataAuditPage />} />
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/image-audits/:auditId" element={<ImageAuditDashboardPage />} />

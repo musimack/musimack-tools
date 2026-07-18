@@ -12,6 +12,7 @@ from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
+from musimack_tools.domain.structured_data_audit import StructuredDataAuditConfiguration
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -130,6 +131,9 @@ class PersistenceConfiguration:
     link_audit: LinkAuditConfiguration = field(default_factory=LinkAuditConfiguration)
     internal_link: InternalLinkConfiguration = field(default_factory=InternalLinkConfiguration)
     image_audit: ImageAuditConfiguration = field(default_factory=ImageAuditConfiguration)
+    structured_data_audit: StructuredDataAuditConfiguration = field(
+        default_factory=StructuredDataAuditConfiguration
+    )
     persistence_version: str = PERSISTENCE_VERSION
     schema_version: str = DATABASE_SCHEMA_VERSION
 

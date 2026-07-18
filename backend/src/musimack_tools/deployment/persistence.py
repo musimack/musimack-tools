@@ -19,6 +19,7 @@ from musimack_tools.domain.persistence import (
     SQLiteSynchronousMode,
 )
 from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
+from musimack_tools.domain.structured_data_audit import StructuredDataAuditConfiguration
 
 _MISSING_PATH = "an explicit database path is required when persistence is enabled"
 
@@ -113,6 +114,12 @@ class PersistenceSettings(BaseSettings):
     image_audit_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
     image_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
     image_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
+    structured_data_audit_enabled: bool = False
+    structured_data_audit_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    structured_data_audit_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
+    structured_data_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    structured_data_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
+    structured_data_audit_minimum_sitewide_pages: int = Field(default=3, ge=1, le=10_000)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -215,5 +222,13 @@ class PersistenceSettings(BaseSettings):
                 maximum_page_size=self.image_audit_maximum_page_size,
                 maximum_export_rows=self.image_audit_maximum_export_rows,
                 retention_days=self.image_audit_retention_days,
+            ),
+            structured_data_audit=StructuredDataAuditConfiguration(
+                enabled=self.structured_data_audit_enabled,
+                default_page_size=self.structured_data_audit_default_page_size,
+                maximum_page_size=self.structured_data_audit_maximum_page_size,
+                maximum_export_rows=self.structured_data_audit_maximum_export_rows,
+                retention_days=self.structured_data_audit_retention_days,
+                minimum_sitewide_pages=self.structured_data_audit_minimum_sitewide_pages,
             ),
         )

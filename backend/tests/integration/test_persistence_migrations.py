@@ -23,6 +23,7 @@ from musimack_tools.persistence.migrations import (
     PAGE_CRAWL_EVIDENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
     SITEMAP_AUDIT_REVISION,
+    STRUCTURED_DATA_AUDIT_REVISION,
     alembic_configuration,
     current_revision,
     downgrade_to_base,
@@ -157,6 +158,19 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "image_recommendations",
             "image_audit_exports",
             "image_audit_events",
+            "crawl_structured_data_evidence",
+            "structured_data_audits",
+            "structured_data_blocks",
+            "structured_data_entities",
+            "structured_data_properties",
+            "structured_data_references",
+            "structured_data_duplicate_groups",
+            "structured_data_page_summaries",
+            "structured_data_findings",
+            "structured_data_profiles",
+            "structured_data_recommendations",
+            "structured_data_exports",
+            "structured_data_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -287,6 +301,23 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             ("image_audit_exports", "image_audits"),
             ("image_audit_exports", "artifact_records"),
             ("image_audit_events", "image_audits"),
+            ("crawl_structured_data_evidence", "jobs"),
+            ("crawl_structured_data_evidence", "runs"),
+            ("crawl_structured_data_evidence", "crawl_page_evidence"),
+            ("structured_data_audits", "jobs"),
+            ("structured_data_audits", "runs"),
+            ("structured_data_blocks", "structured_data_audits"),
+            ("structured_data_entities", "structured_data_audits"),
+            ("structured_data_properties", "structured_data_audits"),
+            ("structured_data_references", "structured_data_audits"),
+            ("structured_data_duplicate_groups", "structured_data_audits"),
+            ("structured_data_page_summaries", "structured_data_audits"),
+            ("structured_data_findings", "structured_data_audits"),
+            ("structured_data_profiles", "structured_data_audits"),
+            ("structured_data_recommendations", "structured_data_audits"),
+            ("structured_data_exports", "structured_data_audits"),
+            ("structured_data_exports", "artifact_records"),
+            ("structured_data_events", "structured_data_audits"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -444,6 +475,8 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE internal_link_page_metrics" in sql
     assert "CREATE TABLE internal_link_edges" in sql
     assert "CREATE TABLE internal_link_opportunities" in sql
+    assert "CREATE TABLE crawl_structured_data_evidence" in sql
+    assert "CREATE TABLE structured_data_audits" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 
@@ -681,7 +714,7 @@ def test_image_audit_migration_upgrades_downgrades_and_reupgrades_from_internal_
     try:
         assert current_revision(engine) == IMAGE_ALT_TEXT_AUDIT_REVISION
         assert phase_tables <= set(inspect(engine).get_table_names())
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
     finally:
         engine.dispose()
     command.downgrade(configuration, INTERNAL_LINK_ANALYSIS_REVISION)
@@ -694,6 +727,91 @@ def test_image_audit_migration_upgrades_downgrades_and_reupgrades_from_internal_
     finally:
         engine.dispose()
     command.upgrade(configuration, IMAGE_ALT_TEXT_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_structured_data_migration_upgrades_downgrades_and_reupgrades_from_images(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "structured-data-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    phase_tables = {
+        "crawl_structured_data_evidence",
+        "structured_data_audits",
+        "structured_data_blocks",
+        "structured_data_entities",
+        "structured_data_properties",
+        "structured_data_references",
+        "structured_data_duplicate_groups",
+        "structured_data_page_summaries",
+        "structured_data_findings",
+        "structured_data_profiles",
+        "structured_data_recommendations",
+        "structured_data_exports",
+        "structured_data_events",
+    }
+    command.upgrade(configuration, STRUCTURED_DATA_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        inspector = inspect(engine)
+        assert current_revision(engine) == STRUCTURED_DATA_AUDIT_REVISION
+        assert phase_tables <= set(inspector.get_table_names())
+        evidence_columns = {
+            column["name"] for column in inspector.get_columns("crawl_structured_data_evidence")
+        }
+        assert evidence_columns >= {"diagnostics_json"}
+        assert {column["name"] for column in inspector.get_columns("structured_data_findings")} >= {
+            "confidence",
+            "requires_human_review",
+        }
+        assert {
+            column["name"] for column in inspector.get_columns("structured_data_duplicate_groups")
+        } >= {"raw_fingerprint", "normalized_fingerprint", "comparison_basis"}
+        assert {
+            column["name"] for column in inspector.get_columns("structured_data_recommendations")
+        } >= {
+            "confidence",
+            "requires_human_review",
+            "scope",
+            "occurrence_count",
+            "affected_page_count",
+            "supporting_finding_ids_json",
+            "supporting_evidence_json",
+        }
+        constraint_names = {
+            constraint["name"]
+            for table in (
+                "structured_data_findings",
+                "structured_data_profiles",
+                "structured_data_recommendations",
+            )
+            for constraint in inspector.get_check_constraints(table)
+        }
+        assert {
+            "ck_structured_finding_confidence",
+            "ck_structured_profile_state",
+            "ck_structured_recommendation_confidence",
+            "ck_structured_recommendation_occurrences",
+            "ck_structured_recommendation_affected_pages",
+        } <= constraint_names
+        assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, IMAGE_ALT_TEXT_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables.isdisjoint(set(inspect(engine).get_table_names()))
+        assert current_revision(engine) == IMAGE_ALT_TEXT_AUDIT_REVISION
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, STRUCTURED_DATA_AUDIT_REVISION)
     engine = create_engine(url)
     try:
         assert phase_tables <= set(inspect(engine).get_table_names())

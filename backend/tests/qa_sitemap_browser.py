@@ -1,4 +1,4 @@
-"""Explicit local-only authenticated browser-QA composition for Phases 21 through 24."""
+"""Explicit local-only authenticated browser-QA composition for Phases 21 through 25."""
 
 # ruff: noqa: PLR0913, T201, TRY003 - explicit QA CLI reports safe values and fails with operator guidance.
 
@@ -51,6 +51,7 @@ from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.domain.run import RunStage, RunStageRecord, RunStageState
 from musimack_tools.domain.sitemap_audit import DiscoveryOptions, SitemapAuditConfiguration
+from musimack_tools.domain.structured_data_audit import StructuredDataAuditConfiguration
 from musimack_tools.history.service import HistoryService
 from musimack_tools.image_audit.service import ImageAuditService
 from musimack_tools.internal_link.service import InternalLinkAuditService
@@ -64,11 +65,16 @@ from musimack_tools.persistence.image_audit_repository import SQLAlchemyImageAud
 from musimack_tools.persistence.internal_link_repository import SQLAlchemyInternalLinkRepository
 from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
+from musimack_tools.persistence.models import CrawlPageEvidenceModel
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
 from musimack_tools.persistence.sitemap_audit_repository import SQLAlchemySitemapAuditRepository
+from musimack_tools.persistence.structured_data_repository import (
+    SQLAlchemyStructuredDataAuditRepository,
+)
 from musimack_tools.recommendation.sitemap import SitemapRecommendationEngine
 from musimack_tools.run.service import CrawlRunService
 from musimack_tools.sitemap_audit.service import SitemapAuditService
+from musimack_tools.structured_data_audit.service import StructuredDataAuditService
 from page_evidence_helpers import PageRecordOptions, crawl_result, page_record
 from persistence_helpers import sample_request, sample_result, sample_snapshot
 
@@ -244,6 +250,11 @@ def create_qa_app() -> FastAPI:
         SQLAlchemyImageAuditRepository(runtime),
         artifacts,
     )
+    structured_data = StructuredDataAuditService(
+        configuration.structured_data_audit,
+        SQLAlchemyStructuredDataAuditRepository(runtime),
+        artifacts,
+    )
     app = create_production_app(
         application_service,
         settings,
@@ -256,6 +267,7 @@ def create_qa_app() -> FastAPI:
         link_audits=links,
         internal_link_audits=internal_links,
         image_audits=images,
+        structured_data_audits=structured_data,
     )
 
     async def shutdown() -> None:
@@ -316,6 +328,43 @@ def seed() -> None:
             PageRecordOptions(
                 body=(
                     "<title>QA home</title><meta name='description' content='QA home'>"
+                    "<script type='application/ld+json'>"
+                    '{"@context":"https://schema.org","@type":"Organization",'
+                    '"@id":"#qa-org","name":"QA Organization",'
+                    '"url":"https://example.com/"}'
+                    "</script>"
+                    "<script type='application/ld+json'>"
+                    '{"@type":"Product","name":"","url":"/relative-product"}'
+                    "</script>"
+                    "<script type='application/ld+json'>"
+                    '{"@context":"https://schema.org","@type":"Product",'
+                    '"@id":"#qa-org","name":"Conflicting entity"}'
+                    "</script>"
+                    "<script type='application/ld+json'>"
+                    '{"@context":"https://schema.org","@type":"LocalBusiness",'
+                    '"name":["=QA Shop","+QA Shop","-QA Shop","@QA Shop"],'
+                    '"address":"1 Main Street"}'
+                    "</script>"
+                    "<script type='application/ld+json'>"
+                    '{"@context":"https://schema.org","@type":"Organization",'
+                    '"name":"Unidentified Organization","url":"https://example.com/"}'
+                    "</script>"
+                    "<script type='application/ld+json'>"
+                    '{"@context":"https://schema.org","@type":"BreadcrumbList"}'
+                    "</script>"
+                    "<script type='application/ld+json'>"
+                    '{"@context":"https://schema.org","@type":"Article",'
+                    '"headline":"QA Article","author":{"name":"QA Author"},'
+                    '"datePublished":"bad-date"}'
+                    "</script>"
+                    "<article itemscope itemtype='Article'>"
+                    "<meta itemprop='headline' content='QA Article'>"
+                    "<span itemprop='missingValue'></span></article>"
+                    "<div itemprop='outsideScope'>Outside microdata scope</div>"
+                    "<div itemscope itemtype='Person' itemid='javascript:bad'>"
+                    "<span itemprop='name'>Bad identifier</span></div>"
+                    "<section prefix='broken' typeof='Thing' inlist>"
+                    "<span property='name'>Unsupported RDFa pattern</span></section>"
                     "<a href='/working'>Working</a><a href='/missing'>404</a>"
                     "<a href='/gone'>410</a><a href='/server-error'>500</a>"
                     "<a href='/unverified'>Unverified</a><a href='/manual.pdf'>PDF</a>"
@@ -704,6 +753,17 @@ def seed() -> None:
         persisted = repository.record_terminal(terminal, result, (), None)
         if not persisted.succeeded:
             raise RuntimeError("QA terminal run seed failed")
+        with runtime.transaction() as session:
+            home_evidence = (
+                session.query(CrawlPageEvidenceModel)
+                .filter_by(
+                    run_id=snapshot.run_id,
+                    requested_url="https://example.com/",
+                )
+                .one()
+            )
+            # Deliberate retained-evidence mismatch for the non-HTML finding; no refetch occurs.
+            home_evidence.content_type = "application/pdf"
         sitemap_service = SitemapAuditService(
             SitemapAuditConfiguration(enabled=True),
             SQLAlchemySitemapAuditRepository(runtime),
@@ -720,7 +780,10 @@ def seed() -> None:
             )
         )
         print(f"Seeded QA crawl run: {snapshot.run_id}")
-        print("Seeded Phase 22 link, Phase 23 internal-link, and Phase 24 image fixtures")
+        print(
+            "Seeded Phase 22 link, Phase 23 internal-link, Phase 24 image, "
+            "and Phase 25 structured-data fixtures"
+        )
         print(f"Deterministic sitemap fixture: {_SITEMAP}")
     finally:
         runtime.dispose()
@@ -750,6 +813,12 @@ def _persistence_configuration() -> PersistenceConfiguration:
             maximum_outlinks=5,
         ),
         image_audit=ImageAuditConfiguration(
+            enabled=True,
+            default_page_size=5,
+            maximum_page_size=50,
+            minimum_sitewide_pages=2,
+        ),
+        structured_data_audit=StructuredDataAuditConfiguration(
             enabled=True,
             default_page_size=5,
             maximum_page_size=50,

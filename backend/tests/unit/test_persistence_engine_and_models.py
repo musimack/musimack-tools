@@ -12,6 +12,7 @@ from musimack_tools.persistence import (  # noqa: F401 - registers optional norm
     durable_models,
     link_audit_models,
     sitemap_audit_models,
+    structured_data_models,
 )
 from musimack_tools.persistence.base import Base
 from musimack_tools.persistence.engine import create_persistence_runtime
@@ -200,6 +201,19 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "image_recommendations",
             "image_audit_exports",
             "image_audit_events",
+            "crawl_structured_data_evidence",
+            "structured_data_audits",
+            "structured_data_blocks",
+            "structured_data_entities",
+            "structured_data_properties",
+            "structured_data_references",
+            "structured_data_duplicate_groups",
+            "structured_data_page_summaries",
+            "structured_data_findings",
+            "structured_data_profiles",
+            "structured_data_recommendations",
+            "structured_data_exports",
+            "structured_data_events",
             "warnings",
             "failures",
             "summary_metadata",

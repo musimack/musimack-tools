@@ -26,6 +26,7 @@ PAGE_EVIDENCE_PAGINATION_VERSION = "seo-toolkit-page-crawl-evidence-pagination-v
 PAGE_EVIDENCE_ORDERING = "crawl_discovery_sequence_asc_url_identity_asc-v1"
 LINK_EVIDENCE_VERSION = "seo-toolkit-link-evidence-v1"
 IMAGE_EVIDENCE_VERSION = "seo-toolkit-image-evidence-v1"
+STRUCTURED_DATA_EVIDENCE_VERSION = "seo-toolkit-structured-data-evidence-v1"
 _MAX_BATCH_SIZE = 10_000
 _MAX_PAGE_SIZE = 1_000
 _MAX_PAGES_PER_RUN = 1_000_000
@@ -333,6 +334,42 @@ class PageImageEvidenceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PageStructuredDataEvidenceRecord:
+    """One bounded structured-data block retained from the crawl parser."""
+
+    block_id: str
+    job_id: str
+    run_id: str
+    source_evidence_id: str
+    source_requested_url: str
+    source_final_url: str | None
+    source_url_identity: str
+    source_discovery_sequence: int
+    source_crawl_depth: int
+    element_sequence: int
+    occurrence_sequence: int
+    format: str
+    source_locator: str
+    script_type: str | None
+    raw_value: str
+    raw_length: int
+    parse_status: str
+    parse_error: str | None
+    contexts_json: str
+    types_json: str
+    identifiers_json: str
+    properties_json: str
+    references_json: str
+    raw_fingerprint: str
+    normalized_fingerprint: str | None
+    duplicate_keys_json: str
+    diagnostics_json: str
+    value_truncated: bool
+    created_at: datetime
+    evidence_version: str = STRUCTURED_DATA_EVIDENCE_VERSION
+
+
+@dataclass(frozen=True, slots=True)
 class PageEvidenceRunProjection:
     job_id: str
     run_id: str
@@ -341,6 +378,7 @@ class PageEvidenceRunProjection:
     truncated: bool
     links: tuple[PageLinkEvidenceRecord, ...] = ()
     images: tuple[PageImageEvidenceRecord, ...] = ()
+    structured_data: tuple[PageStructuredDataEvidenceRecord, ...] = ()
     ordering: str = PAGE_EVIDENCE_ORDERING
 
 
@@ -524,9 +562,13 @@ def project_crawl_result(
     pages = tuple(_project_page(context, record) for record in selected)
     links: list[PageLinkEvidenceRecord] = []
     images: list[PageImageEvidenceRecord] = []
+    structured_data: list[PageStructuredDataEvidenceRecord] = []
     for record, page in zip(selected, pages, strict=True):
         links.extend(_project_links(context, record, page, len(links)))
         images.extend(_project_images(context, record, page, len(images)))
+        structured_data.extend(
+            _project_structured_data(context, record, page, len(structured_data))
+        )
     return PageEvidenceRunProjection(
         job_id=job_id,
         run_id=run_id,
@@ -535,7 +577,58 @@ def project_crawl_result(
         truncated=len(selected) != len(ordered),
         links=tuple(links),
         images=tuple(images),
+        structured_data=tuple(structured_data),
     )
+
+
+def _project_structured_data(
+    context: _ProjectionContext,
+    record: UrlCrawlRecord,
+    page: PageEvidenceRecord,
+    start_sequence: int,
+) -> tuple[PageStructuredDataEvidenceRecord, ...]:
+    parse = record.parse_result
+    if parse is None:
+        return ()
+    values: list[PageStructuredDataEvidenceRecord] = []
+    for offset, block in enumerate(parse.structured_data):
+        raw_value, additionally_truncated = _bounded(block.raw_value, 65_536)
+        values.append(
+            PageStructuredDataEvidenceRecord(
+                block_id=hashlib.sha256(
+                    f"{page.evidence_id}\0{block.occurrence_index}\0{block.raw_fingerprint}".encode()
+                ).hexdigest(),
+                job_id=context.job_id,
+                run_id=context.run_id,
+                source_evidence_id=page.evidence_id,
+                source_requested_url=page.requested_url,
+                source_final_url=page.final_url,
+                source_url_identity=page.requested_url_identity,
+                source_discovery_sequence=page.discovery_sequence,
+                source_crawl_depth=page.crawl_depth,
+                element_sequence=block.occurrence_index,
+                occurrence_sequence=start_sequence + offset,
+                format=block.format,
+                source_locator=block.source_locator[:512],
+                script_type=_bounded(block.script_type, 128)[0],
+                raw_value=raw_value or "",
+                raw_length=block.raw_length,
+                parse_status=block.parse_status,
+                parse_error=_bounded(block.parse_error, 512)[0],
+                contexts_json=_safe_json(block.contexts, 16_384),
+                types_json=_safe_json(block.types, 16_384),
+                identifiers_json=_safe_json(block.identifiers, 16_384),
+                properties_json=block.properties_json[:65_536],
+                references_json=_safe_json(block.references, 65_536),
+                raw_fingerprint=block.raw_fingerprint,
+                normalized_fingerprint=block.normalized_fingerprint,
+                duplicate_keys_json=_safe_json(block.duplicate_keys, 16_384),
+                diagnostics_json=_safe_json(block.diagnostics, 16_384),
+                value_truncated=block.truncated or additionally_truncated,
+                created_at=context.persisted_at,
+            )
+        )
+    return tuple(values)
 
 
 def _project_images(

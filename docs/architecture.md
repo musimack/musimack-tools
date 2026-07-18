@@ -1,5 +1,9 @@
 # Foundation Architecture
 
+## Phase 25 structured-data evidence and analysis boundary
+
+Phase 25 extends the accepted HTML parser and page-evidence transaction with bounded, inert JSON-LD, Microdata, and RDFa blocks. Migration `0012_structured_data_audit` stores immutable crawl evidence plus derived blocks, entities, properties, references, duplicate groups, page summaries, findings, versioned profile observations, recommendations, exports, and lifecycle events. No second parser, crawler, network client, or markup execution path exists. The private API is mounted solely below `/api/internal/v1/audits/structured-data`. See [structured-data-audit.md](structured-data-audit.md) and [ADR 0071](decisions/0071-durable-structured-data-evidence-and-audit.md).
+
 ## Phase 24 image-evidence and analysis boundary
 
 Phase 24 extends the accepted HTML parser and page-evidence transaction with bounded image occurrences; it does not introduce a second parser or crawler. Migration `0011_image_alt_text_audit` stores that immutable occurrence authority plus derived resources, occurrence analyses, duplicate groups, page summaries, findings, recommendations, exports, and lifecycle events. Resource resolution prefers retained evidence and may use only an injected adapter over the accepted safe-fetch boundary. The private API is mounted solely below `/api/internal/v1/audits/images`. See [image-alt-text-audit.md](image-alt-text-audit.md) and [ADR 0070](decisions/0070-durable-image-evidence-and-audit.md).

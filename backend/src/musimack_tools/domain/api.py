@@ -200,6 +200,14 @@ class ApiErrorCode(StrEnum):
     IMAGE_AUDIT_VERIFICATION_LIMIT_EXCEEDED = "image_audit_verification_limit_exceeded"
     IMAGE_AUDIT_UNSAFE_TARGET_BLOCKED = "image_audit_unsafe_target_blocked"
     IMAGE_AUDIT_QUERY_FAILED = "image_audit_query_failed"
+    STRUCTURED_DATA_AUDIT_RUN_NOT_FOUND = "structured_data_audit_run_not_found"
+    STRUCTURED_DATA_AUDIT_RUN_NOT_TERMINAL = "structured_data_audit_run_not_terminal"
+    STRUCTURED_DATA_AUDIT_NOT_FOUND = "structured_data_audit_not_found"
+    STRUCTURED_DATA_AUDIT_ALREADY_TERMINAL = "structured_data_audit_already_terminal"
+    STRUCTURED_DATA_AUDIT_INVALID_PAGE_SIZE = "structured_data_audit_invalid_page_size"
+    STRUCTURED_DATA_AUDIT_INVALID_CURSOR = "structured_data_audit_invalid_cursor"
+    STRUCTURED_DATA_AUDIT_CURSOR_FILTER_MISMATCH = "structured_data_audit_cursor_filter_mismatch"
+    STRUCTURED_DATA_AUDIT_QUERY_FAILED = "structured_data_audit_query_failed"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):
