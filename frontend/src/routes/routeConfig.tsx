@@ -8,6 +8,7 @@ import { LinkAuditsPage } from '../pages/LinkAuditPages';
 import { InternalLinksPage } from '../pages/InternalLinkPages';
 import { ImageAuditsPage } from '../pages/ImageAuditPages';
 import { StructuredDataAuditsPage } from '../pages/StructuredDataAuditPages';
+import { MigrationQaProjectsPage } from '../pages/MigrationQaPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -18,6 +19,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/migration-qa',
+    label: 'Migration QA',
+    description: 'Review website migration continuity and redirect evidence',
+    permission: 'runs.view',
+    component: MigrationQaProjectsPage,
+  },
   {
     path: '/structured-data-audits',
     label: 'Structured Data',

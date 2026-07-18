@@ -1,4 +1,4 @@
-"""Explicit local-only authenticated browser-QA composition for Phases 21 through 25."""
+"""Explicit local-only authenticated browser-QA composition for Phases 21 through 26."""
 
 # ruff: noqa: PLR0913, T201, TRY003 - explicit QA CLI reports safe values and fails with operator guidance.
 
@@ -47,6 +47,7 @@ from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.job import JobState
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
+from musimack_tools.domain.migration_qa import MigrationQaConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.domain.run import RunStage, RunStageRecord, RunStageState
@@ -59,12 +60,14 @@ from musimack_tools.jobs.registry import InMemoryJobRegistry
 from musimack_tools.jobs.service import InternalJobService
 from musimack_tools.link_audit.service import LinkAuditService
 from musimack_tools.metadata_audit.service import MetadataAuditService
+from musimack_tools.migration_qa.service import MigrationQaService
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.history_repository import SQLAlchemyHistoryRepository
 from musimack_tools.persistence.image_audit_repository import SQLAlchemyImageAuditRepository
 from musimack_tools.persistence.internal_link_repository import SQLAlchemyInternalLinkRepository
 from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
+from musimack_tools.persistence.migration_qa_repository import SQLAlchemyMigrationQaRepository
 from musimack_tools.persistence.models import CrawlPageEvidenceModel
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
 from musimack_tools.persistence.sitemap_audit_repository import SQLAlchemySitemapAuditRepository
@@ -255,6 +258,11 @@ def create_qa_app() -> FastAPI:
         SQLAlchemyStructuredDataAuditRepository(runtime),
         artifacts,
     )
+    migration_qa = MigrationQaService(
+        configuration.migration_qa,
+        SQLAlchemyMigrationQaRepository(runtime),
+        artifacts,
+    )
     app = create_production_app(
         application_service,
         settings,
@@ -268,6 +276,7 @@ def create_qa_app() -> FastAPI:
         internal_link_audits=internal_links,
         image_audits=images,
         structured_data_audits=structured_data,
+        migration_qa=migration_qa,
     )
 
     async def shutdown() -> None:
@@ -782,7 +791,7 @@ def seed() -> None:
         print(f"Seeded QA crawl run: {snapshot.run_id}")
         print(
             "Seeded Phase 22 link, Phase 23 internal-link, Phase 24 image, "
-            "and Phase 25 structured-data fixtures"
+            "Phase 25 structured-data, and Phase 26 migration-QA fixtures"
         )
         print(f"Deterministic sitemap fixture: {_SITEMAP}")
     finally:
@@ -819,6 +828,12 @@ def _persistence_configuration() -> PersistenceConfiguration:
             minimum_sitewide_pages=2,
         ),
         structured_data_audit=StructuredDataAuditConfiguration(
+            enabled=True,
+            default_page_size=5,
+            maximum_page_size=50,
+            minimum_sitewide_pages=2,
+        ),
+        migration_qa=MigrationQaConfiguration(
             enabled=True,
             default_page_size=5,
             maximum_page_size=50,

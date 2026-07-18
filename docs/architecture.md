@@ -1,5 +1,9 @@
 # Foundation Architecture
 
+## Phase 26 migration QA boundary
+
+Website migration QA is an opt-in layer over durable crawl evidence. The domain owns versioned mapping, finding, recommendation, readiness, pagination, and export policies; persistence owns 11 normalized `migration_*` tables under revision `0013_website_migration_qa`; the private API owns `/api/internal/v1/migrations/qa`; and the protected React workspace owns presentation. The layer has no network adapter and cannot mutate a live site. Planned redirect-map values and observed crawl values stay separate in storage, API projections, and exports.
+
 ## Phase 25 structured-data evidence and analysis boundary
 
 Phase 25 extends the accepted HTML parser and page-evidence transaction with bounded, inert JSON-LD, Microdata, and RDFa blocks. Migration `0012_structured_data_audit` stores immutable crawl evidence plus derived blocks, entities, properties, references, duplicate groups, page summaries, findings, versioned profile observations, recommendations, exports, and lifecycle events. No second parser, crawler, network client, or markup execution path exists. The private API is mounted solely below `/api/internal/v1/audits/structured-data`. See [structured-data-audit.md](structured-data-audit.md) and [ADR 0071](decisions/0071-durable-structured-data-evidence-and-audit.md).

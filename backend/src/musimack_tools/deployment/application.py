@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from musimack_tools.internal_link.service import InternalLinkAuditService
     from musimack_tools.link_audit.service import LinkAuditService
     from musimack_tools.metadata_audit.service import MetadataAuditService
+    from musimack_tools.migration_qa.service import MigrationQaService
     from musimack_tools.sitemap_audit.service import SitemapAuditService
     from musimack_tools.structured_data_audit.service import StructuredDataAuditService
 
@@ -76,6 +77,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     internal_link_audits: InternalLinkAuditService | None = None,
     image_audits: ImageAuditService | None = None,
     structured_data_audits: StructuredDataAuditService | None = None,
+    migration_qa: MigrationQaService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -355,6 +357,27 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.structured_data_audit_diagnostics = structured_diagnostics
+    if migration_qa is not None and migration_qa.configuration.enabled:
+        from musimack_tools.api.migration_qa import create_migration_qa_router  # noqa: PLC0415
+
+        migration_diagnostics = migration_qa.diagnostics()
+        if (
+            not migration_diagnostics["persistence_ready"]
+            or not migration_diagnostics["migration_ready"]
+        ):
+            raise _configuration_error("migration_qa_not_ready")
+        application.include_router(
+            create_migration_qa_router(
+                migration_qa,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
+        application.state.migration_qa_diagnostics = migration_diagnostics
 
     add_internal_cors(
         application,

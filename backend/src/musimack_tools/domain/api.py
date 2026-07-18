@@ -208,6 +208,13 @@ class ApiErrorCode(StrEnum):
     STRUCTURED_DATA_AUDIT_INVALID_CURSOR = "structured_data_audit_invalid_cursor"
     STRUCTURED_DATA_AUDIT_CURSOR_FILTER_MISMATCH = "structured_data_audit_cursor_filter_mismatch"
     STRUCTURED_DATA_AUDIT_QUERY_FAILED = "structured_data_audit_query_failed"
+    MIGRATION_QA_RUN_NOT_FOUND = "migration_qa_run_not_found"
+    MIGRATION_QA_PROJECT_NOT_FOUND = "migration_qa_project_not_found"
+    MIGRATION_QA_MISSING_EVIDENCE = "migration_qa_missing_evidence"
+    MIGRATION_QA_ALREADY_TERMINAL = "migration_qa_already_terminal"
+    MIGRATION_QA_INVALID_PAGE_SIZE = "migration_qa_invalid_page_size"
+    MIGRATION_QA_CURSOR_MISMATCH = "migration_qa_cursor_mismatch"
+    MIGRATION_QA_QUERY_FAILED = "migration_qa_query_failed"
 
 
 class ResponseDiagnosticsPolicy(StrEnum):

@@ -10,6 +10,7 @@ from musimack_tools.domain.image_audit import ImageAuditConfiguration
 from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
+from musimack_tools.domain.migration_qa import MigrationQaConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.sitemap_audit import SitemapAuditConfiguration
 from musimack_tools.domain.structured_data_audit import StructuredDataAuditConfiguration
@@ -134,6 +135,7 @@ class PersistenceConfiguration:
     structured_data_audit: StructuredDataAuditConfiguration = field(
         default_factory=StructuredDataAuditConfiguration
     )
+    migration_qa: MigrationQaConfiguration = field(default_factory=MigrationQaConfiguration)
     persistence_version: str = PERSISTENCE_VERSION
     schema_version: str = DATABASE_SCHEMA_VERSION
 

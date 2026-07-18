@@ -24,6 +24,7 @@ from musimack_tools.persistence.migrations import (
     PERSISTENCE_HEAD_REVISION,
     SITEMAP_AUDIT_REVISION,
     STRUCTURED_DATA_AUDIT_REVISION,
+    WEBSITE_MIGRATION_QA_REVISION,
     alembic_configuration,
     current_revision,
     downgrade_to_base,
@@ -171,6 +172,17 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "structured_data_recommendations",
             "structured_data_exports",
             "structured_data_events",
+            "migration_qa_projects",
+            "migration_source_rows",
+            "migration_redirect_map_rows",
+            "migration_url_mappings",
+            "migration_redirect_observations",
+            "migration_page_comparisons",
+            "migration_findings",
+            "migration_recommendations",
+            "migration_sitewide_summaries",
+            "migration_exports",
+            "migration_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -318,6 +330,23 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             ("structured_data_exports", "structured_data_audits"),
             ("structured_data_exports", "artifact_records"),
             ("structured_data_events", "structured_data_audits"),
+            ("migration_qa_projects", "jobs"),
+            ("migration_qa_projects", "runs"),
+            ("migration_source_rows", "migration_qa_projects"),
+            ("migration_redirect_map_rows", "migration_qa_projects"),
+            ("migration_url_mappings", "migration_qa_projects"),
+            ("migration_url_mappings", "migration_source_rows"),
+            ("migration_redirect_observations", "migration_qa_projects"),
+            ("migration_redirect_observations", "migration_url_mappings"),
+            ("migration_page_comparisons", "migration_qa_projects"),
+            ("migration_page_comparisons", "migration_url_mappings"),
+            ("migration_findings", "migration_qa_projects"),
+            ("migration_findings", "migration_url_mappings"),
+            ("migration_recommendations", "migration_qa_projects"),
+            ("migration_sitewide_summaries", "migration_qa_projects"),
+            ("migration_exports", "migration_qa_projects"),
+            ("migration_exports", "artifact_records"),
+            ("migration_events", "migration_qa_projects"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -800,7 +829,7 @@ def test_structured_data_migration_upgrades_downgrades_and_reupgrades_from_image
             "ck_structured_recommendation_occurrences",
             "ck_structured_recommendation_affected_pages",
         } <= constraint_names
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
     finally:
         engine.dispose()
     command.downgrade(configuration, IMAGE_ALT_TEXT_AUDIT_REVISION)
@@ -812,6 +841,88 @@ def test_structured_data_migration_upgrades_downgrades_and_reupgrades_from_image
     finally:
         engine.dispose()
     command.upgrade(configuration, STRUCTURED_DATA_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_migration_qa_upgrades_downgrades_and_reupgrades_from_structured_data(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "migration-qa-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    phase_tables = {
+        "migration_qa_projects",
+        "migration_source_rows",
+        "migration_redirect_map_rows",
+        "migration_url_mappings",
+        "migration_redirect_observations",
+        "migration_page_comparisons",
+        "migration_findings",
+        "migration_recommendations",
+        "migration_sitewide_summaries",
+        "migration_exports",
+        "migration_events",
+    }
+    command.upgrade(configuration, WEBSITE_MIGRATION_QA_REVISION)
+    engine = create_engine(url)
+    try:
+        inspector = inspect(engine)
+        assert current_revision(engine) == WEBSITE_MIGRATION_QA_REVISION
+        assert phase_tables <= set(inspector.get_table_names())
+        assert schema_is_current(engine)
+        assert {"confidence", "requires_human_review"} <= {
+            column["name"] for column in inspector.get_columns("migration_findings")
+        }
+        assert {
+            "stable_id",
+            "source_url",
+            "destination_url",
+            "source_evidence_ids_json",
+            "destination_evidence_ids_json",
+            "reason",
+            "bounded_evidence_json",
+            "occurrence_count",
+            "affected_page_count",
+            "sequence",
+        } <= {column["name"] for column in inspector.get_columns("migration_findings")}
+        assert {
+            "stable_id",
+            "severity",
+            "scope",
+            "source_url",
+            "destination_url",
+            "supporting_evidence_json",
+            "sequence",
+        } <= {column["name"] for column in inspector.get_columns("migration_recommendations")}
+        assert {
+            "ix_migration_finding_project_mapping",
+            "ix_migration_finding_project_code",
+            "ix_migration_finding_project_category",
+            "ix_migration_finding_project_severity",
+            "ix_migration_finding_project_confidence",
+        } <= {item["name"] for item in inspector.get_indexes("migration_findings")}
+        assert {
+            "ix_migration_recommendation_project_action",
+            "ix_migration_recommendation_project_filter",
+        } <= {item["name"] for item in inspector.get_indexes("migration_recommendations")}
+        assert "ck_migration_finding_confidence" in {
+            item["name"] for item in inspector.get_check_constraints("migration_findings")
+        }
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, STRUCTURED_DATA_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables.isdisjoint(set(inspect(engine).get_table_names()))
+        assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, WEBSITE_MIGRATION_QA_REVISION)
     engine = create_engine(url)
     try:
         assert phase_tables <= set(inspect(engine).get_table_names())

@@ -23,7 +23,8 @@ BROKEN_LINK_REDIRECT_ANALYSIS_REVISION = "0009_broken_link_redirect_analysis"
 INTERNAL_LINK_ANALYSIS_REVISION = "0010_internal_link_analysis"
 IMAGE_ALT_TEXT_AUDIT_REVISION = "0011_image_alt_text_audit"
 STRUCTURED_DATA_AUDIT_REVISION = "0012_structured_data_audit"
-PERSISTENCE_HEAD_REVISION = STRUCTURED_DATA_AUDIT_REVISION
+WEBSITE_MIGRATION_QA_REVISION = "0013_website_migration_qa"
+PERSISTENCE_HEAD_REVISION = WEBSITE_MIGRATION_QA_REVISION
 
 
 def alembic_configuration(database_url: str, *, backend_root: Path) -> Config:

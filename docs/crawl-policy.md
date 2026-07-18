@@ -1,5 +1,9 @@
 # Current Crawl Policy
 
+## Migration QA evidence reuse
+
+Phase 26 does not broaden crawl scope or add a fetch path. Migration QA consumes retained evidence produced under accepted crawl and audit policies. Uploaded inventories and redirect maps are inert data: URLs are normalized and scope-classified but never fetched. Missing or incompatible evidence remains explicit and indeterminate.
+
 ## Audit reuse of crawl evidence
 
 Metadata audits consume the bounded Phase 20A projection only after a run is terminal. They issue no DNS, HTTP, redirect, robots, or parsing work. Failed fetches never imply missing HTML metadata; non-HTML pages never receive HTML metadata findings; missing evidence remains distinct from empty evidence; partial or truncated evidence carries explicit partial determinacy.

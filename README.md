@@ -1,5 +1,11 @@
 # Musimack SEO Toolkit
 
+## Website migration QA
+
+Phase 26 adds an opt-in **Migration QA** workflow over retained crawl evidence. It ingests bounded source-inventory and redirect-map CSV/TSV text, keeps planned and observed redirects separate, maps source URLs deterministically, and reports conservative continuity findings. It never fetches a live page or writes redirect configuration.
+
+The private API is confined to `/api/internal/v1/migrations/qa`; viewers require `runs.view`, while every mutation and export requires `jobs.submit`. Six CSV exports, complete versioned JSON, and an 18-section Markdown report use authenticated artifact storage. See [`docs/website-migration-qa.md`](docs/website-migration-qa.md) and the [loopback browser QA guide](docs/migration-qa-browser-qa.md).
+
 ## Image and alt-text audit
 
 Phase 25 is implemented for review. The opt-in **Structured Data** workflow inventories bounded parser-owned JSON-LD, Microdata, and RDFa evidence, then derives syntax, entity, property, reference, profile, duplicate, page, consistency, and recommendation observations. Markup is never executed and profiles explicitly do not certify search-engine rich-result eligibility. Phase 24 **Images & Alt Text** and earlier audits remain available unchanged.

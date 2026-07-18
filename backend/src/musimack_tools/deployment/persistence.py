@@ -11,6 +11,7 @@ from musimack_tools.domain.image_audit import ImageAuditConfiguration
 from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
+from musimack_tools.domain.migration_qa import MigrationQaConfiguration
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import (
     PersistenceConfiguration,
@@ -120,6 +121,18 @@ class PersistenceSettings(BaseSettings):
     structured_data_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
     structured_data_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
     structured_data_audit_minimum_sitewide_pages: int = Field(default=3, ge=1, le=10_000)
+    migration_qa_enabled: bool = False
+    migration_qa_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    migration_qa_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
+    migration_qa_maximum_inventory_rows: int = Field(default=50_000, ge=1, le=1_000_000)
+    migration_qa_maximum_redirect_rows: int = Field(default=50_000, ge=1, le=1_000_000)
+    migration_qa_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    migration_qa_maximum_input_bytes: int = Field(default=10_000_000, ge=1, le=100_000_000)
+    migration_qa_retention_days: int = Field(default=30, ge=1, le=3_650)
+    migration_qa_preserve_query_parameters: bool = True
+    migration_qa_compare_fragments: bool = False
+    migration_qa_minimum_sitewide_pages: int = Field(default=10, ge=1, le=100_000)
+    migration_qa_material_content_change_ratio: float = Field(default=0.35, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -230,5 +243,19 @@ class PersistenceSettings(BaseSettings):
                 maximum_export_rows=self.structured_data_audit_maximum_export_rows,
                 retention_days=self.structured_data_audit_retention_days,
                 minimum_sitewide_pages=self.structured_data_audit_minimum_sitewide_pages,
+            ),
+            migration_qa=MigrationQaConfiguration(
+                enabled=self.migration_qa_enabled,
+                default_page_size=self.migration_qa_default_page_size,
+                maximum_page_size=self.migration_qa_maximum_page_size,
+                maximum_inventory_rows=self.migration_qa_maximum_inventory_rows,
+                maximum_redirect_rows=self.migration_qa_maximum_redirect_rows,
+                maximum_export_rows=self.migration_qa_maximum_export_rows,
+                maximum_input_bytes=self.migration_qa_maximum_input_bytes,
+                retention_days=self.migration_qa_retention_days,
+                preserve_query_parameters=self.migration_qa_preserve_query_parameters,
+                compare_fragments=self.migration_qa_compare_fragments,
+                minimum_sitewide_pages=self.migration_qa_minimum_sitewide_pages,
+                material_content_change_ratio=self.migration_qa_material_content_change_ratio,
             ),
         )
