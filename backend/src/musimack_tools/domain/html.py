@@ -199,6 +199,38 @@ class LinkRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ImageRecord:
+    """One bounded parser-owned image occurrence in document order."""
+
+    occurrence_index: int
+    element_type: str
+    source_kind: str
+    raw_src: str | None
+    normalized_url: str | None
+    raw_srcset: str | None
+    srcset_candidates: tuple[tuple[str, str | None], ...]
+    sizes: str | None
+    alt_present: bool
+    alt_value: str | None
+    title_value: str | None
+    width: str | None
+    height: str | None
+    loading: str | None
+    decoding: str | None
+    fetch_priority: str | None
+    linked: bool
+    parent_link_url: str | None
+    decorative_explicit: bool
+    role: str | None
+    aria_hidden: str | None
+    in_scope: bool | None
+    scope_reason_code: str | None
+    unsupported_scheme: bool
+    data_image: bool
+    parse_warning: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class HtmlParseResult:
     """Complete deterministic evidence from one fetched HTML document."""
 
@@ -221,3 +253,4 @@ class HtmlParseResult:
     parser_name: str
     body_byte_count: int
     parse_duration_seconds: float
+    images: tuple[ImageRecord, ...] = ()

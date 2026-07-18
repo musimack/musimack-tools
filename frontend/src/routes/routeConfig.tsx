@@ -6,6 +6,7 @@ import { AuditsPage } from '../pages/AuditPages';
 import { SitemapAuditsPage } from '../pages/SitemapAuditPages';
 import { LinkAuditsPage } from '../pages/LinkAuditPages';
 import { InternalLinksPage } from '../pages/InternalLinkPages';
+import { ImageAuditsPage } from '../pages/ImageAuditPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -16,6 +17,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/image-audits',
+    label: 'Images & Alt Text',
+    description: 'Audit image resources and accessible alternatives',
+    permission: 'runs.view',
+    component: ImageAuditsPage,
+  },
   {
     path: '/internal-links',
     label: 'Internal Links',

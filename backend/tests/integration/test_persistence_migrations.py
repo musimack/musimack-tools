@@ -16,6 +16,7 @@ from musimack_tools.persistence.migrations import (
     AUTHENTICATION_AUTHORIZATION_REVISION,
     BROKEN_LINK_REDIRECT_ANALYSIS_REVISION,
     DURABLE_EXECUTION_REVISION,
+    IMAGE_ALT_TEXT_AUDIT_REVISION,
     INITIAL_PERSISTENCE_REVISION,
     INTERNAL_LINK_ANALYSIS_REVISION,
     METADATA_AUDIT_REVISION,
@@ -146,6 +147,16 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "internal_link_opportunities",
             "internal_link_exports",
             "internal_link_events",
+            "crawl_image_evidence",
+            "image_audits",
+            "image_audit_resources",
+            "image_occurrence_analyses",
+            "image_duplicate_groups",
+            "image_page_summaries",
+            "image_findings",
+            "image_recommendations",
+            "image_audit_exports",
+            "image_audit_events",
             "runs",
             "run_stages",
             "summary_metadata",
@@ -252,6 +263,30 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             ("internal_link_exports", "internal_link_audits"),
             ("internal_link_exports", "artifact_records"),
             ("internal_link_events", "internal_link_audits"),
+            ("crawl_image_evidence", "jobs"),
+            ("crawl_image_evidence", "runs"),
+            ("crawl_image_evidence", "crawl_page_evidence"),
+            ("image_audits", "jobs"),
+            ("image_audits", "runs"),
+            ("image_audit_resources", "image_audits"),
+            ("image_occurrence_analyses", "image_audits"),
+            ("image_occurrence_analyses", "crawl_image_evidence"),
+            ("image_occurrence_analyses", "crawl_page_evidence"),
+            ("image_occurrence_analyses", "image_audit_resources"),
+            ("image_duplicate_groups", "image_audits"),
+            ("image_page_summaries", "image_audits"),
+            ("image_page_summaries", "crawl_page_evidence"),
+            ("image_findings", "image_audits"),
+            ("image_findings", "image_audit_resources"),
+            ("image_findings", "image_occurrence_analyses"),
+            ("image_findings", "image_page_summaries"),
+            ("image_findings", "image_duplicate_groups"),
+            ("image_recommendations", "image_audits"),
+            ("image_recommendations", "image_occurrence_analyses"),
+            ("image_recommendations", "image_audit_resources"),
+            ("image_audit_exports", "image_audits"),
+            ("image_audit_exports", "artifact_records"),
+            ("image_audit_events", "image_audits"),
             ("runs", "configuration_snapshots"),
             ("run_stages", "runs"),
             ("summary_metadata", "runs"),
@@ -619,6 +654,50 @@ def test_link_audit_migration_downgrades_only_phase_22_tables(tmp_path: Path) ->
     try:
         assert phase_tables <= set(inspect(engine).get_table_names())
         assert not schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_image_audit_migration_upgrades_downgrades_and_reupgrades_from_internal_links(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "image-audit-migration.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    phase_tables = {
+        "crawl_image_evidence",
+        "image_audits",
+        "image_audit_resources",
+        "image_occurrence_analyses",
+        "image_duplicate_groups",
+        "image_page_summaries",
+        "image_findings",
+        "image_recommendations",
+        "image_audit_exports",
+        "image_audit_events",
+    }
+    command.upgrade(configuration, IMAGE_ALT_TEXT_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == IMAGE_ALT_TEXT_AUDIT_REVISION
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, INTERNAL_LINK_ANALYSIS_REVISION)
+    engine = create_engine(url)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert phase_tables.isdisjoint(tables)
+        assert "internal_link_audits" in tables
+        assert current_revision(engine) == INTERNAL_LINK_ANALYSIS_REVISION
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, IMAGE_ALT_TEXT_AUDIT_REVISION)
+    engine = create_engine(url)
+    try:
+        assert phase_tables <= set(inspect(engine).get_table_names())
+        assert schema_is_current(engine)
     finally:
         engine.dispose()
 

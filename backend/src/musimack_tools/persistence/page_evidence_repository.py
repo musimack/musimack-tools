@@ -34,6 +34,7 @@ from musimack_tools.domain.page_evidence import (
     encode_cursor,
     project_crawl_result,
 )
+from musimack_tools.persistence.image_audit_models import CrawlImageEvidenceModel
 from musimack_tools.persistence.link_audit_models import CrawlLinkEvidenceModel
 from musimack_tools.persistence.models import (
     CrawlPageEvidenceEventModel,
@@ -56,7 +57,7 @@ _MAX_URL_FILTER_LENGTH = 256
 _LOGGER = logging.getLogger(__name__)
 
 
-def persist_projected_evidence(
+def persist_projected_evidence(  # noqa: C901
     session: Session,
     job_id: str,
     run_id: str,
@@ -87,6 +88,16 @@ def persist_projected_evidence(
         )
         expected_links = tuple(link.link_id for link in projection.links)
         if link_identifiers != expected_links:
+            raise ValueError(PageEvidenceReasonCode.CONFLICT)
+        image_identifiers = tuple(
+            session.scalars(
+                select(CrawlImageEvidenceModel.image_id)
+                .where(CrawlImageEvidenceModel.run_id == run_id)
+                .order_by(CrawlImageEvidenceModel.occurrence_sequence)
+            )
+        )
+        expected_images = tuple(image.image_id for image in projection.images)
+        if image_identifiers != expected_images:
             raise ValueError(PageEvidenceReasonCode.CONFLICT)
         _LOGGER.info(
             "page_evidence_persistence_idempotent job_id=%s run_id=%s page_count=%d",
@@ -153,6 +164,17 @@ def persist_projected_evidence(
             job_id,
             run_id,
             min(configuration.batch_size, len(projection.links) - start),
+        )
+
+    for start in range(0, len(projection.images), configuration.batch_size):
+        for image in projection.images[start : start + configuration.batch_size]:
+            session.add(CrawlImageEvidenceModel(**asdict(image)))
+        session.flush()
+        _LOGGER.info(
+            "image_evidence_batch_persisted job_id=%s run_id=%s batch_count=%d",
+            job_id,
+            run_id,
+            min(configuration.batch_size, len(projection.images) - start),
         )
 
     pages = projection.pages

@@ -25,11 +25,13 @@ PAGE_EVIDENCE_PROJECTION_VERSION = "seo-toolkit-page-crawl-evidence-projection-v
 PAGE_EVIDENCE_PAGINATION_VERSION = "seo-toolkit-page-crawl-evidence-pagination-v1"
 PAGE_EVIDENCE_ORDERING = "crawl_discovery_sequence_asc_url_identity_asc-v1"
 LINK_EVIDENCE_VERSION = "seo-toolkit-link-evidence-v1"
+IMAGE_EVIDENCE_VERSION = "seo-toolkit-image-evidence-v1"
 _MAX_BATCH_SIZE = 10_000
 _MAX_PAGE_SIZE = 1_000
 _MAX_PAGES_PER_RUN = 1_000_000
 _MAX_REDIRECT_HOPS = 100
 _MAX_WARNINGS = 1_000
+_MAX_SRCSET_CANDIDATES = 100
 _MIN_METADATA_CHARS = 64
 _MAX_METADATA_CHARS = 65_536
 _MAX_RETENTION_DAYS = 3_650
@@ -280,6 +282,57 @@ class PageLinkEvidenceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PageImageEvidenceRecord:
+    """One bounded parser-authoritative image occurrence; bodies are never retained."""
+
+    image_id: str
+    job_id: str
+    run_id: str
+    source_evidence_id: str
+    source_requested_url: str
+    source_final_url: str | None
+    source_url_identity: str
+    source_discovery_sequence: int
+    source_crawl_depth: int
+    element_sequence: int
+    occurrence_sequence: int
+    element_type: str
+    source_kind: str
+    raw_src: str | None
+    resolved_src: str | None
+    image_identity: str | None
+    raw_srcset: str | None
+    srcset_candidates_json: str
+    primary_candidate: str | None
+    sizes: str | None
+    alt_present: bool
+    alt_raw: str | None
+    alt_normalized: str | None
+    title_value: str | None
+    width_value: str | None
+    height_value: str | None
+    loading_value: str | None
+    decoding_value: str | None
+    fetch_priority: str | None
+    linked: bool
+    parent_link_url: str | None
+    decorative_explicit: bool
+    role_value: str | None
+    aria_hidden_value: str | None
+    in_scope: bool | None
+    scope_reason_code: str | None
+    source_scheme: str | None
+    data_media_type: str | None
+    data_byte_length_estimate: int | None
+    data_fingerprint: str | None
+    unsupported_scheme: bool
+    parse_warning: str | None
+    value_truncated: bool
+    created_at: datetime
+    evidence_version: str = IMAGE_EVIDENCE_VERSION
+
+
+@dataclass(frozen=True, slots=True)
 class PageEvidenceRunProjection:
     job_id: str
     run_id: str
@@ -287,6 +340,7 @@ class PageEvidenceRunProjection:
     source_page_count: int
     truncated: bool
     links: tuple[PageLinkEvidenceRecord, ...] = ()
+    images: tuple[PageImageEvidenceRecord, ...] = ()
     ordering: str = PAGE_EVIDENCE_ORDERING
 
 
@@ -469,8 +523,10 @@ def project_crawl_result(
     )
     pages = tuple(_project_page(context, record) for record in selected)
     links: list[PageLinkEvidenceRecord] = []
+    images: list[PageImageEvidenceRecord] = []
     for record, page in zip(selected, pages, strict=True):
         links.extend(_project_links(context, record, page, len(links)))
+        images.extend(_project_images(context, record, page, len(images)))
     return PageEvidenceRunProjection(
         job_id=job_id,
         run_id=run_id,
@@ -478,7 +534,110 @@ def project_crawl_result(
         source_page_count=len(ordered),
         truncated=len(selected) != len(ordered),
         links=tuple(links),
+        images=tuple(images),
     )
+
+
+def _project_images(
+    context: _ProjectionContext,
+    record: UrlCrawlRecord,
+    page: PageEvidenceRecord,
+    start_sequence: int,
+) -> tuple[PageImageEvidenceRecord, ...]:
+    parse = record.parse_result
+    if parse is None:
+        return ()
+    values: list[PageImageEvidenceRecord] = []
+    for offset, image in enumerate(parse.images):
+        raw_src, raw_truncated = _bounded(image.raw_src, 4_096)
+        scheme = urlsplit(image.normalized_url or image.raw_src or "").scheme.casefold() or None
+        media_type: str | None = None
+        byte_length: int | None = None
+        data_fingerprint: str | None = None
+        if image.data_image and image.raw_src:
+            header, _, payload = image.raw_src.partition(",")
+            media_type = _bounded(header[5:].split(";", 1)[0] or None, 128)[0]
+            byte_length = len(payload)
+            data_fingerprint = hashlib.sha256(image.raw_src.encode()).hexdigest()[:24]
+            raw_src = (
+                f"data:{media_type or 'unknown'};length={byte_length};sha256={data_fingerprint}"
+            )
+        resolved, resolved_truncated = _bounded(image.normalized_url, 4_096)
+        raw_srcset, srcset_truncated = _bounded(image.raw_srcset, 8_192)
+        sizes, sizes_truncated = _bounded(image.sizes, 2_048)
+        alt_raw, alt_truncated = _bounded(image.alt_value, 1_024)
+        title, title_truncated = _bounded(image.title_value, 1_024)
+        candidates = [
+            [url[:4_096], descriptor]
+            for url, descriptor in image.srcset_candidates[:_MAX_SRCSET_CANDIDATES]
+        ]
+        primary = resolved or (candidates[0][0] if len(candidates) == 1 else None)
+        values.append(
+            PageImageEvidenceRecord(
+                image_id=hashlib.sha256(
+                    f"{page.evidence_id}\0{image.occurrence_index}\0{raw_src or ''}".encode()
+                ).hexdigest(),
+                job_id=context.job_id,
+                run_id=context.run_id,
+                source_evidence_id=page.evidence_id,
+                source_requested_url=page.requested_url,
+                source_final_url=page.final_url,
+                source_url_identity=page.requested_url_identity,
+                source_discovery_sequence=page.discovery_sequence,
+                source_crawl_depth=page.crawl_depth,
+                element_sequence=image.occurrence_index,
+                occurrence_sequence=start_sequence + offset,
+                element_type=_bounded(image.element_type, 32)[0] or "img",
+                source_kind=_bounded(image.source_kind, 32)[0] or "src",
+                raw_src=raw_src,
+                resolved_src=resolved,
+                image_identity=_url_identity(resolved) if resolved else data_fingerprint,
+                raw_srcset=raw_srcset,
+                srcset_candidates_json=_safe_json(candidates, 16_384),
+                primary_candidate=_bounded(primary, 4_096)[0],
+                sizes=sizes,
+                alt_present=image.alt_present,
+                alt_raw=alt_raw,
+                alt_normalized=_bounded(
+                    " ".join((image.alt_value or "").strip().split())
+                    if image.alt_present
+                    else None,
+                    1_024,
+                )[0],
+                title_value=title,
+                width_value=_bounded(image.width, 64)[0],
+                height_value=_bounded(image.height, 64)[0],
+                loading_value=_bounded(image.loading, 32)[0],
+                decoding_value=_bounded(image.decoding, 32)[0],
+                fetch_priority=_bounded(image.fetch_priority, 32)[0],
+                linked=image.linked,
+                parent_link_url=_bounded(image.parent_link_url, 4_096)[0],
+                decorative_explicit=image.decorative_explicit,
+                role_value=_bounded(image.role, 64)[0],
+                aria_hidden_value=_bounded(image.aria_hidden, 16)[0],
+                in_scope=image.in_scope,
+                scope_reason_code=_bounded(image.scope_reason_code, 64)[0],
+                source_scheme=scheme,
+                data_media_type=media_type,
+                data_byte_length_estimate=byte_length,
+                data_fingerprint=data_fingerprint,
+                unsupported_scheme=image.unsupported_scheme,
+                parse_warning=_bounded(image.parse_warning, 64)[0],
+                value_truncated=any(
+                    (
+                        raw_truncated,
+                        resolved_truncated,
+                        srcset_truncated,
+                        sizes_truncated,
+                        alt_truncated,
+                        title_truncated,
+                        len(image.srcset_candidates) > _MAX_SRCSET_CANDIDATES,
+                    )
+                ),
+                created_at=context.persisted_at,
+            )
+        )
+    return tuple(values)
 
 
 def _project_links(

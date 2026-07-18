@@ -26,6 +26,7 @@ from musimack_tools.domain.html import (
     HtmlParseResult,
     HtmlWarning,
     HtmlWarningCode,
+    ImageRecord,
     LinkRecord,
     MetaRobotsRecord,
     RobotsDirective,
@@ -189,6 +190,7 @@ class HtmlMetadataParser:
         canonical = _extract_canonical(soup, document_url, base, warnings)
         robots = _extract_robots(soup, warnings)
         links = _extract_links(soup, document_url, base, scope, warnings)
+        images = _extract_images(soup, base, scope)
         duration = max(0.0, self._clock() - started_at)
         result = HtmlParseResult(
             final_document_url=document_url.normalized,
@@ -210,6 +212,7 @@ class HtmlMetadataParser:
             parser_name=_PARSER_NAME,
             body_byte_count=len(body),
             parse_duration_seconds=duration,
+            images=images,
         )
         _LOGGER.info(
             "html_parse_completed",
@@ -218,6 +221,7 @@ class HtmlMetadataParser:
                 "duration_seconds": duration,
                 "warning_count": len(warnings),
                 "link_count": len(links),
+                "image_count": len(images),
             },
         )
         return result
@@ -903,6 +907,142 @@ def _extract_links(
     if invalid_count:
         _LOGGER.info("html_invalid_links", extra={"invalid_link_count": invalid_count})
     return tuple(records)
+
+
+_LAZY_SOURCE_ATTRIBUTES = ("data-src", "data-lazy-src", "data-original")
+_LAZY_SRCSET_ATTRIBUTES = ("data-srcset",)
+_IMAGE_SCHEMES = frozenset({"http", "https", "data"})
+
+
+def _extract_images(  # noqa: C901, PLR0912, PLR0915
+    soup: BeautifulSoup,
+    base: BaseUrlEvidence,
+    scope: CrawlScopePolicy | None,
+) -> tuple[ImageRecord, ...]:
+    """Extract bounded img/picture evidence without browser candidate selection."""
+    effective_base = normalize_url(base.effective_url)
+    records: list[ImageRecord] = []
+    for index, image in enumerate(soup.find_all("img")):
+        native_src = _attribute(image, "src")
+        source_kind = "src"
+        raw_src = native_src
+        if not raw_src:
+            for attribute in _LAZY_SOURCE_ATTRIBUTES:
+                candidate = _attribute(image, attribute)
+                if candidate:
+                    raw_src, source_kind = candidate, attribute
+                    break
+        raw_srcset = _attribute(image, "srcset")
+        if not raw_srcset:
+            for attribute in _LAZY_SRCSET_ATTRIBUTES:
+                candidate = _attribute(image, attribute)
+                if candidate:
+                    raw_srcset = candidate
+                    break
+        picture = image.find_parent("picture")
+        source_candidates: list[tuple[str, str | None]] = []
+        if isinstance(picture, Tag):
+            for source in picture.find_all("source"):
+                source_candidates.extend(_parse_srcset(_attribute(source, "srcset")))
+                source_candidates.extend(_parse_srcset(_attribute(source, "data-srcset")))
+        candidates = tuple(source_candidates + list(_parse_srcset(raw_srcset)))
+        normalized: str | None = None
+        in_scope: bool | None = None
+        reason: str | None = None
+        unsupported = False
+        data_image = False
+        warning: str | None = None
+        if raw_src:
+            scheme = urlsplit(raw_src.strip()).scheme.casefold()
+            data_image = scheme == "data"
+            unsupported = bool(scheme and scheme not in _IMAGE_SCHEMES)
+            if data_image:
+                normalized = None
+            elif unsupported:
+                warning = "unsupported_image_scheme"
+            else:
+                try:
+                    target = normalize_url(raw_src, base=effective_base)
+                    normalized = target.normalized
+                    if scope is not None:
+                        decision = evaluate_scope(scope, target)
+                        in_scope = decision.allowed
+                        reason = decision.reason_code.value
+                except UrlNormalizationError:
+                    warning = "invalid_image_url"
+        elif len(candidates) == 1:
+            source_kind = "srcset"
+            try:
+                target = normalize_url(candidates[0][0], base=effective_base)
+                normalized = target.normalized
+                if scope is not None:
+                    decision = evaluate_scope(scope, target)
+                    in_scope = decision.allowed
+                    reason = decision.reason_code.value
+            except UrlNormalizationError:
+                warning = "invalid_image_url"
+        elif candidates:
+            warning = "responsive_candidates_without_primary_source"
+        else:
+            warning = "missing_image_source"
+        parent_link = image.find_parent("a")
+        parent_url: str | None = None
+        if isinstance(parent_link, Tag):
+            href = _attribute(parent_link, "href")
+            if href:
+                try:
+                    parent_url = normalize_url(href, base=effective_base).normalized
+                except UrlNormalizationError:
+                    parent_url = None
+        role = (_attribute(image, "role") or "").strip().casefold() or None
+        aria_hidden = (_attribute(image, "aria-hidden") or "").strip().casefold() or None
+        alt_present = image.has_attr("alt")
+        alt = _attribute(image, "alt") if alt_present else None
+        records.append(
+            ImageRecord(
+                occurrence_index=index,
+                element_type="picture-img" if isinstance(picture, Tag) else "img",
+                source_kind=source_kind,
+                raw_src=raw_src,
+                normalized_url=normalized,
+                raw_srcset=raw_srcset,
+                srcset_candidates=candidates,
+                sizes=_attribute(image, "sizes"),
+                alt_present=alt_present,
+                alt_value=alt,
+                title_value=_attribute(image, "title"),
+                width=_attribute(image, "width"),
+                height=_attribute(image, "height"),
+                loading=_attribute(image, "loading"),
+                decoding=_attribute(image, "decoding"),
+                fetch_priority=_attribute(image, "fetchpriority"),
+                linked=isinstance(parent_link, Tag),
+                parent_link_url=parent_url,
+                decorative_explicit=(alt_present and (alt or "") == "")
+                or role in {"presentation", "none"}
+                or aria_hidden == "true",
+                role=role,
+                aria_hidden=aria_hidden,
+                in_scope=in_scope,
+                scope_reason_code=reason,
+                unsupported_scheme=unsupported,
+                data_image=data_image,
+                parse_warning=warning,
+            )
+        )
+    return tuple(records)
+
+
+def _parse_srcset(raw: str | None) -> tuple[tuple[str, str | None], ...]:
+    if not raw:
+        return ()
+    values: list[tuple[str, str | None]] = []
+    for part in raw.split(","):
+        tokens = part.strip().split()
+        if not tokens:
+            continue
+        values.append((tokens[0][:4096], tokens[1][:32] if len(tokens) > 1 else None))
+    return tuple(values)
 
 
 def _attribute(tag: Tag, name: str) -> str | None:

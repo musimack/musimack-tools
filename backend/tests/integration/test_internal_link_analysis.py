@@ -247,5 +247,5 @@ def test_internal_link_routes_are_private_opt_in_and_authorized(tmp_path: Path) 
         runtime.dispose()
 
 
-def test_internal_link_migration_is_registered_head() -> None:
-    assert PERSISTENCE_HEAD_REVISION == "0010_internal_link_analysis"
+def test_successor_image_audit_migration_is_registered_head() -> None:
+    assert PERSISTENCE_HEAD_REVISION == "0011_image_alt_text_audit"

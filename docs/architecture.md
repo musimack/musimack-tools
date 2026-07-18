@@ -1,5 +1,9 @@
 # Foundation Architecture
 
+## Phase 24 image-evidence and analysis boundary
+
+Phase 24 extends the accepted HTML parser and page-evidence transaction with bounded image occurrences; it does not introduce a second parser or crawler. Migration `0011_image_alt_text_audit` stores that immutable occurrence authority plus derived resources, occurrence analyses, duplicate groups, page summaries, findings, recommendations, exports, and lifecycle events. Resource resolution prefers retained evidence and may use only an injected adapter over the accepted safe-fetch boundary. The private API is mounted solely below `/api/internal/v1/audits/images`. See [image-alt-text-audit.md](image-alt-text-audit.md) and [ADR 0070](decisions/0070-durable-image-evidence-and-audit.md).
+
 ## Phase 22 link-audit boundary
 
 Phase 22 narrowly extends terminal page-evidence persistence with parser-owned source-link occurrences. Its analysis service reads only persisted links, pages, redirect hops, and the original scope snapshot; it does not own network or HTML parsing. Migration `0009_broken_link_redirect_analysis` stores derived targets, chains, findings, recommendations, exports, and lifecycle events. The private API and protected frontend reuse accepted authentication, authorization, pagination, artifact, and route-composition authorities.

@@ -1,8 +1,12 @@
 # Musimack SEO Toolkit
 
-## Broken-link and redirect analysis
+## Image and alt-text audit
 
-Phase 23 is implemented for human review. The opt-in **Internal Links** workflow derives durable page metrics, reachability, orphan, hub, authority, anchor, and opportunity evidence from one terminal crawl. It reuses parser-owned link occurrences and performs no new crawl, DNS request, fetch, HTML parse, semantic inference, or live-site change. Phase 22 **Link Audits** remain available for broken targets and redirects.
+Phase 24 is implemented for human review. The opt-in **Images & Alt Text** workflow inventories parser-owned image occurrences, resolves repeated resources once, classifies alternative text, dimensions, loading, reuse, page impact, and evidence-backed recommendations. Internal verification can use only the existing bounded SSRF-safe fetch boundary; external images are not fetched by default. It performs no browser layout selection, CSS stylesheet parsing, binary duplicate detection, OCR, image recognition, generated alt text, or live-site change. Phase 23 **Internal Links** and earlier audits remain available unchanged.
+
+The private API is confined to `/api/internal/v1/audits/images`; viewers inspect retained results with `runs.view`, while creation, execution, and export generation require `jobs.submit`. Six CSV inventories, complete JSON, and Markdown use existing authenticated artifacts. See [`docs/image-alt-text-audit.md`](docs/image-alt-text-audit.md) and the [loopback QA guide](docs/image-audit-browser-qa.md).
+
+## Broken-link and redirect analysis
 
 The private API is confined to `/api/internal/v1/audits/links`; viewers inspect retained results with `runs.view`, while creation, execution, and export generation require `jobs.submit`. Broken-links CSV, redirect-chain CSV, redirect-map CSV, JSON, and Markdown outputs use existing authenticated artifacts. See [`docs/link-audit.md`](docs/link-audit.md) and the [loopback QA guide](docs/link-audit-browser-qa.md).
 

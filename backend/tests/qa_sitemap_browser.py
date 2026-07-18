@@ -1,4 +1,4 @@
-"""Explicit local-only authenticated browser-QA composition for Phases 21 and 22."""
+"""Explicit local-only authenticated browser-QA composition for Phases 21 through 24."""
 
 # ruff: noqa: PLR0913, T201, TRY003 - explicit QA CLI reports safe values and fails with operator guidance.
 
@@ -42,6 +42,7 @@ from musimack_tools.domain.fetching import (
     ResponseHeaders,
 )
 from musimack_tools.domain.history import HistoryConfiguration
+from musimack_tools.domain.image_audit import ImageAuditConfiguration
 from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.job import JobState
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
@@ -51,6 +52,7 @@ from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.domain.run import RunStage, RunStageRecord, RunStageState
 from musimack_tools.domain.sitemap_audit import DiscoveryOptions, SitemapAuditConfiguration
 from musimack_tools.history.service import HistoryService
+from musimack_tools.image_audit.service import ImageAuditService
 from musimack_tools.internal_link.service import InternalLinkAuditService
 from musimack_tools.jobs.registry import InMemoryJobRegistry
 from musimack_tools.jobs.service import InternalJobService
@@ -58,6 +60,7 @@ from musimack_tools.link_audit.service import LinkAuditService
 from musimack_tools.metadata_audit.service import MetadataAuditService
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.history_repository import SQLAlchemyHistoryRepository
+from musimack_tools.persistence.image_audit_repository import SQLAlchemyImageAuditRepository
 from musimack_tools.persistence.internal_link_repository import SQLAlchemyInternalLinkRepository
 from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
@@ -236,6 +239,11 @@ def create_qa_app() -> FastAPI:
         SQLAlchemyInternalLinkRepository(runtime),
         artifacts,
     )
+    images = ImageAuditService(
+        configuration.image_audit,
+        SQLAlchemyImageAuditRepository(runtime),
+        artifacts,
+    )
     app = create_production_app(
         application_service,
         settings,
@@ -247,6 +255,7 @@ def create_qa_app() -> FastAPI:
         sitemap_audits=sitemaps,
         link_audits=links,
         internal_link_audits=internal_links,
+        image_audits=images,
     )
 
     async def shutdown() -> None:
@@ -344,6 +353,31 @@ def seed() -> None:
                     "<a href='/concentrated-target'>Product guide</a>"
                     "<a href='/concentrated-target'>Overview</a>"
                     "<a href='/high-outlinks'>High outlinks</a>"
+                    "<a href='/buy'><img src='/image-broken.png'></a>"
+                    "<img src='/image-ok.png' alt='Good product image' "
+                    "width='120' height='60' loading='eager'>"
+                    "<img src='/image-ok.png' alt='' role='presentation' width='120' height='60'>"
+                    "<img src='/image-other.png' alt='   '>"
+                    "<img data-src='/image-ok.png' alt='image' loading='lazy'>"
+                    "<img src='/image-other.png' alt='image_2026_01'>"
+                    "<img src='/image-old.png' alt='Product hero'>"
+                    "<img src='/image-gone.png' alt='Gone image'>"
+                    "<img src='/image-error.png' alt='Server error image'>"
+                    "<img src='/image-to-broken.png' alt='Redirects to broken image'>"
+                    "<img src='/placeholder.png' alt='Placeholder'>"
+                    "<a href='/buy'><img src='/image-ok.png' alt=''></a>"
+                    "<img src='/image-ok.png' alt='https://example.com/image-ok.png'>"
+                    f"<img src='/image-ok.png' alt='{'x' * 300}'>"
+                    "<img src='/image-ok.png' alt='Product photograph' width='0' height='wide'>"
+                    "<img src='/image-ok.png' alt='Width missing' height='60'>"
+                    "<img src='/image-ok.png' alt='Height missing' width='120'>"
+                    "<img src='/image-other.png' alt='Both dimensions missing'>"
+                    "<img src='/image-ok.png' alt='Product photograph' loading='fast'>"
+                    "<img src='https://example.com:8443/private.png' alt='Out of scope'>"
+                    "<picture><source srcset='/image-ok.png 1x, /image-other.png 2x'>"
+                    "<img src='/image-ok.png' alt='Product photograph'></picture>"
+                    "<img src='data:image/png;base64,AAAA' alt='' aria-hidden='true'>"
+                    "<img src='https://outside.example/cdn.png' alt='External image'>"
                 ),
                 x_robots=(),
             ),
@@ -356,6 +390,9 @@ def seed() -> None:
                     "<title>Second source</title><a href='/sitewide-missing'>Repeated sitewide</a>"
                     "<a href='/authority-target'>Authority target</a>"
                     "<a href='/anchor-target'>click here</a>"
+                    "<img src='/image-ok.png' alt='Alternate product photograph'>"
+                    "<img src='/image-other.png' alt='Product photograph'>"
+                    "<img src='/image-broken.png' alt='Sitewide broken image'>"
                 ),
                 discovery_order=1,
                 x_robots=(),
@@ -399,6 +436,72 @@ def seed() -> None:
                 _scoped_page(
                     "https://example.com/sitewide-missing",
                     PageRecordOptions(status=404, discovery_order=7, x_robots=()),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/image-ok.png",
+                    PageRecordOptions(
+                        body=None,
+                        content_type="image/png",
+                        discovery_order=40,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/image-broken.png",
+                    PageRecordOptions(
+                        body=None,
+                        content_type="image/png",
+                        status=404,
+                        discovery_order=41,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/image-old.png",
+                    PageRecordOptions(
+                        body=None,
+                        content_type="image/png",
+                        final_url="https://example.com/image-ok.png",
+                        discovery_order=42,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/image-gone.png",
+                    PageRecordOptions(
+                        body=None,
+                        content_type="image/png",
+                        status=410,
+                        discovery_order=43,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/image-error.png",
+                    PageRecordOptions(
+                        body=None,
+                        content_type="image/png",
+                        status=500,
+                        discovery_order=44,
+                        x_robots=(),
+                    ),
+                    scope,
+                ),
+                _scoped_page(
+                    "https://example.com/image-to-broken.png",
+                    PageRecordOptions(
+                        body=None,
+                        content_type="image/png",
+                        status=404,
+                        final_url="https://example.com/image-broken.png",
+                        discovery_order=45,
+                        x_robots=(),
+                    ),
                     scope,
                 ),
                 _redirect_page(
@@ -617,7 +720,7 @@ def seed() -> None:
             )
         )
         print(f"Seeded QA crawl run: {snapshot.run_id}")
-        print("Seeded Phase 22 link fixture and 22-case Phase 23 internal-link fixture")
+        print("Seeded Phase 22 link, Phase 23 internal-link, and Phase 24 image fixtures")
         print(f"Deterministic sitemap fixture: {_SITEMAP}")
     finally:
         runtime.dispose()
@@ -645,6 +748,12 @@ def _persistence_configuration() -> PersistenceConfiguration:
             minimum_sitewide_pages=2,
             maximum_graph_depth=2,
             maximum_outlinks=5,
+        ),
+        image_audit=ImageAuditConfiguration(
+            enabled=True,
+            default_page_size=5,
+            maximum_page_size=50,
+            minimum_sitewide_pages=2,
         ),
     )
 

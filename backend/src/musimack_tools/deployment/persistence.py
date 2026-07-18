@@ -7,6 +7,7 @@ from pathlib import Path  # noqa: TC003 -- Pydantic resolves this field type at 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from musimack_tools.domain.image_audit import ImageAuditConfiguration
 from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
@@ -100,6 +101,18 @@ class PersistenceSettings(BaseSettings):
     internal_link_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
     internal_link_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
     internal_link_retention_days: int = Field(default=180, ge=1, le=3_650)
+    image_audit_enabled: bool = False
+    image_audit_verify_internal_images: bool = True
+    image_audit_verify_external_images: bool = False
+    image_audit_maximum_unique_fetches: int = Field(default=10_000, ge=1, le=100_000)
+    image_audit_maximum_response_bytes: int = Field(default=2_000_000, ge=1_024, le=50_000_000)
+    image_audit_maximum_alt_length: int = Field(default=200, ge=32, le=4_096)
+    image_audit_minimum_sitewide_pages: int = Field(default=5, ge=1, le=10_000)
+    image_audit_sitewide_source_ratio: float = Field(default=0.5, gt=0, le=1)
+    image_audit_default_page_size: int = Field(default=50, ge=1, le=1_000)
+    image_audit_maximum_page_size: int = Field(default=200, ge=1, le=1_000)
+    image_audit_maximum_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    image_audit_retention_days: int = Field(default=180, ge=1, le=3_650)
 
     @model_validator(mode="after")
     def validate_enabled_path(self) -> PersistenceSettings:
@@ -188,5 +201,19 @@ class PersistenceSettings(BaseSettings):
                 maximum_page_size=self.internal_link_maximum_page_size,
                 maximum_export_rows=self.internal_link_maximum_export_rows,
                 retention_days=self.internal_link_retention_days,
+            ),
+            image_audit=ImageAuditConfiguration(
+                enabled=self.image_audit_enabled,
+                verify_internal_images=self.image_audit_verify_internal_images,
+                verify_external_images=self.image_audit_verify_external_images,
+                maximum_unique_image_fetches=self.image_audit_maximum_unique_fetches,
+                maximum_image_response_bytes=self.image_audit_maximum_response_bytes,
+                maximum_alt_length=self.image_audit_maximum_alt_length,
+                minimum_sitewide_pages=self.image_audit_minimum_sitewide_pages,
+                sitewide_source_ratio=self.image_audit_sitewide_source_ratio,
+                default_page_size=self.image_audit_default_page_size,
+                maximum_page_size=self.image_audit_maximum_page_size,
+                maximum_export_rows=self.image_audit_maximum_export_rows,
+                retention_days=self.image_audit_retention_days,
             ),
         )
