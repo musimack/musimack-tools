@@ -11,11 +11,13 @@ live network access.
 The sitemap and crawl systems remain authoritative for discovery, fetching, redirects, canonical
 URLs, metadata, indexability, and other page evidence. Blog Strategy stores only selected inventory
 records and their provenance. `PageEvidenceProvider.preview()` is the narrow, read-only integration
-boundary. Its fixture adapter proves selection and idempotency. Phase 22 adds durable source-link
-evidence, but the shared page projection still lacks H1, publication and modified dates, author,
-word count, page type/source classification, and an import-ready completeness/provenance contract.
-The production adapter therefore remains deferred rather than coupling BS-01 to a concrete audit
-repository or creating a competing evidence model.
+boundary. Its fixture adapter proves selection and idempotency. Phase 23 adds durable internal-link
+page metrics and graph evidence on top of Phase 22 source links, but the shared page projection still
+lacks H1, publication and modified dates, author, word count, page type/source classification, and
+an import-ready completeness/provenance contract. Internal-link inlink/outlink counts, reachability,
+orphan state, hub/authority candidates, and link burdens are useful optional signals but do not fill
+those required intake fields. The production adapter therefore remains deferred rather than
+coupling BS-01 to a concrete audit repository or creating a competing evidence model.
 
 BS-01 does not score or automatically detect cannibalization. Related or complementary articles are
 not automatically cannibalization. Manual overlap notes describe concerns, and a human's review
@@ -74,7 +76,7 @@ or `@` receives a leading apostrophe to prevent formula injection. Generation re
 package and verifies the worksheet count/name, row count, header freeze, filters, formulas, styles,
 and hidden-sheet state.
 
-The Phase 22 durable artifact store still requires crawl job/run foreign keys. BS-01 therefore
+The Phase 23 durable artifact store still requires crawl job/run foreign keys. BS-01 therefore
 keeps workbook bytes behind the private service/API response rather than inventing a second artifact
 registry or synthetic crawl records. Durable download registration remains deferred until the
 shared artifact authority supports project-owned artifacts.
@@ -101,10 +103,10 @@ retains administrator permissions by existing policy.
 
 ## Persistence, fixtures, and validation
 
-Migration `0010_blog_strategy` adds only Blog Strategy projects, pages, topic families, manual overlap
-notes, and events. It follows the published Phase 22 head
-`0009_broken_link_redirect_analysis`, modifies no earlier migration, and downgrades only its own
-tables. The repository has one migration head: `0010_blog_strategy`.
+Migration `0011_blog_strategy` adds only Blog Strategy projects, pages, topic families, manual overlap
+notes, and events. It follows the published Phase 23 head `0010_internal_link_analysis`, modifies no
+earlier migration, and downgrades only its own tables. The repository has one migration head:
+`0011_blog_strategy`.
 
 The synthetic BeWell Chiropractic fixture contains ten invented pages, two substantive topic
 families, two primary guides, supporting and complementary articles, an FAQ, a Tigard local article,
@@ -180,3 +182,36 @@ The synthetic BeWell workflow regenerated and programmatically reopened the work
 `Blog Strategy` worksheet, 27 columns, nine included rows, filters, a frozen header, no formulas or
 hidden sheets, formula-injection protection, and safe HTTP(S) hyperlinks. Tests remained isolated
 from public HTTP, DNS, and third-party services.
+
+## Phase 23 reconciliation
+
+The branch was rebased from accepted BS-01 HEAD `b3519b149c7b3d0c4695df88dc99e82364b38407`
+onto published `origin/main` baseline `ff13cbeba0c8b610c5aca9874a4eda2fbb4cbd07`
+(`Add internal-link analysis`). All three reviewed BS-01 commits remain separate. The Blog Strategy
+migration was renamed from `0010_blog_strategy` on `0009_broken_link_redirect_analysis` to
+`0011_blog_strategy` on `0010_internal_link_analysis`, leaving one linear Alembic head.
+
+Shared Alembic registration, persistence constants, application composition, centralized permission
+mapping, API error codes, frontend permission contracts, protected routes, and navigation preserve
+Sitemap Audit, Link Audit, Internal Link Analysis, and Blog Strategy together. Focused composition
+coverage asserts all 10 Sitemap Audit paths, all 12 Link Audit paths, all 15 Internal Link paths, and
+all 14 Blog Strategy paths in one private production application. Frontend navigation coverage
+asserts all four workspaces coexist. No dependency manifest or lockfile changed during
+reconciliation.
+
+The production evidence adapter remains deferred because the combined page, link, and internal-link
+contracts still do not expose the complete Blog Strategy intake projection listed above. Internal
+Link metrics remain authoritative read-only evidence and are not copied into BS-01. The durable
+workbook adapter remains deferred because artifact records still require genuine crawl job/run
+ownership. The fixture provider and bounded private XLSX response remain the accepted safe
+boundaries. BS-02 and Phase 24 work remain unstarted.
+
+Phase 23 reconciliation validation passed on 2026-07-17: Ruff formatting/lint, strict mypy across
+243 source files, all 1,582 collected backend tests (1,579 passed and three Windows
+symlink-capability skips), focused migration and four-module composition tests, one Alembic head,
+clean Python dependency, lock-parity, and application-import checks, frontend formatting/lint/type
+checking, all 142 frontend tests, production build, clean offline `npm ci`, and zero high-severity
+dependency audit findings. The synthetic BeWell workflow regenerated and programmatically reopened
+the workbook with one `Blog Strategy` worksheet, 27 columns, nine included rows, filters, a frozen
+header, no formulas or hidden sheets, formula-injection protection, and safe HTTP(S) hyperlinks.
+Tests remained isolated from public HTTP, DNS, and third-party services.

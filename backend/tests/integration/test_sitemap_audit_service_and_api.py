@@ -34,6 +34,7 @@ from musimack_tools.domain.authentication import (
 )
 from musimack_tools.domain.fetching import FetchOutcome, FetchRequest, FetchResult, ResponseHeaders
 from musimack_tools.domain.history import HistoryConfiguration
+from musimack_tools.domain.internal_link import InternalLinkConfiguration
 from musimack_tools.domain.job import JobState
 from musimack_tools.domain.link_audit import LinkAuditConfiguration
 from musimack_tools.domain.metadata_audit import MetadataAuditConfiguration
@@ -46,11 +47,13 @@ from musimack_tools.domain.sitemap_audit import (
 )
 from musimack_tools.domain.urls import ScopeMode
 from musimack_tools.history.service import HistoryService
+from musimack_tools.internal_link.service import InternalLinkAuditService
 from musimack_tools.link_audit.service import LinkAuditService
 from musimack_tools.main import create_app
 from musimack_tools.metadata_audit.service import MetadataAuditService
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.history_repository import SQLAlchemyHistoryRepository
+from musimack_tools.persistence.internal_link_repository import SQLAlchemyInternalLinkRepository
 from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
 from musimack_tools.persistence.migrations import upgrade_to_head
@@ -725,14 +728,30 @@ def test_routes_are_private_coherent_and_permission_mapped(tmp_path: Path) -> No
             SQLAlchemyLinkAuditRepository(runtime),
             artifacts,
         )
+        internal_link_audits = InternalLinkAuditService(
+            InternalLinkConfiguration(enabled=True),
+            SQLAlchemyInternalLinkRepository(runtime),
+            artifacts,
+        )
         combined_paths = create_production_app(
             _SecurityTestService(),
             settings,
             Settings(),
             sitemap_audits=service,
             link_audits=link_audits,
+            internal_link_audits=internal_link_audits,
             blog_strategy=blog_strategy,
         ).openapi()["paths"]
+        assert (
+            len(
+                {
+                    path
+                    for path in combined_paths
+                    if path.startswith("/api/internal/v1/audits/internal-links")
+                }
+            )
+            == 15
+        )
         assert (
             len(
                 {
@@ -763,7 +782,7 @@ def test_routes_are_private_coherent_and_permission_mapped(tmp_path: Path) -> No
             )
             == 14
         )
-        assert len(combined_paths) == 48
+        assert len(combined_paths) == 63
         history = HistoryService(
             HistoryConfiguration(enabled=True), SQLAlchemyHistoryRepository(runtime)
         )

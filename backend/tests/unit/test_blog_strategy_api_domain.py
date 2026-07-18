@@ -24,6 +24,14 @@ def test_blog_strategy_permissions_are_private_and_narrow() -> None:
         permission_for_request("POST", "/api/internal/v1/audits/links/audit-1/execute")
         is Permission.JOBS_SUBMIT
     )
+    assert (
+        permission_for_request("GET", "/api/internal/v1/audits/internal-links")
+        is Permission.RUNS_VIEW
+    )
+    assert (
+        permission_for_request("POST", "/api/internal/v1/audits/internal-links/audit-1/execute")
+        is Permission.JOBS_SUBMIT
+    )
     assert Permission.BLOG_STRATEGY_VIEW in permissions_for_role(UserRole.VIEWER)
     assert Permission.BLOG_STRATEGY_APPROVE not in permissions_for_role(UserRole.OPERATOR)
     assert Permission.BLOG_STRATEGY_APPROVE in permissions_for_role(UserRole.ADMINISTRATOR)

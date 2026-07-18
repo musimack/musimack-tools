@@ -28,7 +28,11 @@ from musimack_tools.internal_link.service import InternalLinkAuditService
 from musimack_tools.main import create_app
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.internal_link_repository import SQLAlchemyInternalLinkRepository
-from musimack_tools.persistence.migrations import PERSISTENCE_HEAD_REVISION, upgrade_to_head
+from musimack_tools.persistence.migrations import (
+    INTERNAL_LINK_ANALYSIS_REVISION,
+    PERSISTENCE_HEAD_REVISION,
+    upgrade_to_head,
+)
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
 from page_evidence_helpers import PageRecordOptions, crawl_result, page_record
 from persistence_helpers import BACKEND_ROOT, sample_request, sample_result, sample_snapshot
@@ -247,5 +251,6 @@ def test_internal_link_routes_are_private_opt_in_and_authorized(tmp_path: Path) 
         runtime.dispose()
 
 
-def test_internal_link_migration_is_registered_head() -> None:
-    assert PERSISTENCE_HEAD_REVISION == "0010_internal_link_analysis"
+def test_internal_link_migration_is_registered_before_blog_strategy_head() -> None:
+    assert INTERNAL_LINK_ANALYSIS_REVISION == "0010_internal_link_analysis"
+    assert PERSISTENCE_HEAD_REVISION == "0011_blog_strategy"

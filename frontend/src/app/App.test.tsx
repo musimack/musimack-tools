@@ -53,7 +53,7 @@ describe('authenticated application routing', () => {
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 
-  test('shows Sitemap Audits, Link Audits, and Blog Strategy together when authorized', async () => {
+  test('shows all audit workspaces and Blog Strategy together when authorized', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>().mockResolvedValue(
@@ -67,6 +67,7 @@ describe('authenticated application routing', () => {
     renderAt('/');
     expect(await screen.findByRole('link', { name: 'Sitemap Audits' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Link Audits' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Internal Links' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Blog Strategy' })).toBeInTheDocument();
   });
 
