@@ -59,6 +59,24 @@ def test_every_action_reference_has_tag_comment_and_is_official() -> None:
             assert re.search(r"uses: actions/[a-z-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+", line)
 
 
+def test_setup_python_uses_default_no_cache_configuration() -> None:
+    setup_python = re.compile(
+        r"uses: "
+        r"actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6\.3\.0"
+        r"(?P<body>.*?)(?=\n\s+- name:|\Z)",
+        re.DOTALL,
+    )
+    blocks = [
+        match.group("body")
+        for workflow in WORKFLOW_ROOT.glob("*.yml")
+        for match in setup_python.finditer(workflow.read_text(encoding="utf-8"))
+    ]
+    assert len(blocks) == 3
+    assert all("python-version: 3.14.4" in block for block in blocks)
+    assert all("cache:" not in block for block in blocks)
+    assert all('"false"' not in block and "'false'" not in block for block in blocks)
+
+
 def test_workflow_audit_rejects_mutable_or_third_party_action(tmp_path: Path) -> None:
     workflows = tmp_path / ".github/workflows"
     workflows.mkdir(parents=True)
