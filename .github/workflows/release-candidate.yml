@@ -1,0 +1,121 @@
+name: Release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_identifier:
+        description: Lowercase review identifier beginning with rc-
+        required: true
+        type: string
+      commit:
+        description: Exact 40-character lowercase commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ inputs.commit }}
+  cancel-in-progress: false
+
+jobs:
+  validate-input:
+    name: Validate manual inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate candidate and commit without shell interpolation
+        env:
+          CANDIDATE_IDENTIFIER: ${{ inputs.candidate_identifier }}
+          REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+
+          candidate = os.environ["CANDIDATE_IDENTIFIER"]
+          commit = os.environ["REQUESTED_COMMIT"]
+          valid_candidate = re.fullmatch(r"rc-[a-z0-9](?:[a-z0-9.-]{0,59}[a-z0-9])?", candidate)
+          if not valid_candidate or ".." in candidate or len(candidate) > 64:
+              raise SystemExit("candidate_identifier_invalid")
+          if not re.fullmatch(r"[0-9a-f]{40}", commit):
+              raise SystemExit("git_commit_invalid")
+          PY
+
+  candidate:
+    name: Validate and package exact commit
+    needs: validate-input
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Check out requested immutable commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact clean source
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$REQUESTED_COMMIT"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Set up Python 3.14.4
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: 3.14.4
+          cache: false
+      - name: Set up Node 24.15.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+      - name: Install locked environments
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.lock
+          python -m pip install --disable-pip-version-check --no-deps -e backend
+          npm ci --prefix frontend
+      - name: Run mandatory backend validation
+        run: |
+          python -m ruff format --check backend
+          python -m ruff check backend
+          python -m mypy --config-file backend/pyproject.toml backend/src backend/tests
+          python -m musimack_tools.ci all --repository-root .
+          python -m pytest -c backend/pyproject.toml
+          python -m pip check
+      - name: Run mandatory frontend validation and build
+        working-directory: frontend
+        run: |
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm run test
+          npm run build
+          npm audit --offline
+          npm audit --offline --omit=dev
+      - name: Create and reproduce candidate
+        env:
+          CANDIDATE_IDENTIFIER: ${{ inputs.candidate_identifier }}
+          REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          SOURCE_EPOCH="$(git show -s --format=%ct HEAD)"
+          OUTPUT_ONE="$RUNNER_TEMP/candidate-one"
+          OUTPUT_TWO="$RUNNER_TEMP/candidate-two"
+          python -m musimack_tools.release.candidate create --repository-root . --output "$OUTPUT_ONE" --candidate "$CANDIDATE_IDENTIFIER" --commit "$REQUESTED_COMMIT" --source-timestamp-epoch "$SOURCE_EPOCH"
+          python -m musimack_tools.release.candidate create --repository-root . --output "$OUTPUT_TWO" --candidate "$CANDIDATE_IDENTIFIER" --commit "$REQUESTED_COMMIT" --source-timestamp-epoch "$SOURCE_EPOCH"
+          python -m musimack_tools.release.candidate verify --output "$OUTPUT_ONE"
+          diff <(sha256sum "$OUTPUT_ONE"/* | sed "s|$OUTPUT_ONE/||") <(sha256sum "$OUTPUT_TWO"/* | sed "s|$OUTPUT_TWO/||")
+          mkdir "$RUNNER_TEMP/release-output"
+          cp "$OUTPUT_ONE"/* "$RUNNER_TEMP/release-output/"
+          python -m musimack_tools.ci repository --repository-root . --allow frontend/dist
+          git diff --check
+      - name: Upload sanitized candidate for human review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: musimack-release-candidate
+          path: ${{ runner.temp }}/release-output/*
+          if-no-files-found: error
+          retention-days: 5
+          compression-level: 0
+          include-hidden-files: false
