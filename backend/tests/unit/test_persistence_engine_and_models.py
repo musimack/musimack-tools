@@ -9,7 +9,10 @@ from sqlalchemy import Table, inspect, text
 
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.persistence import (  # noqa: F401 - registers optional normalized tables.
+    auth_models,
     durable_models,
+    image_audit_models,
+    internal_link_models,
     link_audit_models,
     migration_qa_models,
     sitemap_audit_models,

@@ -114,6 +114,10 @@ class ReadinessCheckCode(StrEnum):
     QUEUE_CAPACITY_AVAILABLE = "queue_capacity_available"
     QUEUE_FULL = "queue_full"
     RETENTION_DISABLED = "retention_disabled"
+    PERSISTENCE_READY = "persistence_ready"
+    MIGRATION_CURRENT = "migration_current"
+    ARTIFACT_STORAGE_READY = "artifact_storage_ready"
+    WORKER_AVAILABLE = "worker_available"
 
 
 class ApplicationOutcomeCode(StrEnum):
