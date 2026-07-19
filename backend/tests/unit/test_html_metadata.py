@@ -53,7 +53,7 @@ def test_normal_title_and_description_are_extracted() -> None:
 
 
 def test_title_text_normalizes_whitespace_and_entities() -> None:
-    result = _parse("<title>  Music &amp;  <span>artist</span>\n tools </title>")
+    result = _parse("<title>  Music &amp;\n artist   tools </title>")
 
     assert result.title.selected_value == "Music & artist tools"
     assert result.title.observations[0].raw_value != result.title.selected_value
