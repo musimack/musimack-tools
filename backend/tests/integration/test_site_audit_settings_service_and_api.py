@@ -32,8 +32,8 @@ from musimack_tools.domain.site_audit_settings import ProfileState, SiteAuditSet
 from musimack_tools.main import create_app
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.migrations import (
-    PERSISTENCE_HEAD_PARENT_REVISION,
-    PERSISTENCE_HEAD_REVISION,
+    SITE_AUDIT_SETTINGS_REVISION,
+    SITEMAP_RECOMMENDATION_RETENTION_REVISION,
     alembic_configuration,
     current_revision,
     upgrade_to_head,
@@ -89,32 +89,32 @@ def _runtime(tmp_path: Path) -> tuple[PersistenceRuntime, SiteAuditSettingsServi
 
 
 def test_migration_is_single_successor_and_upgrade_downgrade_safe(tmp_path: Path) -> None:
-    assert PERSISTENCE_HEAD_REVISION == "0016_site_audit_settings"
-    assert PERSISTENCE_HEAD_PARENT_REVISION == "0015_sitemap_recommendation_retention"
+    assert SITE_AUDIT_SETTINGS_REVISION == "0016_site_audit_settings"
+    assert SITEMAP_RECOMMENDATION_RETENTION_REVISION == "0015_sitemap_recommendation_retention"
     database = tmp_path / "migration.db"
     url = f"sqlite+pysqlite:///{database.as_posix()}"
     configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
-    command.upgrade(configuration, "head")
+    command.upgrade(configuration, SITE_AUDIT_SETTINGS_REVISION)
     runtime = create_persistence_runtime(
         PersistenceConfiguration(enabled=True, database_path=database)
     )
     try:
-        assert current_revision(runtime.engine) == PERSISTENCE_HEAD_REVISION
+        assert current_revision(runtime.engine) == SITE_AUDIT_SETTINGS_REVISION
         tables = set(inspect(runtime.engine).get_table_names())
         assert {
             "site_audit_global_settings_versions",
             "site_audit_profiles",
             "site_audit_profile_versions",
         } <= tables
-        command.downgrade(configuration, PERSISTENCE_HEAD_PARENT_REVISION)
-        assert current_revision(runtime.engine) == PERSISTENCE_HEAD_PARENT_REVISION
+        command.downgrade(configuration, SITEMAP_RECOMMENDATION_RETENTION_REVISION)
+        assert current_revision(runtime.engine) == SITEMAP_RECOMMENDATION_RETENTION_REVISION
         assert not {
             "site_audit_global_settings_versions",
             "site_audit_profiles",
             "site_audit_profile_versions",
         }.intersection(inspect(runtime.engine).get_table_names())
-        command.upgrade(configuration, "head")
-        assert current_revision(runtime.engine) == PERSISTENCE_HEAD_REVISION
+        command.upgrade(configuration, SITE_AUDIT_SETTINGS_REVISION)
+        assert current_revision(runtime.engine) == SITE_AUDIT_SETTINGS_REVISION
     finally:
         runtime.dispose()
 

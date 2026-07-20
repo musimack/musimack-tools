@@ -95,8 +95,8 @@ def test_candidate_manifest_and_archive_are_complete_and_safe(
     assert manifest["candidate_identifier"] == "rc-phase28-validation"
     assert manifest["git_commit"] == _COMMIT
     assert manifest["migration"] == {
-        "head": "0016_site_audit_settings",
-        "parent": "0015_sitemap_recommendation_retention",
+        "head": "0017_combined_site_audit_persistence",
+        "parent": "0016_site_audit_settings",
     }
     assert manifest["source_timestamp_utc"] == "2023-11-14T22:13:20Z"
     assert manifest["tool_versions"] == _TOOLS

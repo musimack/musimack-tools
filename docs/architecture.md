@@ -1,5 +1,19 @@
 # Foundation Architecture
 
+## Combined Site Audit durable boundary
+
+Migration `0017_combined_site_audit_persistence` adds a normalized Combined Site Audit aggregate
+without connecting it to the crawl frontier. Drafts use optimistic revisions; submission creates
+one canonical SHA-256 configuration snapshot plus normalized rule history. URL inventory is unique
+per audit-normalized identity, discoveries are append-only evidence, and population memberships
+overlap under a versioned definition. Findings, deterministic issue groups/memberships, independent
+module statuses, and restart-safe summaries form projections for later orchestration and UI.
+
+Existing durable jobs, crawl runs, specialist tables, and artifact storage remain separate
+authorities. Optional job/run references use `SET NULL`, specialist identities are non-owning stable
+references, and artifact associations reuse the authenticated record with `RESTRICT` deletion. See
+[Combined Site Audit persistence](combined-site-audit-persistence.md).
+
 ## Combined Site Audit design boundary
 
 CSA-01 defines the accepted product and architecture contract. CSA-02 implements its bounded,
@@ -12,8 +26,8 @@ coordination, authenticated artifacts, and specialist authorities while keeping 
 metadata scoring, and sitemap decisions separate. See [the product contract](combined-site-audit-product-contract.md),
 [conceptual API](combined-site-audit-api-contract.md), [frontend contract](combined-site-audit-frontend-contract.md),
 the [settings implementation](site-audit-settings.md), and [phase ownership](combined-site-audit-phase-ownership.md).
-The single CSA-02 development head is `0016_site_audit_settings`, parent
-`0015_sitemap_recommendation_retention`.
+CSA-02 remains revision `0016_site_audit_settings`; the current single development head is
+`0017_combined_site_audit_persistence`, parent `0016_site_audit_settings`.
 
 ## Phase 26 migration QA boundary
 
@@ -50,7 +64,7 @@ Twelve operations across ten private paths mount only when an enabled service is
 `crawl_page_evidence` is the only page authority. The explicit metadata-audit service validates a terminal run, snapshots immutable configuration, evaluates bounded batches, persists pages/issues/groups/summary/events, and then permits bounded exports. Applicability and severity are centralized in the domain; API handlers and the frontend do not recompute them.
 
 At Phase 20 acceptance, the persistence head was `0007_metadata_audit`. The current published
-CSA-02 development has one head, `0016_site_audit_settings`. Eight metadata-audit tables reference jobs, runs, page evidence, and
+CSA-03 development has one head, `0017_combined_site_audit_persistence`. Eight metadata-audit tables reference jobs, runs, page evidence, and
 artifacts without storing raw HTML, bodies, complete headers, parser objects, or artifact bytes.
 Ordering identifiers are `created_at_desc_audit_id_desc-v1`,
 `highest_severity_desc_url_identity_asc-v1`,

@@ -3,6 +3,17 @@
 No listed item is classified as blocking for internal release-candidate review. A change in deployment
 shape, threat boundary, or user population requires reassessment.
 
+## Combined Site Audit persistence boundary
+
+CSA-03 stores drafts, immutable configuration and rule snapshots, URL inventory, discovery
+evidence, overlapping populations, rule matches, findings, groups, module statuses, summaries, and
+existing-artifact associations. It intentionally has no execution service or user-facing workflow.
+It cannot launch a crawl, coordinate a specialist audit, project live findings, rebuild
+automatically, generate artifacts, or execute retained-evidence preview. These remain CSA-04/05.
+
+No CSA-03 HTTP route was necessary. Specialist records are linked by stable identity rather than
+owned foreign keys, so freshness and eligibility reconciliation remain orchestration work.
+
 | ID | Description and affected area | User / security / operational impact | Workaround | Severity | Blocking | Future treatment |
 | --- | --- | --- | --- | --- | --- | --- |
 | KL-001 | Production is a single-host, single-worker SQLite deployment; clustered workers and network filesystems are unsupported. | Users may see reduced throughput; using an unsupported topology risks lock contention and inconsistent operations. | Keep web, worker, database, and artifact roots on one trusted host and use one supervised worker. | Medium | No | Revisit only with a separately designed datastore and lease model. |

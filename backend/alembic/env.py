@@ -15,6 +15,7 @@ from musimack_tools.persistence import (
     link_audit_models,  # noqa: F401 -- registers mapped tables.
     migration_qa_models,  # noqa: F401 -- registers mapped tables.
     models,  # noqa: F401 -- registers mapped tables.
+    site_audit_models,  # noqa: F401 -- registers mapped tables.
     site_audit_settings_models,  # noqa: F401 -- registers mapped tables.
     sitemap_audit_models,  # noqa: F401 -- registers mapped tables.
     structured_data_models,  # noqa: F401 -- registers mapped tables.
