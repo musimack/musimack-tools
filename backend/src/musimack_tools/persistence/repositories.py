@@ -29,9 +29,11 @@ from musimack_tools.domain.storage import PersistenceRepository
 from musimack_tools.persistence.mapping import (
     artifact_identifier,
     canonical_configuration,
+    durable_result_projection_json,
     safe_message,
     safe_url,
     sha256_bytes,
+    sitemap_recommendation_identifier,
     stage_states_json,
 )
 from musimack_tools.persistence.migrations import schema_is_current
@@ -43,6 +45,7 @@ from musimack_tools.persistence.models import (
     ProgressSnapshotModel,
     RunModel,
     RunStageModel,
+    SitemapRecommendationModel,
     SummaryMetadataModel,
     WarningModel,
 )
@@ -60,6 +63,10 @@ if TYPE_CHECKING:
     from musimack_tools.domain.run import CrawlRunRequest, CrawlRunResult
     from musimack_tools.domain.run_progress import RunProgressEvent
     from musimack_tools.persistence.engine import PersistenceRuntime
+
+_MISSING_RECOMMENDATION_RUN = "run is required before recommendation persistence"
+_RECOMMENDATION_RETENTION_EXCEEDED = "durable recommendation retention limit exceeded"
+_MAXIMUM_DURABLE_RECOMMENDATIONS = 50_000
 
 _INTERRUPTED_STATES = {
     JobState.ACCEPTED.value,
@@ -593,12 +600,14 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
         run = self._required_run(session, result.run_id)
         run.lifecycle = result.lifecycle.value
         run.stage_states_json = stage_states_json(result)
+        run.result_projection_json = durable_result_projection_json(result)
         run.crawl_count = len(result.crawl_result.url_records) if result.crawl_result else 0
         run.recommendation_count = (
             len(result.recommendation_projection.recommendations)
             if result.recommendation_projection
             else 0
         )
+        self._record_sitemap_recommendations(session, job_id, result)
         run.xml_count = result.xml_bundle.total_entries if result.xml_bundle else 0
         run.publication_count = (
             result.publication_result.published_file_count if result.publication_result else 0
@@ -683,6 +692,109 @@ class SQLAlchemyPersistenceRepository(PersistenceRepository):
                 result.run_id,
                 result.crawl_result,
                 page_configuration,
+            )
+
+    @staticmethod
+    def _record_sitemap_recommendations(
+        session: Session, job_id: str, result: CrawlRunResult
+    ) -> None:
+        projection = result.recommendation_projection
+        run = session.get(RunModel, result.run_id)
+        if run is None:
+            raise ValueError(_MISSING_RECOMMENDATION_RUN)
+        session.execute(
+            delete(SitemapRecommendationModel).where(
+                SitemapRecommendationModel.run_id == result.run_id
+            )
+        )
+        if projection is None:
+            run.recommendations_retained = False
+            run.recommendation_rule_set_version = None
+            return
+        if len(projection.recommendations) > _MAXIMUM_DURABLE_RECOMMENDATIONS:
+            raise ValueError(_RECOMMENDATION_RETENTION_EXCEEDED)
+        run.recommendations_retained = True
+        run.recommendation_rule_set_version = projection.rule_set_version
+        for sequence, item in enumerate(projection.recommendations, start=1):
+            reason_codes = tuple(
+                dict.fromkeys(
+                    (
+                        item.primary_reason.value,
+                        *(value.value for value in item.hard_exclusion_reasons),
+                        *(value.value for value in item.review_reasons),
+                    )
+                )
+            )
+            evidence = tuple(
+                {
+                    "rule_id": rule.rule_id,
+                    "outcome": rule.outcome.value,
+                    "reason_code": rule.reason_code.value if rule.reason_code else None,
+                    "explanation": safe_message(rule.explanation),
+                    "evidence": tuple(
+                        {
+                            "category": value.category,
+                            "source": value.source,
+                            "value": value.value,
+                        }
+                        for value in rule.evidence
+                    ),
+                }
+                for rule in item.rule_results
+            )
+            warning_details = tuple(
+                {
+                    "code": value.code,
+                    "explanation": safe_message(value.explanation),
+                    "source": value.source,
+                }
+                for value in (*item.warnings, *item.metadata_warnings)
+            )
+            session.add(
+                SitemapRecommendationModel(
+                    recommendation_id=sitemap_recommendation_identifier(
+                        result.run_id, sequence, item.evaluated_url
+                    ),
+                    job_id=job_id,
+                    run_id=result.run_id,
+                    sequence=sequence,
+                    evaluated_url=item.evaluated_url,
+                    evaluated_url_search=item.evaluated_url.casefold(),
+                    requested_url=item.requested_url,
+                    final_url=item.final_url,
+                    state=item.state.value,
+                    determinacy=item.determinacy.value,
+                    primary_reason=item.primary_reason.value,
+                    reason_codes_json=json.dumps(reason_codes, separators=(",", ":")),
+                    explanation=safe_message(item.explanation),
+                    http_status=item.http_status,
+                    content_type=(item.content_type[:256] if item.content_type else None),
+                    fetch_failure_code=item.fetch_failure_code,
+                    canonical_url=item.canonical.selected_url,
+                    canonical_conflicting=item.canonical.conflicting,
+                    redirect_source=item.redirect.is_redirect_source,
+                    redirect_hops=item.redirect.hop_count,
+                    redirect_final_url=item.redirect.final_url,
+                    robots_available=item.robots.available,
+                    robots_allowed=item.robots.allowed,
+                    robots_reason_code=item.robots.reason_code,
+                    generic_directives_json=json.dumps(
+                        item.indexability.generic_directives, separators=(",", ":")
+                    ),
+                    crawler_specific_directives_json=json.dumps(
+                        item.indexability.crawler_specific_directives,
+                        separators=(",", ":"),
+                    ),
+                    indexability_conflict=item.indexability.generic_index_conflict,
+                    configured_exclusions_json=json.dumps(
+                        tuple(
+                            (value.rule_type, value.value) for value in item.configured_exclusions
+                        ),
+                        separators=(",", ":"),
+                    ),
+                    evidence_json=json.dumps(evidence, separators=(",", ":")),
+                    warning_details_json=json.dumps(warning_details, separators=(",", ":")),
+                )
             )
 
     @staticmethod

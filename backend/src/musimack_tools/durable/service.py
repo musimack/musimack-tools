@@ -19,6 +19,8 @@ if TYPE_CHECKING:
         JobCancellationResult,
         JobLookupResult,
         JobProgressView,
+        JobRecommendationDetail,
+        JobRecommendationPage,
         JobResultView,
         JobSubmissionRequest,
         JobSubmissionResult,
@@ -61,6 +63,28 @@ class DurableJobService:
 
     async def result(self, job_id: str) -> JobResultView:
         return self._repository.result(job_id)
+
+    async def recommendations(  # noqa: PLR0913 - bounded filter contract.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> JobRecommendationPage:
+        return self._repository.recommendations(
+            job_id,
+            offset=offset,
+            limit=limit,
+            state=state,
+            reason=reason,
+            text=text,
+        )
+
+    async def recommendation_detail(self, job_id: str, sequence: int) -> JobRecommendationDetail:
+        return self._repository.recommendation_detail(job_id, sequence)
 
     async def cancel(self, job_id: str) -> JobCancellationResult:
         return self._repository.request_cancellation(job_id)

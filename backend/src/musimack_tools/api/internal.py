@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Annotated, Any, Never
 
-from fastapi import APIRouter, Depends, FastAPI, Query
+from fastapi import APIRouter, Depends, FastAPI, Path, Query
 from fastapi.responses import JSONResponse
 
 from musimack_tools.api.dependencies import (
@@ -43,9 +43,15 @@ from musimack_tools.api.schemas import (
     JobStatusResponse,
     PreflightResponse,
     ReadinessResponse,
+    RecommendationDetailResponse,
+    RecommendationDetailSchema,
+    RecommendationDirectiveGroupSchema,
     RecommendationItemSchema,
     RecommendationPageResponse,
     RecommendationPageSchema,
+    RecommendationRedirectDetailSchema,
+    RecommendationRuleDetailSchema,
+    RecommendationWarningDetailSchema,
     RegistryStatusResponse,
     SubmissionResponse,
     ValidationResponse,
@@ -62,9 +68,9 @@ from musimack_tools.domain.application import (
     PreflightState,
     ReadinessState,
 )
+from musimack_tools.domain.job import MAXIMUM_RECOMMENDATION_PAGE_SIZE
 from musimack_tools.domain.sitemap import (  # noqa: TC001 - FastAPI resolves query types.
     RecommendationState,
-    SitemapReasonCode,
 )
 
 if TYPE_CHECKING:
@@ -258,9 +264,9 @@ def create_internal_api_router(  # noqa: C901, PLR0915 - explicit route composit
     async def get_recommendations(  # noqa: PLR0913 - explicit bounded query contract.
         job_id: str,
         offset: Annotated[int, Query(ge=0)] = 0,
-        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        limit: Annotated[int, Query(ge=1, le=MAXIMUM_RECOMMENDATION_PAGE_SIZE)] = 50,
         state: RecommendationState | None = None,
-        reason: SitemapReasonCode | None = None,
+        reason: Annotated[str | None, Query(max_length=256)] = None,
         text: Annotated[str | None, Query(max_length=256)] = None,
     ) -> RecommendationPageResponse:
         _validate_job_id(job_id)
@@ -269,7 +275,7 @@ def create_internal_api_router(  # noqa: C901, PLR0915 - explicit route composit
             offset=offset,
             limit=limit,
             state=state.value if state is not None else None,
-            reason=reason.value if reason is not None else None,
+            reason=reason,
             text=text,
         )
         if result.outcome is ApplicationOutcomeCode.JOB_NOT_FOUND:
@@ -295,6 +301,76 @@ def create_internal_api_router(  # noqa: C901, PLR0915 - explicit route composit
                     for item in result.items
                 ),
                 rule_set_version=result.rule_set_version,
+                application_service_version=result.application_service_version,
+            )
+        )
+
+    @router.get(
+        "/jobs/{job_id}/recommendations/{sequence}",
+        response_model=RecommendationDetailResponse,
+        responses=error_responses,
+    )
+    async def get_recommendation_detail(
+        job_id: str,
+        sequence: Annotated[int, Path(ge=1, le=MAXIMUM_RECOMMENDATION_PAGE_SIZE)],
+    ) -> RecommendationDetailResponse:
+        _validate_job_id(job_id)
+        result = await service.get_job_recommendation_detail(job_id, sequence)
+        if result.outcome is ApplicationOutcomeCode.JOB_NOT_FOUND:
+            raise InternalApiError(404, ApiErrorCode.JOB_NOT_FOUND, "The job was not found.")
+        if result.outcome is ApplicationOutcomeCode.RECOMMENDATION_NOT_FOUND:
+            raise InternalApiError(
+                404,
+                ApiErrorCode.RECOMMENDATION_NOT_FOUND,
+                "The URL recommendation was not found.",
+            )
+        if result.outcome is ApplicationOutcomeCode.RESULT_UNAVAILABLE or result.item is None:
+            raise InternalApiError(
+                409,
+                ApiErrorCode.JOB_RESULT_UNAVAILABLE,
+                "Detailed recommendations are not retained for this job.",
+            )
+        detail = result.item
+        return RecommendationDetailResponse(
+            data=RecommendationDetailSchema(
+                recommendation=RecommendationItemSchema.model_validate(
+                    detail.recommendation, from_attributes=True
+                ),
+                reason_codes=detail.reason_codes,
+                rule_evidence=tuple(
+                    RecommendationRuleDetailSchema.model_validate(value, from_attributes=True)
+                    for value in detail.rule_evidence
+                ),
+                warning_details=tuple(
+                    RecommendationWarningDetailSchema.model_validate(value, from_attributes=True)
+                    for value in detail.warning_details
+                ),
+                metadata_warning_codes=detail.metadata_warning_codes,
+                evidence_id=detail.evidence_id,
+                crawl_depth=detail.crawl_depth,
+                fetch_outcome=detail.fetch_outcome,
+                evidence_state=detail.evidence_state,
+                page_failure_code=detail.page_failure_code,
+                title_presence=detail.title_presence,
+                title=detail.title,
+                description_presence=detail.description_presence,
+                meta_description=detail.meta_description,
+                canonical_presence=detail.canonical_presence,
+                meta_robots=tuple(
+                    RecommendationDirectiveGroupSchema.model_validate(value, from_attributes=True)
+                    for value in detail.meta_robots
+                ),
+                x_robots_tag=tuple(
+                    RecommendationDirectiveGroupSchema.model_validate(value, from_attributes=True)
+                    for value in detail.x_robots_tag
+                ),
+                redirect_chain=tuple(
+                    RecommendationRedirectDetailSchema.model_validate(value, from_attributes=True)
+                    for value in detail.redirect_chain
+                ),
+                redirect_truncated=detail.redirect_truncated,
+                redirect_loop=detail.redirect_loop,
+                sitemap_membership=detail.sitemap_membership,
                 application_service_version=result.application_service_version,
             )
         )

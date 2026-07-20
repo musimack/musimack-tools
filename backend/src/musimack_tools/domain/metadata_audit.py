@@ -83,6 +83,22 @@ class ExportFormat(StrEnum):
     MARKDOWN = "markdown"
 
 
+@dataclass(frozen=True, slots=True)
+class MetadataAuditRunCandidate:
+    """Safe operator-facing projection for selecting retained crawl evidence."""
+
+    run_id: str
+    job_id: str
+    seed_url: str
+    completed_at: datetime | None
+    job_status: str
+    crawl_profile: str
+    page_evidence_count: int
+    evidence_state: str
+    eligible: bool
+    ineligibility_reason: str | None
+
+
 ISSUE_CATEGORY: dict[str, IssueCategory] = {
     **{
         code: IssueCategory.TITLE

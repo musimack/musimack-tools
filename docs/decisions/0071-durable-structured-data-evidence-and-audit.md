@@ -12,4 +12,8 @@ Parser ownership prevents drift between crawl and audit interpretation. Durable 
 
 ## Consequences
 
-Migration `0012_structured_data_audit` is the single schema head. Evidence and derived rows consume bounded storage and follow existing retention. Malformed, external-context, unsupported, and truncated patterns remain findings. The system performs no new network activity, JavaScript execution, live-site mutation, or search-engine eligibility validation.
+Migration `0012_structured_data_audit` was the single schema head when this decision was accepted;
+it is now the direct parent of `0013_website_migration_qa`. Evidence and derived rows consume
+bounded storage and follow existing retention. Malformed, external-context, unsupported, and
+truncated patterns remain findings. The system performs no new network activity, JavaScript
+execution, live-site mutation, or search-engine eligibility validation.

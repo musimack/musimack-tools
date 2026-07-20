@@ -52,6 +52,9 @@ class RunModel(Base):
     lifecycle: Mapped[str] = mapped_column(String(32), nullable=False)
     requested_stages_json: Mapped[str] = mapped_column(Text, nullable=False)
     stage_states_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    result_projection_json: Mapped[str | None] = mapped_column(Text)
+    recommendations_retained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recommendation_rule_set_version: Mapped[str | None] = mapped_column(String(64))
     crawl_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recommendation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     xml_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -136,6 +139,59 @@ class RunStageModel(Base):
     __table_args__ = (
         UniqueConstraint("run_id", "stage", name="uq_run_stages_run_stage"),
         Index("ix_run_stages_run_order", "run_id", "stable_order"),
+    )
+
+
+class SitemapRecommendationModel(Base):
+    """Bounded restart-safe URL recommendation projection."""
+
+    __tablename__ = "sitemap_recommendations"
+
+    recommendation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.run_id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluated_url: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluated_url_search: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_url: Mapped[str] = mapped_column(Text, nullable=False)
+    final_url: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    determinacy: Mapped[str] = mapped_column(String(32), nullable=False)
+    primary_reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_codes_json: Mapped[str] = mapped_column(Text, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    content_type: Mapped[str | None] = mapped_column(String(256))
+    fetch_failure_code: Mapped[str | None] = mapped_column(String(128))
+    canonical_url: Mapped[str | None] = mapped_column(Text)
+    canonical_conflicting: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    redirect_source: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    redirect_hops: Mapped[int] = mapped_column(Integer, nullable=False)
+    redirect_final_url: Mapped[str | None] = mapped_column(Text)
+    robots_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    robots_reason_code: Mapped[str | None] = mapped_column(String(128))
+    generic_directives_json: Mapped[str] = mapped_column(Text, nullable=False)
+    crawler_specific_directives_json: Mapped[str] = mapped_column(Text, nullable=False)
+    indexability_conflict: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    configured_exclusions_json: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_json: Mapped[str] = mapped_column(Text, nullable=False)
+    warning_details_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "sequence", name="uq_sitemap_recommendation_job_sequence"),
+        Index("ix_sitemap_recommendation_job_state", "job_id", "state", "sequence"),
+        Index(
+            "ix_sitemap_recommendation_job_reason",
+            "job_id",
+            "primary_reason",
+            "sequence",
+        ),
+        Index("ix_sitemap_recommendation_run", "run_id", "sequence"),
     )
 
 

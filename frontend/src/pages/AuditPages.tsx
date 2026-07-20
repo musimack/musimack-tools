@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { auditApi } from '../audits/api';
+import { MetadataAuditRunSelector } from '../audits/RunSelector';
 import type {
   Audit,
   AuditIssue,
@@ -133,8 +134,23 @@ export function AuditsPage() {
 }
 export function NewAuditPage() {
   const navigate = useNavigate();
-  const [runId, setRunId] = useState('');
+  const [params, setParams] = useSearchParams();
+  const runId = params.get('run') ?? '';
+  const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'idle' | 'running' | 'error'>('idle');
+  const candidates = useLoad(() => auditApi.runCandidates(), []);
+  useEffect(() => {
+    if (!candidates.data || runId) return;
+    const eligible = candidates.data.filter((candidate) => candidate.eligible);
+    const sites = new Set(eligible.map((candidate) => candidate.seed_url));
+    const mostRecent = eligible[0];
+    if (mostRecent && sites.size === 1) {
+      const next = new URLSearchParams(params);
+      next.set('run', mostRecent.run_id);
+      setParams(next, { replace: true });
+    }
+  }, [candidates.data, params, runId, setParams]);
+  const selected = candidates.data?.find((candidate) => candidate.run_id === runId);
   return (
     <>
       <Crumbs current="New audit" />
@@ -143,46 +159,61 @@ export function NewAuditPage() {
         descriptions 70–160 characters.
       </PageHeader>
       <Card>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (status === 'running') return;
-            setStatus('running');
-            void auditApi
-              .create(runId)
-              .then((item) => {
-                void navigate(`/audits/metadata/${item.audit_id}`);
-              })
-              .catch(() => {
-                setStatus('error');
-              });
-          }}
-        >
-          <label htmlFor="audit-run">Run ID</label>
-          <input
-            id="audit-run"
-            value={runId}
-            maxLength={64}
-            required
-            onChange={(event) => {
-              setRunId(event.target.value);
+        {!candidates.data ? (
+          candidates.error ? (
+            <ErrorState title="Crawl runs unavailable">{candidates.error}</ErrorState>
+          ) : (
+            <Spinner label="Loading completed crawl runs" />
+          )
+        ) : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (status === 'running' || !selected?.eligible) return;
+              setStatus('running');
+              void auditApi
+                .create(runId)
+                .then((item) => {
+                  void navigate(`/audits/metadata/${item.audit_id}`);
+                })
+                .catch(() => {
+                  setStatus('error');
+                });
             }}
-          />
-          <p>
-            Categories: title, meta description, canonical, robots, indexability, status, and
-            content type.
-          </p>
-          <Button disabled={status === 'running'}>
-            {status === 'running' ? 'Creating audit…' : 'Create audit'}
-          </Button>
-          <div aria-live="polite">
-            {status === 'error' ? (
+          >
+            <MetadataAuditRunSelector
+              candidates={candidates.data}
+              selectedRunId={runId}
+              search={search}
+              onSearch={setSearch}
+              onSelect={(value) => {
+                const next = new URLSearchParams(params);
+                next.set('run', value);
+                setParams(next, { replace: true });
+              }}
+            />
+            {runId && !selected ? (
               <Alert tone="error">
-                Creation failed. Confirm the run is terminal and page evidence is available.
+                The selected run is unavailable, deleted, or no longer retained. Choose another
+                completed crawl.
               </Alert>
             ) : null}
-          </div>
-        </form>
+            <p>
+              Categories: title, meta description, canonical, robots, indexability, status, and
+              content type.
+            </p>
+            <Button disabled={status === 'running' || !selected?.eligible}>
+              {status === 'running' ? 'Running audit…' : 'Run Metadata Audit'}
+            </Button>
+            <div aria-live="polite">
+              {status === 'error' ? (
+                <Alert tone="error">
+                  Creation failed. Confirm the run is terminal and page evidence is available.
+                </Alert>
+              ) : null}
+            </div>
+          </form>
+        )}
       </Card>
     </>
   );

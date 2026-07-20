@@ -232,7 +232,9 @@ def create_authentication_router(  # noqa: C901, PLR0915 - explicit route compos
     @router.post("/auth/sign-out", response_model=SignOutResponse, dependencies=[Depends(access)])
     def sign_out(request: Request, response: Response) -> SignOutResponse:
         principal = _principal(request)
-        token = request.cookies.get(service.configuration.session_cookie_name, "")
+        token = getattr(request.state, "authenticated_session_token", "")
+        if hasattr(request.state, "session_replacement_token"):
+            del request.state.session_replacement_token
         service.sign_out(token, actor=principal)
         response.delete_cookie(
             service.configuration.session_cookie_name,

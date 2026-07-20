@@ -178,6 +178,7 @@ def test_schema_has_only_authorized_application_tables(tmp_path: Path) -> None:
             "sitemap_audit_comparisons",
             "sitemap_audit_exports",
             "sitemap_audit_events",
+            "sitemap_recommendations",
             "crawl_link_evidence",
             "link_audits",
             "link_audit_targets",

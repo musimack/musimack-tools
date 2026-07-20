@@ -68,6 +68,18 @@ export const issueCodes = [
 ] as const;
 export type IssueCode = (typeof issueCodes)[number];
 export type ExportFormat = 'csv' | 'json' | 'markdown';
+export type MetadataAuditRunCandidate = {
+  run_id: string;
+  job_id: string;
+  seed_url: string;
+  completed_at: string | null;
+  job_status: string;
+  crawl_profile: string;
+  page_evidence_count: number;
+  evidence_state: 'complete' | 'partial' | 'unavailable';
+  eligible: boolean;
+  ineligibility_reason: string | null;
+};
 export type Audit = {
   audit_id: string;
   job_id: string;

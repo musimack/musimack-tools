@@ -19,7 +19,7 @@ from musimack_tools.domain.artifacts import (
     ArtifactStorageConfiguration,
     ArtifactStorageRootConfiguration,
 )
-from musimack_tools.domain.authentication import Permission
+from musimack_tools.domain.authentication import Permission, UserRole, is_authorized
 from musimack_tools.domain.history import HistoryConfiguration
 from musimack_tools.domain.job import JobState
 from musimack_tools.domain.metadata_audit import ExportFormat, MetadataAuditConfiguration
@@ -125,6 +125,41 @@ def test_audit_execution_is_durable_idempotent_and_summarized(tmp_path: Path) ->
         runtime.dispose()
 
 
+def test_run_candidates_are_newest_first_and_explain_ineligible_evidence(
+    tmp_path: Path,
+) -> None:
+    runtime, service, run_id, _artifacts = _service(tmp_path)
+    try:
+        pending_request = sample_request("/pending")
+        pending = sample_snapshot(pending_request)
+        assert (
+            SQLAlchemyPersistenceRepository(runtime)
+            .record_submission(pending, pending_request)
+            .succeeded
+        )
+
+        candidates = service.run_candidates()
+
+        assert [item.run_id for item in candidates] == [run_id, pending.run_id]
+        selected = candidates[0]
+        assert selected.eligible
+        assert selected.seed_url == "https://example.com/"
+        assert selected.completed_at is not None
+        assert selected.job_status == "completed"
+        assert selected.page_evidence_count == 2
+        assert selected.evidence_state == "complete"
+        assert selected.crawl_profile == "custom"
+        assert selected.ineligibility_reason is None
+        assert not candidates[1].eligible
+        assert candidates[1].page_evidence_count == 0
+        assert candidates[1].ineligibility_reason == "The crawl has not reached a terminal state."
+        assert is_authorized(UserRole.ADMINISTRATOR, Permission.JOBS_SUBMIT)
+        assert is_authorized(UserRole.OPERATOR, Permission.JOBS_SUBMIT)
+        assert not is_authorized(UserRole.VIEWER, Permission.JOBS_SUBMIT)
+    finally:
+        runtime.dispose()
+
+
 def test_exports_are_bounded_registered_verified_and_reused(tmp_path: Path) -> None:
     runtime, service, run_id, artifacts = _service(tmp_path, artifacts=True)
     try:
@@ -155,6 +190,7 @@ def test_routes_are_private_and_add_exactly_ten_operations_on_nine_paths(tmp_pat
         paths = application.openapi()["paths"]
         metadata_operations = {
             "/api/internal/v1/audits/metadata": {"get", "post"},
+            "/api/internal/v1/audits/metadata/run-candidates": {"get"},
             "/api/internal/v1/audits/metadata/{audit_id}": {"get"},
             "/api/internal/v1/audits/metadata/{audit_id}/summary": {"get"},
             "/api/internal/v1/audits/metadata/{audit_id}/pages": {"get"},
@@ -169,10 +205,10 @@ def test_routes_are_private_and_add_exactly_ten_operations_on_nine_paths(tmp_pat
             for path in metadata_operations
         } == metadata_operations
         assert not any(path.startswith("/api/audits/metadata") for path in paths)
-        assert len(paths) == 21
+        assert len(paths) == 23
         assert (
             len([path for path in paths if path.startswith("/api/internal/v1/audits/metadata")])
-            == 9
+            == 10
         )
         root = tmp_path / "route-artifacts"
         root.mkdir()
@@ -236,13 +272,13 @@ def test_routes_are_private_and_add_exactly_ten_operations_on_nine_paths(tmp_pat
         }
         assert bearer_counts == {
             "default": 1,
-            "production": 12,
-            "artifacts": 15,
-            "history": 22,
-            "metadata": 21,
-            "artifacts_metadata": 24,
-            "history_metadata": 31,
-            "all": 34,
+            "production": 13,
+            "artifacts": 16,
+            "history": 23,
+            "metadata": 23,
+            "artifacts_metadata": 26,
+            "history_metadata": 33,
+            "all": 36,
         }
         authentication, _factory = _authentication_service()
         authentication.bootstrap_administrator(
@@ -266,7 +302,7 @@ def test_routes_are_private_and_add_exactly_ten_operations_on_nine_paths(tmp_pat
                     metadata_audits=service,
                 ).openapi()["paths"]
             )
-            == 35
+            == 37
         )
         assert (
             len(
@@ -280,7 +316,7 @@ def test_routes_are_private_and_add_exactly_ten_operations_on_nine_paths(tmp_pat
                     metadata_audits=service,
                 ).openapi()["paths"]
             )
-            == 48
+            == 50
         )
         client = TestClient(application, client=("203.0.113.10", 50_000))
         assert client.get("/api/internal/v1/audits/metadata").status_code == 401
@@ -291,6 +327,12 @@ def test_routes_are_private_and_add_exactly_ten_operations_on_nine_paths(tmp_pat
             ).status_code
             == 200
         )
+        candidates = client.get(
+            "/api/internal/v1/audits/metadata/run-candidates",
+            headers={"Authorization": f"Bearer {_TOKEN}"},
+        )
+        assert candidates.status_code == 200
+        assert candidates.json()["data"][0]["page_evidence_count"] == 2
         assert (
             permission_for_request("POST", "/api/internal/v1/audits/metadata")
             is Permission.JOBS_SUBMIT

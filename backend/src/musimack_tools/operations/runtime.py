@@ -73,6 +73,7 @@ if TYPE_CHECKING:
 
     from musimack_tools.crawl.cancellation import CancellationToken
     from musimack_tools.domain.persistence import PersistenceConfiguration
+    from musimack_tools.domain.run import CrawlRunResult
     from musimack_tools.jobs.coordinator import JobRunExecutor, JobRunServiceFactory
     from musimack_tools.jobs.service import InternalJobService
     from musimack_tools.persistence.durable_repository import (
@@ -277,11 +278,25 @@ async def run_worker(settings: RuntimeSettings | None = None) -> None:
     )
     evidence = SQLAlchemyPersistenceRepository(runtime)
     prepared = PreparedPersistence(evidence, evidence.diagnostics(), None)
+    artifact_service = ArtifactService(
+        resolved.artifacts.to_configuration(), SQLAlchemyArtifactRepository(runtime)
+    )
+
+    def retain_generated_xml(job_id: str, result: CrawlRunResult) -> None:
+        batch = artifact_service.retain_generated_xml(job_id, result)
+        bundle = result.xml_bundle
+        expected = (
+            0 if bundle is None else len(bundle.documents) + int(bundle.index_document is not None)
+        )
+        if batch.failure_codes or len(batch.registered) != expected:
+            raise RuntimeError("Generated XML artifact retention failed.")
+
     durable = prepare_durable_execution(
         resolved.durable,
         prepared,
         runtime=runtime,
         run_service_factory=production_run_service_factory(resolved.application),
+        result_observer=retain_generated_xml,
     )
     if durable.worker is None:
         runtime.dispose()

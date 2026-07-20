@@ -34,7 +34,14 @@ Twelve operations across ten private paths mount only when an enabled service is
 
 `crawl_page_evidence` is the only page authority. The explicit metadata-audit service validates a terminal run, snapshots immutable configuration, evaluates bounded batches, persists pages/issues/groups/summary/events, and then permits bounded exports. Applicability and severity are centralized in the domain; API handlers and the frontend do not recompute them.
 
-The persistence head is `0007_metadata_audit`. Eight audit tables reference jobs, runs, page evidence, and artifacts without storing raw HTML, bodies, complete headers, parser objects, or artifact bytes. Ordering identifiers are `created_at_desc_audit_id_desc-v1`, `highest_severity_desc_url_identity_asc-v1`, `severity_desc_category_asc_code_asc_url_identity_asc-v1`, and `member_count_desc_group_id_asc-v1`.
+At Phase 20 acceptance, the persistence head was `0007_metadata_audit`. The published `main` baseline remains
+at `0013_website_migration_qa`; this unpublished Phase 29 worktree has one candidate head,
+`0015_sitemap_recommendation_retention`. Eight metadata-audit tables reference jobs, runs, page evidence, and
+artifacts without storing raw HTML, bodies, complete headers, parser objects, or artifact bytes.
+Ordering identifiers are `created_at_desc_audit_id_desc-v1`,
+`highest_severity_desc_url_identity_asc-v1`,
+`severity_desc_category_asc_code_asc_url_identity_asc-v1`, and
+`member_count_desc_group_id_asc-v1`.
 
 Ten internal operations mount only when explicitly enabled. The default application remains health-only. No scheduler, background audit worker, public route, WebSocket, SSE, Docker, CI, cloud, Redis, or PostgreSQL boundary is introduced.
 
@@ -45,12 +52,13 @@ subproject of any previous Musimack repository. The chosen direction is a monore
 future frontend, documentation, and later deployment configuration can evolve under one
 reviewable version boundary while remaining internally separated.
 
-## Current implementation
+## Initial foundation implementation
 
-The implemented foundation is backend-only. Python 3.14, FastAPI, Pydantic, and Pydantic
-Settings provide a typed application boundary. The FastAPI composition root exports both a
-testable `create_app` factory and a stable `app` instance. The only public operation is the
-minimal `/api/health` endpoint.
+The initial foundation was backend-only; the current product also includes the protected React
+workspace and the private modules described above. Python 3.14, FastAPI, Pydantic, and Pydantic
+Settings provide a typed application boundary. The FastAPI composition root exports both a testable
+`create_app` factory and a stable `app` instance. The default composition exposes only the minimal
+`/api/health` endpoint and disables documentation/schema handlers; product composition is explicit.
 
 The backend uses a `src` package layout:
 

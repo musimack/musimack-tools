@@ -122,8 +122,8 @@ def test_migration_audit_upgrades_an_empty_database() -> None:
     result = audit_migrations(REPOSITORY_ROOT / "backend")
     assert result == {
         "head_count": 1,
-        "head": "0013_website_migration_qa",
-        "parent": "0012_structured_data_audit",
+        "head": "0015_sitemap_recommendation_retention",
+        "parent": "0014_durable_result_projection",
         "empty_database_upgrade": "passed",
     }
 
@@ -134,7 +134,7 @@ def test_migration_audit_rejects_divergent_heads(
     class DivergentScripts:
         @staticmethod
         def get_heads() -> tuple[str, str]:
-            return ("0013_website_migration_qa", "0013_divergent")
+            return ("0015_sitemap_recommendation_retention", "0015_divergent")
 
     monkeypatch.setattr(
         "musimack_tools.ci.ScriptDirectory.from_config",

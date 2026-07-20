@@ -95,14 +95,20 @@ def test_candidate_manifest_and_archive_are_complete_and_safe(
     assert manifest["candidate_identifier"] == "rc-phase28-validation"
     assert manifest["git_commit"] == _COMMIT
     assert manifest["migration"] == {
-        "head": "0013_website_migration_qa",
-        "parent": "0012_structured_data_audit",
+        "head": "0015_sitemap_recommendation_retention",
+        "parent": "0014_durable_result_projection",
     }
     assert manifest["source_timestamp_utc"] == "2023-11-14T22:13:20Z"
     assert manifest["tool_versions"] == _TOOLS
+    assert manifest["known_limitations"] == "docs/known-limitations.md"
     paths = [item["path"] for item in manifest["files"]]
     assert paths == sorted(paths)
     assert "backend/src/musimack_tools/example.py" in paths
+    assert "docs/final-acceptance.md" in paths
+    assert "docs/known-limitations.md" in paths
+    assert "docs/security-review.md" in paths
+    assert "docs/accessibility-review.md" in paths
+    assert "docs/release-readiness.md" in paths
     assert "frontend/dist/assets/index-12345678.js" in paths
     assert not any("tests" in path or "node_modules" in path for path in paths)
     serialized = result.manifest.read_text(encoding="utf-8")

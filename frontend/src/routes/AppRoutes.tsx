@@ -13,6 +13,7 @@ import {
   JobDetailPage,
   JobResultPage,
   NewCrawlPage,
+  RecommendationDetailPage,
   RecommendationPage,
 } from '../pages/WorkflowPages';
 import {
@@ -183,6 +184,10 @@ export function AppRoutes() {
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/jobs/:jobId/results/recommendations" element={<RecommendationPage />} />
+          <Route
+            path="/jobs/:jobId/results/recommendations/:sequence"
+            element={<RecommendationDetailPage />}
+          />
         </Route>
         <Route element={<Protected permission="runs.view" />}>
           <Route path="/link-audits/:auditId" element={<LinkAuditDashboardPage />} />

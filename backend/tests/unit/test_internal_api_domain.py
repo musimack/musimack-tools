@@ -129,6 +129,53 @@ def test_request_schema_maps_only_operator_facing_fields() -> None:
     assert not hasattr(schema, "token")
 
 
+def _serialized_frontend_request(overrides: dict[str, int | float]) -> dict[str, object]:
+    return {
+        "seed_url": "http://127.0.0.1:8765/",
+        "scope_profile": "exact_host",
+        "approved_hosts": [],
+        "crawl_profile": "standard_crawl",
+        "overrides": overrides,
+        "recommendation_profile": "standard",
+        "recommendation_requested": True,
+        "xml_generation_requested": True,
+        "publication_requested": False,
+        "publication_dry_run": True,
+        "publication_root": None,
+        "existing_file_policy": "fail_if_exists",
+        "create_publication_directory": False,
+        "summary_writing_requested": False,
+        "summary_root": None,
+        "create_summary_directory": False,
+        "summary_dry_run": True,
+        "caller_label": "frontend-workflow",
+    }
+
+
+def test_default_serialized_frontend_request_is_accepted_by_backend_schema() -> None:
+    request = ApplicationRequestSchema.model_validate(_serialized_frontend_request({}))
+    assert request.seed_url == "http://127.0.0.1:8765/"
+    assert request.crawl_profile is CrawlProfileName.STANDARD_CRAWL
+    assert request.overrides == CrawlLimitOverridesRequest()
+    assert request.existing_file_policy.value == "fail_if_exists"
+
+
+def test_serialized_frontend_request_with_every_override_is_accepted() -> None:
+    overrides: dict[str, int | float] = {
+        "maximum_urls": 101,
+        "maximum_depth": 7,
+        "maximum_duration_seconds": 300,
+        "maximum_accepted_bytes": 9_000_000,
+        "maximum_concurrency": 3,
+        "maximum_queue_size": 250,
+        "minimum_request_delay_seconds": 1.25,
+        "maximum_redirect_hops": 4,
+        "maximum_response_bytes": 2_000_000,
+    }
+    request = ApplicationRequestSchema.model_validate(_serialized_frontend_request(overrides))
+    assert request.overrides.model_dump(exclude_none=True) == overrides
+
+
 @pytest.mark.parametrize(
     "payload",
     [

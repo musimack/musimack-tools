@@ -216,14 +216,14 @@ def test_private_api_routes_auth_pagination_filters_and_old_route_absence(
             if method in {"get", "post"}
         }
         assert len(operations) == 14
-        assert len(paths) == 24
+        assert len(paths) == 25
         assert (
             len(
                 create_production_app(_SecurityTestService(), settings, Settings()).openapi()[
                     "paths"
                 ]
             )
-            == 12
+            == 13
         )
         assert len(create_app(Settings()).openapi()["paths"]) == 1
         assert client.get("/api/internal/v1/audits/links").status_code == 401

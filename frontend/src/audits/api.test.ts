@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, test, vi } from 'vitest';
 import { auditApi } from './api';
 import { issueCodes } from './contracts';
 
@@ -26,6 +26,35 @@ const audit = {
 };
 
 describe('metadata audit API', () => {
+  test('loads bounded operator-facing run candidates', async () => {
+    const request = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              run_id: 'run-abc',
+              job_id: 'job-abc',
+              seed_url: 'https://example.test/',
+              completed_at: '2026-07-19T00:00:00Z',
+              job_status: 'completed',
+              crawl_profile: 'standard_crawl',
+              page_evidence_count: 12,
+              evidence_state: 'complete',
+              eligible: true,
+              ineligibility_reason: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const candidates = await auditApi.runCandidates();
+    expect(candidates[0]?.page_evidence_count).toBe(12);
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining('/audits/metadata/run-candidates'),
+      expect.anything(),
+    );
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
   });

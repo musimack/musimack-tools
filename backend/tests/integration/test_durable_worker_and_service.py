@@ -110,6 +110,54 @@ async def test_worker_claims_executes_progresses_and_completes(tmp_path: Path) -
 
 
 @run_async
+async def test_worker_observes_result_before_durable_completion(tmp_path: Path) -> None:
+    runtime, repository = durable_repository(tmp_path)
+    observed: list[str] = []
+
+    def observer(job_id: str, _result: CrawlRunResult) -> None:
+        assert repository.status(job_id) is not None
+        assert repository.status(job_id).state is DurableJobState.RUNNING  # type: ignore[union-attr]
+        observed.append(job_id)
+
+    worker = DurableWorkerService(repository, _Factory(), result_observer=observer)
+    try:
+        submission = repository.submit(JobSubmissionRequest(sample_request()))
+        assert submission.result.snapshot is not None
+        repository.register_worker(WorkerIdentity("worker-test"), 1)
+        assert await worker.run_once() == 1
+        await _settle()
+        assert observed == [submission.result.snapshot.job_id]
+        status = repository.status(submission.result.snapshot.job_id)
+        assert status is not None and status.state is DurableJobState.COMPLETED
+    finally:
+        await worker.shutdown()
+        runtime.dispose()
+
+
+@run_async
+async def test_worker_fails_execution_when_result_observer_fails(tmp_path: Path) -> None:
+    runtime, repository = durable_repository(tmp_path)
+
+    def observer(_job_id: str, _result: CrawlRunResult) -> None:
+        raise RuntimeError(_SYNTHETIC_WORKER_FAILURE)
+
+    worker = DurableWorkerService(repository, _Factory(), result_observer=observer)
+    try:
+        submission = repository.submit(JobSubmissionRequest(sample_request()))
+        assert submission.result.snapshot is not None
+        repository.register_worker(WorkerIdentity("worker-test"), 1)
+        assert await worker.run_once() == 1
+        await _settle()
+        status = repository.status(submission.result.snapshot.job_id)
+        assert status is not None
+        assert status.state is DurableJobState.FAILED
+        assert status.last_failure_code == "durable_execution_failed"
+    finally:
+        await worker.shutdown()
+        runtime.dispose()
+
+
+@run_async
 async def test_worker_bounds_concurrency_and_opens_capacity(tmp_path: Path) -> None:
     gate = asyncio.Event()
     configuration = durable_configuration(maximum_concurrent_claimed_jobs=2, maximum_claim_batch=2)

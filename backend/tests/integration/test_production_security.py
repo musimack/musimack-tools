@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         ApplicationPreflightResult,
         ApplicationProgressResult,
         ApplicationReadinessReport,
+        ApplicationRecommendationDetail,
         ApplicationRecommendationPage,
         ApplicationRegistryStatus,
         ApplicationResultProjection,
@@ -63,6 +64,7 @@ _INTERNAL_PATHS = (
     ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/progress"),
     ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/result"),
     ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/recommendations"),
+    ("GET", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/recommendations/1"),
     ("POST", "/api/internal/v1/jobs/job-4f82d76a1b42-0001/cancel"),
     ("GET", "/api/internal/v1/registry"),
     ("GET", "/api/internal/v1/readiness"),
@@ -122,6 +124,13 @@ class _SecurityTestService:
     ) -> ApplicationRecommendationPage:
         del job_id, offset, limit, state, reason, text
         self.calls.append("recommendations")
+        raise AssertionError(_UNUSED_SERVICE_CALL)
+
+    async def get_job_recommendation_detail(
+        self, job_id: str, sequence: int
+    ) -> ApplicationRecommendationDetail:
+        del job_id, sequence
+        self.calls.append("recommendation_detail")
         raise AssertionError(_UNUSED_SERVICE_CALL)
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult:
@@ -224,6 +233,8 @@ def test_default_application_remains_health_only_and_secret_free(
         "application": "Musimack SEO Toolkit",
         "status": "healthy",
     }
+    for path in ("/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"):
+        assert client.get(path).status_code == 404
     assert sorted(application.openapi()["paths"]) == ["/api/health"]
 
 
@@ -446,7 +457,7 @@ def test_openapi_is_disabled_by_default_and_explicit_when_enabled() -> None:
     shown = _client(_SecurityTestService(), _settings(include_openapi=True))
     assert hidden.get("/openapi.json").status_code == 404
     document = shown.get("/openapi.json").json()
-    assert len([path for path in document["paths"] if path.startswith("/api/internal/v1")]) == 11
+    assert len([path for path in document["paths"] if path.startswith("/api/internal/v1")]) == 12
     assert _TOKEN not in str(document)
 
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -34,11 +35,16 @@ from musimack_tools.domain.durable_execution import (
     utc_now,
 )
 from musimack_tools.domain.job import (
+    MAXIMUM_RECOMMENDATION_PAGE_SIZE,
+    DurableRecommendation,
+    DurableRecommendationDetail,
     JobCancellationOutcome,
     JobCancellationResult,
     JobLookupOutcome,
     JobLookupResult,
     JobProgressView,
+    JobRecommendationDetail,
+    JobRecommendationPage,
     JobResultView,
     JobSnapshot,
     JobState,
@@ -46,6 +52,11 @@ from musimack_tools.domain.job import (
     JobSubmissionOutcome,
     JobSubmissionRequest,
     JobSubmissionResult,
+    RecommendationDirectiveGroup,
+    RecommendationRedirectDetail,
+    RecommendationRuleDetail,
+    RecommendationWarningDetail,
+    normalize_recommendation_reason_filter,
 )
 from musimack_tools.domain.job_registry import (
     CRAWL_JOB_REGISTRY_VERSION,
@@ -68,11 +79,16 @@ from musimack_tools.persistence.durable_models import (
     JobLeaseModel,
     WorkerModel,
 )
+from musimack_tools.persistence.mapping import load_durable_result_projection
 from musimack_tools.persistence.models import (
+    CrawlPageEvidenceModel,
+    CrawlPageParseWarningModel,
+    CrawlPageRedirectHopModel,
     JobModel,
     ProgressSnapshotModel,
     RunModel,
     RunStageModel,
+    SitemapRecommendationModel,
 )
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
 from musimack_tools.run.identity import run_identity
@@ -510,68 +526,219 @@ class SQLAlchemyDurableExecutionRepository:
                     history=(),
                     history_truncated=False,
                 )
-            row = session.scalar(
-                select(ProgressSnapshotModel)
-                .where(ProgressSnapshotModel.job_id == job_id)
-                .order_by(ProgressSnapshotModel.sequence.desc())
-                .limit(1)
+            rows = tuple(
+                session.scalars(
+                    select(ProgressSnapshotModel)
+                    .where(ProgressSnapshotModel.job_id == job_id)
+                    .order_by(ProgressSnapshotModel.sequence)
+                )
             )
-            if row is None:
+            if not rows:
                 return JobProgressView(
                     outcome=JobLookupOutcome.FOUND,
                     latest=None,
                     history=(),
                     history_truncated=False,
                 )
-            stage = RunStage(row.active_stage) if row.active_stage is not None else None
-            stage_row = (
-                session.scalar(
-                    select(RunStageModel).where(
-                        RunStageModel.run_id == base.run_id,
-                        RunStageModel.stage == row.active_stage,
-                    )
+            stage_states = {
+                row.stage: RunStageState(row.state)
+                for row in session.scalars(
+                    select(RunStageModel).where(RunStageModel.run_id == base.run_id)
                 )
-                if row.active_stage is not None
-                else None
-            )
-            snapshot = RunProgressSnapshot(
-                lifecycle=(
-                    RunLifecycle(base.run_lifecycle)
-                    if base.run_lifecycle is not None
-                    else RunLifecycle.PENDING
-                ),
-                active_stage=stage,
-                stage_state=(RunStageState(stage_row.state) if stage_row is not None else None),
-                urls_discovered=row.discovered_count,
-                urls_queued=row.queued_count,
-                urls_fetched=row.fetched_count,
-                urls_parsed=row.parsed_count,
-                bytes_fetched=row.byte_count,
-                queue_size=row.queue_size,
-                active_count=row.active_fetch_count,
-                current_depth=row.current_depth,
-                warning_count=row.warning_count,
-                failure_count=row.failure_count,
-                cancellation_requested=row.cancellation_requested,
-                recent_crawl_error_code=row.recent_safe_error_code,
-                elapsed_seconds=row.elapsed_seconds,
-            )
-            event = RunProgressEvent(
-                row.sequence,
-                RunEventCode(row.event_code),
-                snapshot,
-                "Durable progress evidence",
-            )
+            }
+            history = tuple(_progress_event(row, base.run_lifecycle, stage_states) for row in rows)
             return JobProgressView(
                 outcome=JobLookupOutcome.FOUND,
-                latest=event,
-                history=(event,),
-                history_truncated=False,
+                latest=history[-1],
+                history=history,
+                history_truncated=history[0].sequence > 1,
             )
 
     def result(self, job_id: str) -> JobResultView:
-        lookup = self.lookup(job_id)
-        return JobResultView(lookup.outcome, lookup.snapshot, None, ())
+        with self._runtime.transaction() as session:
+            durable = session.get(DurableJobModel, job_id)
+            base = session.get(JobModel, job_id)
+            if durable is None or base is None:
+                return JobResultView(JobLookupOutcome.NOT_FOUND, None, None, ())
+            run = session.get(RunModel, base.run_id)
+            projection = (
+                load_durable_result_projection(run.result_projection_json)
+                if run is not None and run.result_projection_json is not None
+                else None
+            )
+            return JobResultView(
+                JobLookupOutcome.FOUND,
+                self._snapshot(session, durable, base),
+                None,
+                (),
+                durable_projection=projection,
+            )
+
+    def recommendations(  # noqa: PLR0913 - mirrors the bounded API filters.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> JobRecommendationPage:
+        bounded_limit = min(max(limit, 0), MAXIMUM_RECOMMENDATION_PAGE_SIZE)
+        with self._runtime.transaction() as session:
+            base = session.get(JobModel, job_id)
+            if base is None:
+                return JobRecommendationPage(
+                    outcome=JobLookupOutcome.NOT_FOUND,
+                    details_available=False,
+                    job_id=None,
+                    run_id=None,
+                    offset=offset,
+                    limit=bounded_limit,
+                    total=0,
+                    items=(),
+                    rule_set_version=None,
+                )
+            run = session.get(RunModel, base.run_id)
+            retained_count = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(SitemapRecommendationModel)
+                    .where(SitemapRecommendationModel.job_id == job_id)
+                )
+                or 0
+            )
+            if (
+                run is None
+                or not run.recommendations_retained
+                or retained_count != run.recommendation_count
+            ):
+                return JobRecommendationPage(
+                    outcome=JobLookupOutcome.FOUND,
+                    details_available=False,
+                    job_id=job_id,
+                    run_id=base.run_id,
+                    offset=offset,
+                    limit=bounded_limit,
+                    total=0,
+                    items=(),
+                    rule_set_version=None,
+                )
+            filters = [SitemapRecommendationModel.job_id == job_id]
+            if state is not None:
+                filters.append(SitemapRecommendationModel.state == state)
+            normalized_reason = normalize_recommendation_reason_filter(reason)
+            if normalized_reason is not None:
+                filters.append(
+                    func.lower(SitemapRecommendationModel.primary_reason).contains(
+                        normalized_reason, autoescape=True
+                    )
+                )
+            normalized_text = text.casefold().strip() if text else None
+            if normalized_text:
+                filters.append(
+                    SitemapRecommendationModel.evaluated_url_search.contains(
+                        normalized_text, autoescape=True
+                    )
+                )
+            total = int(
+                session.scalar(
+                    select(func.count()).select_from(SitemapRecommendationModel).where(*filters)
+                )
+                or 0
+            )
+            rows = tuple(
+                session.scalars(
+                    select(SitemapRecommendationModel)
+                    .where(*filters)
+                    .order_by(SitemapRecommendationModel.sequence)
+                    .offset(max(offset, 0))
+                    .limit(bounded_limit)
+                )
+            )
+            items = tuple(_durable_recommendation(row) for row in rows)
+            return JobRecommendationPage(
+                outcome=JobLookupOutcome.FOUND,
+                details_available=True,
+                job_id=job_id,
+                run_id=base.run_id,
+                offset=max(offset, 0),
+                limit=bounded_limit,
+                total=total,
+                items=items,
+                rule_set_version=run.recommendation_rule_set_version,
+            )
+
+    def recommendation_detail(self, job_id: str, sequence: int) -> JobRecommendationDetail:
+        with self._runtime.transaction() as session:
+            base = session.get(JobModel, job_id)
+            if base is None:
+                return JobRecommendationDetail(
+                    outcome=JobLookupOutcome.NOT_FOUND, details_available=False, item=None
+                )
+            run = session.get(RunModel, base.run_id)
+            if run is None or not run.recommendations_retained:
+                return JobRecommendationDetail(
+                    outcome=JobLookupOutcome.FOUND, details_available=False, item=None
+                )
+            row = session.scalar(
+                select(SitemapRecommendationModel).where(
+                    SitemapRecommendationModel.job_id == job_id,
+                    SitemapRecommendationModel.sequence == sequence,
+                )
+            )
+            if row is None:
+                return JobRecommendationDetail(
+                    outcome=JobLookupOutcome.FOUND, details_available=True, item=None
+                )
+            page = session.scalar(
+                select(CrawlPageEvidenceModel)
+                .where(
+                    CrawlPageEvidenceModel.job_id == job_id,
+                    CrawlPageEvidenceModel.run_id == row.run_id,
+                    or_(
+                        CrawlPageEvidenceModel.requested_url == row.requested_url,
+                        CrawlPageEvidenceModel.final_url == row.evaluated_url,
+                    ),
+                )
+                .order_by(CrawlPageEvidenceModel.discovery_sequence)
+                .limit(1)
+            )
+            redirects = (
+                tuple(
+                    session.scalars(
+                        select(CrawlPageRedirectHopModel)
+                        .where(CrawlPageRedirectHopModel.evidence_id == page.evidence_id)
+                        .order_by(CrawlPageRedirectHopModel.sequence)
+                    )
+                )
+                if page is not None
+                else ()
+            )
+            page_warnings = (
+                tuple(
+                    session.scalars(
+                        select(CrawlPageParseWarningModel)
+                        .where(CrawlPageParseWarningModel.evidence_id == page.evidence_id)
+                        .order_by(CrawlPageParseWarningModel.sequence)
+                    )
+                )
+                if page is not None
+                else ()
+            )
+            try:
+                detail = _durable_recommendation_detail(row, page, redirects, page_warnings)
+            except json.JSONDecodeError, KeyError, TypeError, ValueError:
+                _LOGGER.warning(
+                    "durable_recommendation_detail_invalid",
+                    extra={"job_id": job_id, "sequence": sequence},
+                )
+                return JobRecommendationDetail(
+                    outcome=JobLookupOutcome.FOUND, details_available=False, item=None
+                )
+            return JobRecommendationDetail(
+                outcome=JobLookupOutcome.FOUND, details_available=True, item=detail
+            )
 
     def registry_snapshot(self) -> JobRegistrySnapshot:
         with self._runtime.transaction() as session:
@@ -1221,6 +1388,21 @@ class SQLAlchemyDurableExecutionRepository:
 
     def _snapshot(self, session: Session, durable: DurableJobModel, base: JobModel) -> JobSnapshot:
         state = _project_job_state(DurableJobState(durable.durable_state))
+        row = session.scalar(
+            select(ProgressSnapshotModel)
+            .where(ProgressSnapshotModel.job_id == base.job_id)
+            .order_by(ProgressSnapshotModel.sequence.desc())
+            .limit(1)
+        )
+        latest = None
+        if row is not None:
+            stage_states = {
+                item.stage: RunStageState(item.state)
+                for item in session.scalars(
+                    select(RunStageModel).where(RunStageModel.run_id == base.run_id)
+                )
+            }
+            latest = _progress_event(row, base.run_lifecycle, stage_states).snapshot
         return _job_snapshot(
             base.job_id,
             base.run_id,
@@ -1232,6 +1414,7 @@ class SQLAlchemyDurableExecutionRepository:
             failure_count=base.failure_count,
             result_available=base.result_available,
             cancellation=durable.cancellation_requested,
+            latest_progress=latest,
         )
 
 
@@ -1277,6 +1460,7 @@ def _job_snapshot(  # noqa: PLR0913 - explicit compatibility projection.
     result_available: bool = False,
     summary_count: int = 0,
     cancellation: bool = False,
+    latest_progress: RunProgressSnapshot | None = None,
 ) -> JobSnapshot:
     return JobSnapshot(
         job_id,
@@ -1285,8 +1469,8 @@ def _job_snapshot(  # noqa: PLR0913 - explicit compatibility projection.
         state,
         queue_position,
         lifecycle,
-        None,
-        None,
+        latest_progress.active_stage if latest_progress is not None else None,
+        latest_progress,
         warning_count,
         failure_count,
         cancellation,
@@ -1294,6 +1478,192 @@ def _job_snapshot(  # noqa: PLR0913 - explicit compatibility projection.
         summary_count,
         state.terminal,
         CRAWL_JOB_REGISTRY_VERSION,
+    )
+
+
+def _progress_event(
+    row: ProgressSnapshotModel,
+    lifecycle: str | None,
+    stage_states: dict[str, RunStageState],
+) -> RunProgressEvent:
+    stage = RunStage(row.active_stage) if row.active_stage is not None else None
+    snapshot = RunProgressSnapshot(
+        lifecycle=RunLifecycle(lifecycle) if lifecycle is not None else RunLifecycle.PENDING,
+        active_stage=stage,
+        stage_state=stage_states.get(row.active_stage) if row.active_stage is not None else None,
+        urls_discovered=row.discovered_count,
+        urls_queued=row.queued_count,
+        urls_fetched=row.fetched_count,
+        urls_parsed=row.parsed_count,
+        bytes_fetched=row.byte_count,
+        queue_size=row.queue_size,
+        active_count=row.active_fetch_count,
+        current_depth=row.current_depth,
+        warning_count=row.warning_count,
+        failure_count=row.failure_count,
+        cancellation_requested=row.cancellation_requested,
+        recent_crawl_error_code=row.recent_safe_error_code,
+        elapsed_seconds=row.elapsed_seconds,
+    )
+    return RunProgressEvent(
+        row.sequence,
+        RunEventCode(row.event_code),
+        snapshot,
+        "Durable progress evidence",
+    )
+
+
+def _json_objects(raw: str) -> tuple[dict[str, object], ...]:
+    value: object = json.loads(raw)
+    if not isinstance(value, list):
+        raise TypeError
+    return tuple(cast("dict[str, object]", item) for item in value if isinstance(item, dict))
+
+
+def _json_strings(raw: str) -> tuple[str, ...]:
+    value: object = json.loads(raw)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise TypeError
+    return tuple(cast("str", item) for item in value)
+
+
+def _required_text(value: dict[str, object], key: str) -> str:
+    item = value.get(key)
+    if not isinstance(item, str):
+        raise TypeError
+    return item
+
+
+def _optional_text(value: dict[str, object], key: str) -> str | None:
+    item = value.get(key)
+    if item is None:
+        return None
+    if not isinstance(item, str):
+        raise TypeError
+    return item
+
+
+def _directive_groups(raw: str) -> tuple[RecommendationDirectiveGroup, ...]:
+    groups: list[RecommendationDirectiveGroup] = []
+    for item in _json_objects(raw):
+        directives_value = item.get("directives")
+        if not isinstance(directives_value, list):
+            raise TypeError
+        directives: list[str] = []
+        for raw_directive in directives_value:
+            if not isinstance(raw_directive, dict):
+                raise TypeError
+            directive = cast("dict[str, object]", raw_directive)
+            name = _required_text(directive, "name")
+            value = _optional_text(directive, "value")
+            directives.append(f"{name}: {value}" if value else name)
+        groups.append(
+            RecommendationDirectiveGroup(
+                agent=_required_text(item, "agent"), directives=tuple(directives)
+            )
+        )
+    return tuple(groups)
+
+
+def _durable_recommendation_detail(
+    row: SitemapRecommendationModel,
+    page: CrawlPageEvidenceModel | None,
+    redirects: tuple[CrawlPageRedirectHopModel, ...],
+    page_warnings: tuple[CrawlPageParseWarningModel, ...],
+) -> DurableRecommendationDetail:
+    rules = tuple(
+        RecommendationRuleDetail(
+            rule_id=_required_text(value, "rule_id"),
+            outcome=_required_text(value, "outcome"),
+            reason_code=_optional_text(value, "reason_code"),
+            explanation=_required_text(value, "explanation"),
+        )
+        for value in _json_objects(row.evidence_json)
+    )
+    warnings = [
+        RecommendationWarningDetail(
+            code=_required_text(value, "code"),
+            explanation=_required_text(value, "explanation"),
+            source=_required_text(value, "source"),
+        )
+        for value in _json_objects(row.warning_details_json)
+    ]
+    warnings.extend(
+        RecommendationWarningDetail(value.stable_code, value.safe_summary, value.category)
+        for value in page_warnings
+        if (value.stable_code, value.safe_summary, value.category)
+        not in {(item.code, item.explanation, item.source) for item in warnings}
+    )
+    metadata_warning_codes = tuple(
+        dict.fromkeys(
+            item.code
+            for item in warnings
+            if item.source == "html_metadata" or item.code.startswith(("title_", "meta_"))
+        )
+    )
+    return DurableRecommendationDetail(
+        recommendation=_durable_recommendation(row),
+        reason_codes=_json_strings(row.reason_codes_json),
+        rule_evidence=rules,
+        warning_details=tuple(warnings),
+        metadata_warning_codes=metadata_warning_codes,
+        evidence_id=page.evidence_id if page is not None else None,
+        crawl_depth=page.crawl_depth if page is not None else None,
+        fetch_outcome=page.fetch_outcome if page is not None else None,
+        evidence_state=page.evidence_state if page is not None else None,
+        page_failure_code=page.failure_code if page is not None else None,
+        title_presence=page.title_presence if page is not None else None,
+        title=page.title_value if page is not None else None,
+        description_presence=page.description_presence if page is not None else None,
+        meta_description=page.description_value if page is not None else None,
+        canonical_presence=page.canonical_presence if page is not None else None,
+        meta_robots=_directive_groups(page.meta_robots_json) if page is not None else (),
+        x_robots_tag=_directive_groups(page.x_robots_json) if page is not None else (),
+        redirect_chain=tuple(
+            RecommendationRedirectDetail(
+                sequence=value.sequence,
+                source_url=value.source_url,
+                target_url=value.target_url,
+                status_code=value.status_code,
+                terminal=value.terminal,
+                loop=value.loop,
+                failure_code=value.failure_code,
+            )
+            for value in redirects
+        ),
+        redirect_truncated=page.redirect_truncated if page is not None else None,
+        redirect_loop=page.redirect_loop if page is not None else None,
+        sitemap_membership=None,
+    )
+
+
+def _durable_recommendation(row: SitemapRecommendationModel) -> DurableRecommendation:
+    return DurableRecommendation(
+        sequence=row.sequence,
+        url=row.evaluated_url,
+        requested_url=row.requested_url,
+        final_url=row.final_url,
+        state=row.state,
+        determinacy=row.determinacy,
+        primary_reason=row.primary_reason,
+        explanation=row.explanation,
+        http_status=row.http_status,
+        content_type=row.content_type,
+        fetch_failure_code=row.fetch_failure_code,
+        canonical_url=row.canonical_url,
+        canonical_conflicting=row.canonical_conflicting,
+        redirect_source=row.redirect_source,
+        redirect_hops=row.redirect_hops,
+        redirect_final_url=row.redirect_final_url,
+        robots_available=row.robots_available,
+        robots_allowed=row.robots_allowed,
+        robots_reason_code=row.robots_reason_code,
+        generic_directives=tuple(json.loads(row.generic_directives_json)),
+        crawler_specific_directives=tuple(json.loads(row.crawler_specific_directives_json)),
+        indexability_conflict=row.indexability_conflict,
+        configured_exclusions=tuple(
+            (str(item[0]), str(item[1])) for item in json.loads(row.configured_exclusions_json)
+        ),
     )
 
 

@@ -112,6 +112,15 @@ class MetadataAuditService:
             )
             raise ValueError("metadata_audit_persistence_failed") from None
 
+    def run_candidates(self, *, limit: int = 50) -> tuple[Any, ...]:
+        """Return a bounded, newest-first run-selection projection."""
+        if not 1 <= limit <= 100:
+            raise ValueError("metadata_audit_invalid_page_size")
+        return self._repository.run_candidates(
+            maximum_pages=self.configuration.maximum_pages,
+            limit=limit,
+        )
+
     def get_audit(self, audit_id: str) -> MetadataAudit:
         value = self._repository.get(audit_id)
         if value is None:

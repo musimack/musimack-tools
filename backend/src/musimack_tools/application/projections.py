@@ -61,6 +61,49 @@ def project_result(
         return _missing_result()
     run = view.full_result
     if run is None:
+        durable = view.durable_projection
+        if durable is not None:
+            return ApplicationResultProjection(
+                ApplicationOutcomeCode.FOUND,
+                snapshot.job_id,
+                snapshot.run_id,
+                snapshot.attempt_number,
+                snapshot.state.value,
+                durable.run_lifecycle,
+                durable.stage_states,
+                durable.crawl_counts,
+                _bounded_unique(durable.crawl_error_codes, configuration.maximum_projection_codes),
+                durable.recommendation_counts,
+                durable.xml_document_count,
+                durable.xml_entry_count,
+                durable.publication_state,
+                durable.published_file_count,
+                durable.publication_filenames[: configuration.maximum_projection_filenames],
+                durable.manifest_sha256,
+                durable.summary_hashes,
+                _bounded_unique(
+                    (
+                        *durable.warning_codes,
+                        *(item.code for item in view.coordination_warnings),
+                    ),
+                    configuration.maximum_projection_codes,
+                ),
+                _bounded_unique(
+                    (
+                        *durable.failure_codes,
+                        *(
+                            (view.coordination_failure.code.value,)
+                            if view.coordination_failure is not None
+                            else ()
+                        ),
+                    ),
+                    configuration.maximum_projection_codes,
+                ),
+                False,  # noqa: FBT003 - durable projection is retained, not the full object.
+                False,  # noqa: FBT003 - summary bodies are not retained here.
+                snapshot.registry_version,
+                (("job_registry", snapshot.registry_version), *durable.downstream_versions),
+            )
         return ApplicationResultProjection(
             ApplicationOutcomeCode.RESULT_UNAVAILABLE,
             snapshot.job_id,

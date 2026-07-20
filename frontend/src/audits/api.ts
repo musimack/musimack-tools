@@ -9,6 +9,7 @@ import {
   type AuditPage,
   type DuplicateGroup,
   type ExportFormat,
+  type MetadataAuditRunCandidate,
   type Page,
 } from './contracts';
 
@@ -103,10 +104,31 @@ const group = (value: unknown): DuplicateGroup => {
     throw new ApiError(502, 'invalid_response', 'Invalid duplicate group.', null, []);
   return item as DuplicateGroup;
 };
+const runCandidate = (value: unknown): MetadataAuditRunCandidate => {
+  const item = record(value);
+  if (
+    typeof item.run_id !== 'string' ||
+    typeof item.job_id !== 'string' ||
+    typeof item.seed_url !== 'string' ||
+    typeof item.job_status !== 'string' ||
+    typeof item.crawl_profile !== 'string' ||
+    typeof item.page_evidence_count !== 'number' ||
+    typeof item.evidence_state !== 'string' ||
+    typeof item.eligible !== 'boolean'
+  )
+    throw new ApiError(502, 'invalid_response', 'Invalid run-selection evidence.', null, []);
+  return item as MetadataAuditRunCandidate;
+};
 async function post(path: string, body: unknown): Promise<unknown> {
   return data(await requestJson(path, { method: 'POST', body: JSON.stringify(body) }));
 }
 export const auditApi = {
+  runCandidates: async (): Promise<MetadataAuditRunCandidate[]> => {
+    const items = data(await requestJson('/audits/metadata/run-candidates'));
+    if (!Array.isArray(items))
+      throw new ApiError(502, 'invalid_response', 'Invalid run-selection response.', null, []);
+    return items.map(runCandidate);
+  },
   create: async (runId: string): Promise<Audit> =>
     audit(await post('/audits/metadata', { run_id: runId })),
   list: async (values: Query = {}): Promise<Page<Audit>> =>

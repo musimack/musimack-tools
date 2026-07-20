@@ -25,6 +25,7 @@ from musimack_tools.domain.application import (
     ApplicationPreflightResult,
     ApplicationPreparationResult,
     ApplicationProgressResult,
+    ApplicationRecommendationDetail,
     ApplicationRecommendationPage,
     ApplicationRegistryStatus,
     ApplicationServiceConfiguration,
@@ -206,8 +207,15 @@ class SeoToolkitApplicationService:
         reason: str | None = None,
         text: str | None = None,
     ) -> ApplicationRecommendationPage:
-        view = await self._jobs.result(job_id)
-        if view.outcome.value == "not_found" or view.snapshot is None:
+        page = await self._jobs.recommendations(
+            job_id,
+            offset=offset,
+            limit=min(limit, self._configuration.maximum_recommendation_page_size),
+            state=state,
+            reason=reason,
+            text=text,
+        )
+        if page.outcome.value == "not_found":
             return ApplicationRecommendationPage(
                 outcome=ApplicationOutcomeCode.JOB_NOT_FOUND,
                 job_id=None,
@@ -220,71 +228,73 @@ class SeoToolkitApplicationService:
                 items=(),
                 rule_set_version=None,
             )
-        projection = (
-            view.full_result.recommendation_projection if view.full_result is not None else None
-        )
-        if projection is None:
+        if not page.details_available:
             return ApplicationRecommendationPage(
                 outcome=ApplicationOutcomeCode.RESULT_UNAVAILABLE,
-                job_id=view.snapshot.job_id,
-                run_id=view.snapshot.run_id,
-                offset=offset,
-                limit=limit,
+                job_id=page.job_id,
+                run_id=page.run_id,
+                offset=page.offset,
+                limit=page.limit,
                 total=0,
                 returned_count=0,
                 has_more=False,
                 items=(),
                 rule_set_version=None,
             )
-        normalized_text = text.casefold().strip() if text else None
-        filtered = tuple(
-            item
-            for item in projection.recommendations
-            if (state is None or item.state.value == state)
-            and (reason is None or item.primary_reason.value == reason)
-            and (normalized_text is None or normalized_text in item.evaluated_url.casefold())
-        )
-        bounded_limit = min(limit, self._configuration.maximum_recommendation_page_size)
-        page = filtered[offset : offset + bounded_limit]
         items = tuple(
             RecommendationItemProjection(
-                item.evaluated_url,
+                item.sequence,
+                item.url,
                 item.requested_url,
                 item.final_url,
-                item.state.value,
-                item.determinacy.value,
-                item.primary_reason.value,
+                item.state,
+                item.determinacy,
+                item.primary_reason,
                 item.explanation,
                 item.http_status,
                 item.content_type,
                 item.fetch_failure_code,
-                item.canonical.selected_url,
-                item.canonical.conflicting,
-                item.redirect.is_redirect_source,
-                item.redirect.hop_count,
-                item.redirect.final_url,
-                item.robots.available,
-                item.robots.allowed,
-                item.robots.reason_code,
-                item.indexability.generic_directives,
-                item.indexability.crawler_specific_directives,
-                item.indexability.generic_index_conflict,
-                tuple((value.rule_type, value.value) for value in item.configured_exclusions),
+                item.canonical_url,
+                item.canonical_conflicting,
+                item.redirect_source,
+                item.redirect_hops,
+                item.redirect_final_url,
+                item.robots_available,
+                item.robots_allowed,
+                item.robots_reason_code,
+                item.generic_directives,
+                item.crawler_specific_directives,
+                item.indexability_conflict,
+                item.configured_exclusions,
             )
-            for item in page
+            for item in page.items
         )
         return ApplicationRecommendationPage(
             ApplicationOutcomeCode.FOUND,
-            view.snapshot.job_id,
-            view.snapshot.run_id,
-            offset,
-            bounded_limit,
-            len(filtered),
+            page.job_id,
+            page.run_id,
+            page.offset,
+            page.limit,
+            page.total,
             len(items),
-            offset + len(items) < len(filtered),
+            page.offset + len(items) < page.total,
             items,
-            projection.rule_set_version,
+            page.rule_set_version,
         )
+
+    async def get_job_recommendation_detail(
+        self, job_id: str, sequence: int
+    ) -> ApplicationRecommendationDetail:
+        detail = await self._jobs.recommendation_detail(job_id, sequence)
+        if detail.outcome.value == "not_found":
+            return ApplicationRecommendationDetail(ApplicationOutcomeCode.JOB_NOT_FOUND, None)
+        if not detail.details_available:
+            return ApplicationRecommendationDetail(ApplicationOutcomeCode.RESULT_UNAVAILABLE, None)
+        if detail.item is None:
+            return ApplicationRecommendationDetail(
+                ApplicationOutcomeCode.RECOMMENDATION_NOT_FOUND, None
+            )
+        return ApplicationRecommendationDetail(ApplicationOutcomeCode.FOUND, detail.item)
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult:
         cancelled = await self._jobs.cancel(job_id)

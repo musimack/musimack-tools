@@ -32,6 +32,7 @@ import {
   type JobList,
   type JobResult,
   type JobStatus,
+  type RecommendationDetail,
   type RecommendationPage,
   type ScopeProfile,
 } from '../workflow/contracts';
@@ -44,6 +45,11 @@ const profileCopy: Record<CrawlProfile, string> = {
   deep_crawl: 'Broader limits for comprehensive analysis.',
   sitemap_only: 'Focus on sitemap recommendation output.',
 };
+
+const RECOMMENDATION_DEFAULT_PAGE_SIZE = 50;
+const RECOMMENDATION_ALL_PAGE_SIZE = 50_000;
+const RECOMMENDATION_PAGE_SIZES = new Set([50, 100, 500, RECOMMENDATION_ALL_PAGE_SIZE]);
+const MAXIMUM_ACCEPTED_BYTES_OVERRIDE = 5_000_000_000;
 
 const defaultRequest: CrawlRequest = {
   seed_url: '',
@@ -275,6 +281,16 @@ export function NewCrawlPage() {
       errors.push('Approved hosts must be host names only, without schemes, paths, or ports.');
     if (request.scope_profile === 'approved_hosts' && request.approved_hosts.length === 0)
       errors.push('Add at least one approved host for this scope policy.');
+    const acceptedBytes = request.overrides.max_accepted_bytes;
+    if (
+      acceptedBytes !== null &&
+      (!Number.isInteger(acceptedBytes) ||
+        acceptedBytes < 1 ||
+        acceptedBytes > MAXIMUM_ACCEPTED_BYTES_OVERRIDE)
+    )
+      errors.push(
+        'Maximum accepted bytes must be a positive integer no greater than 5,000,000,000.',
+      );
     setClientErrors(errors);
     if (errors.length) return;
     setBusy(true);
@@ -471,6 +487,7 @@ export function NewCrawlPage() {
                   'max_urls',
                   'max_depth',
                   'max_duration',
+                  'max_accepted_bytes',
                   'max_concurrency',
                   'max_queue',
                   'min_delay',
@@ -479,10 +496,14 @@ export function NewCrawlPage() {
                 ] as const
               ).map((key) => (
                 <label key={key}>
-                  {readable(key)}
+                  {key === 'max_accepted_bytes' ? 'Maximum accepted bytes' : readable(key)}
                   <input
                     type="number"
-                    min="0"
+                    min={key === 'max_accepted_bytes' ? 1 : key === 'min_delay' ? 0.1 : 0}
+                    max={key === 'max_accepted_bytes' ? MAXIMUM_ACCEPTED_BYTES_OVERRIDE : undefined}
+                    step={
+                      key === 'max_accepted_bytes' ? 1 : key === 'min_delay' ? 'any' : undefined
+                    }
                     value={request.overrides[key] ?? ''}
                     onChange={(event) => {
                       setRequest({
@@ -734,6 +755,7 @@ export function JobDetailPage() {
 }
 
 export function JobResultPage() {
+  const { can } = useAuth();
   const { jobId } = useParams();
   const { data, error, loading, refresh } = useLoad<JobResult>(
     () => workflowApi.result(jobId ?? ''),
@@ -799,6 +821,14 @@ export function JobResultPage() {
                 <Link className="button button--quiet" to="/artifacts">
                   Artifacts
                 </Link>
+                {can('jobs.submit') && data.run_id ? (
+                  <Link
+                    className="button button--quiet"
+                    to={`/audits/metadata/new?run=${encodeURIComponent(data.run_id)}`}
+                  >
+                    Run Metadata Audit
+                  </Link>
+                ) : null}
               </div>
             </Card>
           </div>
@@ -818,25 +848,34 @@ export function RecommendationPage() {
   const { jobId } = useParams();
   const [params, setParams] = useSearchParams();
   const offset = Math.max(0, Number(params.get('offset') ?? 0) || 0);
+  const requestedLimit = Number(params.get('limit') ?? RECOMMENDATION_DEFAULT_PAGE_SIZE);
+  const limit = RECOMMENDATION_PAGE_SIZES.has(requestedLimit)
+    ? requestedLimit
+    : RECOMMENDATION_DEFAULT_PAGE_SIZE;
   const state = params.get('state');
   const reason = params.get('reason');
   const text = params.get('text');
   const filters = {
     offset,
-    limit: 25,
+    limit,
     ...(state ? { state } : {}),
     ...(reason ? { reason } : {}),
     ...(text ? { text } : {}),
   };
   const { data, error, loading } = useLoad<RecommendationPage>(
     () => workflowApi.recommendations(jobId ?? '', filters),
-    [jobId, offset, filters.state, filters.reason, filters.text],
+    [jobId, offset, limit, filters.state, filters.reason, filters.text],
   );
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
-    next.delete('offset');
+    if (key !== 'offset') next.delete('offset');
+    setParams(next);
+  };
+  const resetFilters = () => {
+    const next = new URLSearchParams();
+    if (params.has('limit')) next.set('limit', String(limit));
     setParams(next);
   };
   if (!jobId) return <ErrorState title="Invalid job">No job identifier was provided.</ErrorState>;
@@ -850,6 +889,20 @@ export function RecommendationPage() {
         Filter bounded, server-retained decisions without exposing crawl response bodies.
       </PageHeader>
       <div className="filter-bar">
+        <label>
+          Rows per page
+          <select
+            value={String(limit)}
+            onChange={(event) => {
+              update('limit', event.target.value);
+            }}
+          >
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="500">500</option>
+            <option value="50000">All</option>
+          </select>
+        </label>
         <label>
           State
           <select
@@ -883,6 +936,7 @@ export function RecommendationPage() {
             }}
           />
         </label>
+        <Button onClick={resetFilters}>Reset filters</Button>
       </div>
       {error ? (
         <ErrorState title="Recommendations are unavailable">{error}</ErrorState>
@@ -907,18 +961,23 @@ export function RecommendationPage() {
               {data.items.map((item) => (
                 <tr key={item.url}>
                   <td>
-                    {safeExternalUrl(item.url) ? (
-                      <a
-                        href={safeExternalUrl(item.url) ?? undefined}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {item.url}
-                      </a>
-                    ) : (
-                      <span>{item.url}</span>
-                    )}
+                    <Link
+                      to={`/jobs/${jobId}/results/recommendations/${String(item.sequence)}${params.toString() ? `?${params.toString()}` : ''}`}
+                    >
+                      {item.url}
+                    </Link>
                     <small>{item.explanation}</small>
+                    {safeExternalUrl(item.url) ? (
+                      <small>
+                        <a
+                          href={safeExternalUrl(item.url) ?? undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Open crawled URL in new tab
+                        </a>
+                      </small>
+                    ) : null}
                   </td>
                   <td>
                     <StatusBadge tone={item.state === 'include' ? 'positive' : 'warning'}>
@@ -935,7 +994,7 @@ export function RecommendationPage() {
             <Button
               disabled={offset === 0}
               onClick={() => {
-                update('offset', String(Math.max(0, offset - 25)));
+                update('offset', String(Math.max(0, offset - limit)));
               }}
             >
               Previous
@@ -946,14 +1005,297 @@ export function RecommendationPage() {
             <Button
               disabled={!data.has_more}
               onClick={() => {
-                update('offset', String(offset + 25));
+                update('offset', String(offset + limit));
               }}
             >
               Next
             </Button>
           </div>
+          {limit === RECOMMENDATION_ALL_PAGE_SIZE && data.total > limit ? (
+            <Alert tone="warning">
+              All is bounded to 50,000 retained recommendations per request.
+            </Alert>
+          ) : null}
         </>
       )}
+    </>
+  );
+}
+
+function DetailValue({ value }: { value: string | number | boolean | null | undefined }) {
+  if (value === null || value === undefined || value === '') return <>Not retained</>;
+  if (typeof value === 'boolean') return <>{value ? 'Yes' : 'No'}</>;
+  return <>{value}</>;
+}
+
+function DetailList({ values }: { values: readonly string[] }) {
+  return values.length ? (
+    <ul>
+      {values.map((value) => (
+        <li key={value}>{readable(value)}</li>
+      ))}
+    </ul>
+  ) : (
+    <>None retained</>
+  );
+}
+
+export function RecommendationDetailPage() {
+  const { jobId, sequence } = useParams();
+  const [params] = useSearchParams();
+  const [copyState, setCopyState] = useState<string | null>(null);
+  const parsedSequence = Number(sequence);
+  const validSequence = Number.isInteger(parsedSequence) && parsedSequence >= 1;
+  const { data, error, loading } = useLoad<RecommendationDetail>(
+    () => workflowApi.recommendation(jobId ?? '', parsedSequence),
+    [jobId, parsedSequence],
+  );
+  if (!jobId || !validSequence)
+    return (
+      <ErrorState title="Invalid recommendation">The detail identifier is invalid.</ErrorState>
+    );
+  const returnSearch = params.toString();
+  const returnTarget = `/jobs/${jobId}/results/recommendations${returnSearch ? `?${returnSearch}` : ''}`;
+  if (error) return <ErrorState title="Recommendation details are unavailable">{error}</ErrorState>;
+  if (loading || !data) return <Spinner label="Loading recommendation details" />;
+  const item = data.recommendation;
+  const externalUrl = safeExternalUrl(item.url);
+  const copyUrl = () => {
+    void navigator.clipboard.writeText(item.url).then(
+      () => {
+        setCopyState('URL copied.');
+      },
+      () => {
+        setCopyState('The URL could not be copied.');
+      },
+    );
+  };
+  return (
+    <>
+      <Breadcrumbs>
+        <Link to={returnTarget}>Recommendations</Link>
+        <span> / Detail</span>
+      </Breadcrumbs>
+      <PageHeader eyebrow="Sitemap review" title="URL recommendation detail">
+        Review retained, bounded evidence without exposing crawl response bodies or raw HTML.
+      </PageHeader>
+      <Card>
+        <h2>Actions</h2>
+        <div className="toolbar">
+          <Link className="button" to={returnTarget}>
+            Return to recommendations
+          </Link>
+          {externalUrl ? (
+            <a className="button" href={externalUrl} target="_blank" rel="noopener noreferrer">
+              Open crawled URL in new tab
+            </a>
+          ) : (
+            <span>External navigation is unavailable for this URL scheme.</span>
+          )}
+          <Button onClick={copyUrl}>Copy URL</Button>
+        </div>
+        <p>
+          Destination: <code>{item.url}</code>
+        </p>
+        {copyState ? <p role="status">{copyState}</p> : null}
+      </Card>
+      <div className="detail-grid">
+        <Card>
+          <h2>Recommendation</h2>
+          <dl>
+            <dt>Decision</dt>
+            <dd>{readable(item.state)}</dd>
+            <dt>Primary reason</dt>
+            <dd>{readable(item.primary_reason)}</dd>
+            <dt>Explanation</dt>
+            <dd>{item.explanation}</dd>
+            <dt>Determinacy</dt>
+            <dd>{readable(item.determinacy)}</dd>
+            <dt>All reason codes</dt>
+            <dd>
+              <DetailList values={data.reason_codes} />
+            </dd>
+          </dl>
+          <h3>Warnings</h3>
+          {data.warning_details.length ? (
+            <ul>
+              {data.warning_details.map((warning) => (
+                <li key={`${warning.source}:${warning.code}`}>
+                  <strong>{readable(warning.code)}</strong>: {warning.explanation}{' '}
+                  <small>({readable(warning.source)})</small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No retained warning details.</p>
+          )}
+        </Card>
+        <Card>
+          <h2>URL and fetch evidence</h2>
+          <dl>
+            <dt>Requested URL</dt>
+            <dd>{item.requested_url}</dd>
+            <dt>Evaluated URL</dt>
+            <dd>{item.url}</dd>
+            <dt>Final URL</dt>
+            <dd>
+              <DetailValue value={item.final_url} />
+            </dd>
+            <dt>HTTP status</dt>
+            <dd>
+              <DetailValue value={item.http_status} />
+            </dd>
+            <dt>Content type</dt>
+            <dd>
+              <DetailValue value={item.content_type} />
+            </dd>
+            <dt>Fetch outcome</dt>
+            <dd>
+              <DetailValue value={data.fetch_outcome} />
+            </dd>
+            <dt>Fetch failure</dt>
+            <dd>
+              <DetailValue value={item.fetch_failure_code ?? data.page_failure_code} />
+            </dd>
+            <dt>Redirect source</dt>
+            <dd>
+              <DetailValue value={item.redirect_source} />
+            </dd>
+            <dt>Redirect destination</dt>
+            <dd>
+              <DetailValue value={item.redirect_final_url} />
+            </dd>
+            <dt>Redirect loop</dt>
+            <dd>
+              <DetailValue value={data.redirect_loop} />
+            </dd>
+            <dt>Redirect evidence truncated</dt>
+            <dd>
+              <DetailValue value={data.redirect_truncated} />
+            </dd>
+            <dt>Robots permission</dt>
+            <dd>
+              {item.robots_available ? <DetailValue value={item.robots_allowed} /> : 'Unavailable'}
+            </dd>
+            <dt>Robots reason</dt>
+            <dd>
+              <DetailValue value={item.robots_reason_code} />
+            </dd>
+          </dl>
+          <h3>Redirect chain</h3>
+          {data.redirect_chain.length ? (
+            <ol>
+              {data.redirect_chain.map((redirect) => (
+                <li key={redirect.sequence}>
+                  {redirect.status_code}: {redirect.source_url} →{' '}
+                  <DetailValue value={redirect.target_url} />
+                  {redirect.failure_code ? ` (${readable(redirect.failure_code)})` : ''}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>No redirect hops retained.</p>
+          )}
+          <h3>Indexability</h3>
+          <dl>
+            <dt>Generic directives</dt>
+            <dd>
+              <DetailList values={item.generic_directives} />
+            </dd>
+            <dt>Crawler-specific directives</dt>
+            <dd>
+              <DetailList values={item.crawler_specific_directives} />
+            </dd>
+            <dt>Conflicting evidence</dt>
+            <dd>
+              <DetailValue value={item.indexability_conflict} />
+            </dd>
+          </dl>
+        </Card>
+        <Card>
+          <h2>Metadata</h2>
+          <dl>
+            <dt>Title</dt>
+            <dd>
+              <DetailValue value={data.title} />
+            </dd>
+            <dt>Title state</dt>
+            <dd>
+              <DetailValue value={data.title_presence} />
+            </dd>
+            <dt>Meta description</dt>
+            <dd>
+              <DetailValue value={data.meta_description} />
+            </dd>
+            <dt>Description state</dt>
+            <dd>
+              <DetailValue value={data.description_presence} />
+            </dd>
+            <dt>Canonical</dt>
+            <dd>
+              <DetailValue value={item.canonical_url} />
+            </dd>
+            <dt>Canonical state</dt>
+            <dd>
+              <DetailValue value={data.canonical_presence} />
+            </dd>
+            <dt>Canonical conflict</dt>
+            <dd>
+              <DetailValue value={item.canonical_conflicting} />
+            </dd>
+            <dt>Meta robots</dt>
+            <dd>
+              {data.meta_robots.length
+                ? data.meta_robots
+                    .map((group) => `${group.agent}: ${group.directives.join(', ')}`)
+                    .join('; ')
+                : 'None retained'}
+            </dd>
+            <dt>X-Robots-Tag</dt>
+            <dd>
+              {data.x_robots_tag.length
+                ? data.x_robots_tag
+                    .map((group) => `${group.agent}: ${group.directives.join(', ')}`)
+                    .join('; ')
+                : 'None retained'}
+            </dd>
+            <dt>Metadata warning codes</dt>
+            <dd>
+              <DetailList values={data.metadata_warning_codes} />
+            </dd>
+          </dl>
+        </Card>
+        <Card>
+          <h2>Context</h2>
+          <dl>
+            <dt>Crawl depth</dt>
+            <dd>
+              <DetailValue value={data.crawl_depth} />
+            </dd>
+            <dt>Sitemap membership</dt>
+            <dd>
+              <DetailValue value={data.sitemap_membership} />
+            </dd>
+            <dt>Page evidence identifier</dt>
+            <dd className="wrap-anywhere">
+              <DetailValue value={data.evidence_id} />
+            </dd>
+            <dt>Evidence state</dt>
+            <dd>
+              <DetailValue value={data.evidence_state} />
+            </dd>
+          </dl>
+          <h3>Decision evidence</h3>
+          <ol>
+            {data.rule_evidence.map((rule) => (
+              <li key={rule.rule_id}>
+                <strong>{readable(rule.outcome)}</strong>: {rule.explanation}
+                {rule.reason_code ? ` (${readable(rule.reason_code)})` : ''}
+              </li>
+            ))}
+          </ol>
+        </Card>
+      </div>
     </>
   );
 }

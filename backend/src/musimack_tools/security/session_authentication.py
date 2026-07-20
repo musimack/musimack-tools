@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
     from musimack_tools.api.access import InternalAccessVerifier
 
+_MAXIMUM_SESSION_COOKIE_CANDIDATES = 8
+
 
 class SessionAccessVerifier:
     def __init__(
@@ -50,8 +52,24 @@ class SessionAccessVerifier:
         return AccessDecision(AccessOutcome.ALLOWED, caller=InternalCallerContext())
 
     async def verify(self, request: Request) -> AccessDecision:
-        token = request.cookies.get(self._configuration.session_cookie_name)
-        if token is not None:
+        tokens = _session_cookie_tokens(request, self._configuration.session_cookie_name)
+        if tokens:
+            if len(tokens) > _MAXIMUM_SESSION_COOKIE_CANDIDATES:
+                return AccessDecision(
+                    AccessOutcome.DENIED, AccessDenialReason.AUTHENTICATION_FAILED
+                )
+            valid_tokens: list[str] = []
+            for candidate in tokens:
+                try:
+                    self._service.authenticate_session(candidate)
+                except AuthenticationError:
+                    continue
+                valid_tokens.append(candidate)
+            if len(valid_tokens) != 1:
+                return AccessDecision(
+                    AccessOutcome.DENIED, AccessDenialReason.AUTHENTICATION_FAILED
+                )
+            token = valid_tokens[0]
             try:
                 issued = self._service.authenticate_and_rotate(token)
             except AuthenticationError:
@@ -60,6 +78,7 @@ class SessionAccessVerifier:
                 )
             principal = issued.principal
             request.state.authenticated_principal = principal
+            request.state.authenticated_session_token = issued.raw_token
             if issued.raw_token != token:
                 request.state.session_replacement_token = issued.raw_token
             request.state.authentication_outcome = "allowed"
@@ -83,3 +102,24 @@ class SessionAccessVerifier:
 
         if isinstance(principal, AuthenticatedPrincipal):
             self._service.record_authorization_denied(principal, permission)
+
+
+def _session_cookie_tokens(request: Request, cookie_name: str) -> tuple[str, ...]:
+    """Return bounded distinct same-name values without framework order collapse."""
+    tokens: list[str] = []
+    seen: set[str] = set()
+    candidate_count = 0
+    for header_name, header_value in request.scope.get("headers", ()):
+        if header_name.lower() != b"cookie":
+            continue
+        for segment in header_value.decode("latin-1").split(";"):
+            name, separator, value = segment.strip().partition("=")
+            token = value.strip()
+            if separator and name == cookie_name:
+                candidate_count += 1
+                if candidate_count > _MAXIMUM_SESSION_COOKIE_CANDIDATES:
+                    return (token,) * (_MAXIMUM_SESSION_COOKIE_CANDIDATES + 1)
+            if separator and name == cookie_name and token not in seen:
+                seen.add(token)
+                tokens.append(token)
+    return tuple(tokens)

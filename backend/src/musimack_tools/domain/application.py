@@ -6,12 +6,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from musimack_tools.domain.job import MAXIMUM_RECOMMENDATION_PAGE_SIZE
 from musimack_tools.domain.sitemap_publication import ExistingFilePolicy
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from musimack_tools.domain.job import JobProgressView
+    from musimack_tools.domain.job import DurableRecommendationDetail, JobProgressView
     from musimack_tools.domain.job_registry import JobRegistrySnapshot, JobShutdownResult
     from musimack_tools.domain.run import CrawlRunRequest
     from musimack_tools.domain.run_summary import RunSummaryConfiguration
@@ -131,6 +132,7 @@ class ApplicationOutcomeCode(StrEnum):
     ACTIVE_DUPLICATE = "active_duplicate"
     QUEUE_CAPACITY_REACHED = "queue_capacity_reached"
     JOB_NOT_FOUND = "job_not_found"
+    RECOMMENDATION_NOT_FOUND = "recommendation_not_found"
     CANCELLATION_REQUESTED = "cancellation_requested"
     CANCELLED_WHILE_QUEUED = "cancelled_while_queued"
     ALREADY_REQUESTED = "already_requested"
@@ -334,6 +336,7 @@ class ApplicationJobList:
 
 @dataclass(frozen=True, slots=True)
 class RecommendationItemProjection:
+    sequence: int
     url: str
     requested_url: str
     final_url: str | None
@@ -370,6 +373,13 @@ class ApplicationRecommendationPage:
     has_more: bool
     items: tuple[RecommendationItemProjection, ...]
     rule_set_version: str | None
+    application_service_version: str = APPLICATION_SERVICE_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationRecommendationDetail:
+    outcome: ApplicationOutcomeCode
+    item: DurableRecommendationDetail | None
     application_service_version: str = APPLICATION_SERVICE_VERSION
 
 
@@ -417,7 +427,7 @@ class ApplicationServiceConfiguration:
     maximum_projection_codes: int = 100
     maximum_projection_filenames: int = 100
     maximum_job_list_items: int = 100
-    maximum_recommendation_page_size: int = 100
+    maximum_recommendation_page_size: int = MAXIMUM_RECOMMENDATION_PAGE_SIZE
     coordinator_available: bool = True
     crawl_service_available: bool = True
     robots_service_available: bool = True

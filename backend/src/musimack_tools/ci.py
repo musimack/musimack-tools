@@ -21,8 +21,8 @@ from sqlalchemy import create_engine
 
 import musimack_tools
 from musimack_tools.persistence.migrations import (
+    PERSISTENCE_HEAD_PARENT_REVISION,
     PERSISTENCE_HEAD_REVISION,
-    STRUCTURED_DATA_AUDIT_REVISION,
     alembic_configuration,
     current_revision,
     upgrade_to_head,
@@ -122,7 +122,7 @@ def audit_migrations(backend_root: Path) -> dict[str, object]:
     if heads != (PERSISTENCE_HEAD_REVISION,):
         raise CiAuditError("migration_heads_invalid")
     head = scripts.get_revision(PERSISTENCE_HEAD_REVISION)
-    if head is None or head.down_revision != STRUCTURED_DATA_AUDIT_REVISION:
+    if head is None or head.down_revision != PERSISTENCE_HEAD_PARENT_REVISION:
         raise CiAuditError("migration_parent_invalid")
     with tempfile.TemporaryDirectory(prefix="musimack-migration-audit-") as temporary:
         database = Path(temporary) / "fresh.sqlite3"

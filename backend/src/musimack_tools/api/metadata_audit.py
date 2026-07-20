@@ -76,6 +76,12 @@ def create_metadata_audit_router(
         items = service.list_audits(offset=offset, page_size=size)
         return _page_response(items, offset, size, "audits", AUDIT_ORDERING, {})
 
+    @router.get("/run-candidates", response_model=MetadataAuditResponse, responses=errors)
+    async def run_candidates(
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> MetadataAuditResponse:
+        return _response(lambda: [asdict(item) for item in service.run_candidates(limit=limit)])
+
     @router.get("/{audit_id}", response_model=MetadataAuditResponse, responses=errors)
     async def detail(audit_id: str) -> MetadataAuditResponse:
         return _response(lambda: asdict(service.get_audit(audit_id)))

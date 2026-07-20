@@ -9,6 +9,8 @@ if TYPE_CHECKING:
         JobCancellationResult,
         JobLookupResult,
         JobProgressView,
+        JobRecommendationDetail,
+        JobRecommendationPage,
         JobResultView,
         JobSubmissionRequest,
         JobSubmissionResult,
@@ -35,6 +37,38 @@ class InternalJobService:
 
     async def result(self, job_id: str) -> JobResultView:
         return await self._registry.result(job_id)
+
+    async def recommendations(  # noqa: PLR0913 - bounded filter contract.
+        self,
+        job_id: str,
+        *,
+        offset: int,
+        limit: int,
+        state: str | None = None,
+        reason: str | None = None,
+        text: str | None = None,
+    ) -> JobRecommendationPage:
+        from musimack_tools.jobs.recommendations import (  # noqa: PLC0415
+            recommendations_from_result,
+        )
+
+        return recommendations_from_result(
+            await self._registry.result(job_id),
+            offset=offset,
+            limit=limit,
+            state=state,
+            reason=reason,
+            text=text,
+        )
+
+    async def recommendation_detail(self, job_id: str, sequence: int) -> JobRecommendationDetail:
+        from musimack_tools.jobs.recommendations import (  # noqa: PLC0415
+            recommendation_detail_from_result,
+        )
+
+        return recommendation_detail_from_result(
+            await self._registry.result(job_id), sequence=sequence
+        )
 
     async def cancel(self, job_id: str) -> JobCancellationResult:
         return await self._registry.cancel(job_id)

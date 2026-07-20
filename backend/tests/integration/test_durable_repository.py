@@ -11,6 +11,12 @@ import pytest
 from sqlalchemy import func, select
 
 from durable_helpers import FakeClock, durable_configuration, durable_repository
+from musimack_tools.application.profiles import APPLICATION_HARD_MAXIMA
+from musimack_tools.application.projections import project_result
+from musimack_tools.domain.application import (
+    ApplicationOutcomeCode,
+    ApplicationServiceConfiguration,
+)
 from musimack_tools.domain.durable_execution import (
     DurableFailureCode,
     DurableJobState,
@@ -24,6 +30,18 @@ from musimack_tools.domain.job import (
     JobLookupOutcome,
     JobSubmissionOutcome,
     JobSubmissionRequest,
+)
+from musimack_tools.domain.sitemap import (
+    CanonicalSummary,
+    GenericIndexabilitySummary,
+    RecommendationConfigurationSnapshot,
+    RecommendationDeterminacy,
+    RecommendationState,
+    RedirectSummary,
+    RobotsPermissionSummary,
+    SitemapReasonCode,
+    SitemapRecommendation,
+    SitemapRecommendationProjection,
 )
 from musimack_tools.persistence.durable_models import (
     DurableJobModel,
@@ -56,6 +74,94 @@ def _submit(
     assert result.result.outcome is JobSubmissionOutcome.ACCEPTED
     assert result.result.snapshot is not None
     return result.result.snapshot.job_id, result
+
+
+def _recommendation(
+    suffix: str,
+    state: RecommendationState,
+    reason: SitemapReasonCode,
+) -> SitemapRecommendation:
+    url = f"https://example.com/{suffix}"
+    return SitemapRecommendation(
+        evaluated_url=url,
+        requested_url=url,
+        final_url=url,
+        state=state,
+        determinacy=RecommendationDeterminacy.DETERMINATE,
+        primary_reason=reason,
+        hard_exclusion_reasons=(reason,) if state is RecommendationState.EXCLUDE else (),
+        review_reasons=(reason,) if state is RecommendationState.REVIEW else (),
+        warnings=(),
+        metadata_warnings=(),
+        fetch_failure_code=None,
+        http_status=200,
+        content_type="text/html",
+        robots=RobotsPermissionSummary(available=True, allowed=True, reason_code="allowed"),
+        indexability=GenericIndexabilitySummary(
+            generic_directives=(),
+            crawler_specific_directives=(),
+            generic_index_conflict=False,
+        ),
+        canonical=CanonicalSummary(
+            selected_url=url,
+            valid_candidates=(url,),
+            invalid_observation_count=0,
+            conflicting=False,
+        ),
+        redirect=RedirectSummary(
+            is_redirect_source=False,
+            hop_count=0,
+            final_url=url,
+            target_independently_evaluated=None,
+        ),
+        configured_exclusions=(),
+        rule_results=(),
+        explanation=f"{state.value} fixture recommendation",
+    )
+
+
+def _recommendation_projection() -> SitemapRecommendationProjection:
+    recommendations = (
+        _recommendation(
+            "include-guide", RecommendationState.INCLUDE, SitemapReasonCode.ELIGIBLE_HTML_PAGE
+        ),
+        _recommendation(
+            "exclude-noindex", RecommendationState.EXCLUDE, SitemapReasonCode.GENERIC_NOINDEX
+        ),
+        _recommendation(
+            "review-canonical", RecommendationState.REVIEW, SitemapReasonCode.INVALID_CANONICAL
+        ),
+        _recommendation(
+            "indeterminate-fetch",
+            RecommendationState.INDETERMINATE,
+            SitemapReasonCode.MISSING_REQUIRED_EVIDENCE,
+        ),
+    )
+    return SitemapRecommendationProjection(
+        recommendations=recommendations,
+        included_url_count=1,
+        excluded_url_count=1,
+        review_count=1,
+        indeterminate_count=1,
+        counts_by_primary_reason=(),
+        metadata_warning_counts=(),
+        duplicate_suppression_count=0,
+        redirect_source_count=0,
+        canonical_exclusion_count=0,
+        noindex_exclusion_count=1,
+        robots_denial_count=0,
+        non_html_count=0,
+        non_200_count=0,
+        configuration=RecommendationConfigurationSnapshot(
+            missing_canonical_requires_review=False,
+            invalid_canonical_requires_review=True,
+            ambiguous_sniffed_html_requires_review=False,
+            crawler_specific_noindex_requires_review=False,
+            severe_parser_recovery_requires_review=True,
+            rule_set_version="sitemap-eligibility-v1",
+        ),
+        rule_set_version="sitemap-eligibility-v1",
+    )
 
 
 def test_submission_is_durable_and_has_queue_position(tmp_path: Path) -> None:
@@ -301,12 +407,111 @@ def test_progress_and_terminal_result_are_persisted(tmp_path: Path) -> None:
         claim = repository.claim("worker-test")[0]
         assert repository.mark_running(claim).outcome is LeaseOutcome.ACCEPTED
         assert repository.record_progress(claim, sample_progress())
+        assert repository.record_progress(claim, sample_progress(2))
         assert repository.complete(claim, sample_result(request)) is DurableJobState.COMPLETED
-        assert repository.progress(job_id).latest is not None
-        assert repository.lookup(job_id).outcome is JobLookupOutcome.FOUND
+        progress = repository.progress(job_id)
+        assert progress.latest is not None
+        assert progress.latest.sequence == 2
+        assert tuple(item.sequence for item in progress.history) == (1, 2)
+        lookup = repository.lookup(job_id)
+        assert lookup.outcome is JobLookupOutcome.FOUND
+        assert lookup.snapshot is not None
+        assert lookup.snapshot.latest_progress is not None
+        assert lookup.snapshot.latest_progress.urls_discovered == 2
         assert repository.status(job_id).final_result_available  # type: ignore[union-attr]
+        result = repository.result(job_id)
+        assert result.full_result is None
+        assert result.durable_projection is not None
+        assert result.durable_projection.run_lifecycle == "completed"
+        projection = project_result(
+            result, ApplicationServiceConfiguration(maxima=APPLICATION_HARD_MAXIMA)
+        )
+        assert projection.outcome is ApplicationOutcomeCode.FOUND
+        assert projection.stage_states == (("crawl", "completed"),)
+        legacy = repository.recommendations(job_id, offset=0, limit=25)
+        assert legacy.outcome is JobLookupOutcome.FOUND
+        assert not legacy.details_available
+        assert not repository.recommendation_detail(job_id, 1).details_available
     finally:
         runtime.dispose()
+
+
+def test_recommendations_are_filterable_bounded_and_restart_safe(tmp_path: Path) -> None:
+    runtime, repository = durable_repository(tmp_path)
+    request = sample_request()
+    try:
+        job_id, _ = _submit(repository)
+        repository.register_worker(WorkerIdentity("worker-test"), 1)
+        claim = repository.claim("worker-test")[0]
+        result = replace(
+            sample_result(request), recommendation_projection=_recommendation_projection()
+        )
+        assert repository.complete(claim, result) is DurableJobState.COMPLETED
+        page = repository.recommendations(job_id, offset=0, limit=2)
+        assert page.details_available
+        assert page.total == 4
+        assert len(page.items) == 2
+        assert [item.sequence for item in page.items] == [1, 2]
+        assert repository.recommendations(job_id, offset=0, limit=500).limit == 500
+        assert repository.recommendations(job_id, offset=0, limit=50_001).limit == 50_000
+        result_counts = dict(repository.result(job_id).durable_projection.recommendation_counts)  # type: ignore[union-attr]
+        assert sum(result_counts.values()) == page.total
+        assert {
+            item.state for item in repository.recommendations(job_id, offset=0, limit=25).items
+        } == {"include", "exclude", "review", "indeterminate"}
+        assert (
+            repository.recommendations(job_id, offset=0, limit=25, state="review")
+            .items[0]
+            .url.endswith("review-canonical")
+        )
+        assert (
+            repository.recommendations(job_id, offset=0, limit=25, reason="generic_noindex")
+            .items[0]
+            .state
+            == "exclude"
+        )
+        for reason in (
+            "eligible",
+            "eligible html page",
+            "ELIGIBLE HTML PAGE",
+            "  eligible_html_page  ",
+        ):
+            reason_page = repository.recommendations(job_id, offset=0, limit=25, reason=reason)
+            assert reason_page.total == 1
+            assert reason_page.items[0].url.endswith("include-guide")
+        assert (
+            repository.recommendations(job_id, offset=0, limit=25, reason="canonical")
+            .items[0]
+            .url.endswith("review-canonical")
+        )
+        assert repository.recommendations(job_id, offset=0, limit=25, reason="   ").total == 4
+        detail = repository.recommendation_detail(job_id, 2)
+        assert detail.details_available and detail.item is not None
+        assert detail.item.recommendation.sequence == 2
+        assert detail.item.reason_codes == ("generic_noindex",)
+        assert detail.item.rule_evidence == ()
+        assert detail.item.evidence_id is None
+        assert repository.recommendation_detail(job_id, 99).item is None
+        assert (
+            repository.recommendations(job_id, offset=0, limit=25, text="INCLUDE-GUIDE")
+            .items[0]
+            .state
+            == "include"
+        )
+    finally:
+        runtime.dispose()
+
+    restarted_runtime, restarted = durable_repository(tmp_path)
+    try:
+        page = restarted.recommendations(job_id, offset=0, limit=25)
+        assert page.details_available
+        assert page.total == 4
+        assert page.rule_set_version == "sitemap-eligibility-v1"
+        detail = restarted.recommendation_detail(job_id, 2)
+        assert detail.item is not None
+        assert detail.item.recommendation.primary_reason == "generic_noindex"
+    finally:
+        restarted_runtime.dispose()
 
 
 def test_retry_wait_uses_new_availability_and_same_job_id(tmp_path: Path) -> None:

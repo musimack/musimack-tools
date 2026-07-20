@@ -1,6 +1,7 @@
 import { ApiError, requestJson } from '../api/client';
 import { environment } from '../config/environment';
 import type {
+  ApiCrawlRequest,
   Artifact,
   CrawlRequest,
   HistoricalJob,
@@ -13,6 +14,7 @@ import type {
   Page,
   PreflightResult,
   RecommendationPage,
+  RecommendationDetail,
   ValidationReport,
 } from './contracts';
 
@@ -122,6 +124,7 @@ function parseRecommendationPage(value: unknown): RecommendationPage {
     const item = record(value);
     if (
       typeof item.url !== 'string' ||
+      typeof item.sequence !== 'number' ||
       typeof item.state !== 'string' ||
       !recommendationStates.has(item.state)
     )
@@ -135,6 +138,28 @@ function parseRecommendationPage(value: unknown): RecommendationPage {
   });
   return page as RecommendationPage;
 }
+function parseRecommendationDetail(value: unknown): RecommendationDetail {
+  const detail = record(value);
+  const recommendation = record(detail.recommendation);
+  if (
+    typeof recommendation.sequence !== 'number' ||
+    typeof recommendation.url !== 'string' ||
+    typeof recommendation.state !== 'string' ||
+    !recommendationStates.has(recommendation.state) ||
+    !Array.isArray(detail.reason_codes) ||
+    !Array.isArray(detail.rule_evidence) ||
+    !Array.isArray(detail.warning_details) ||
+    !Array.isArray(detail.redirect_chain)
+  )
+    throw new ApiError(
+      502,
+      'invalid_response',
+      'The service returned an invalid recommendation detail.',
+      null,
+      [],
+    );
+  return detail as RecommendationDetail;
+}
 async function post<T>(path: string, payload?: unknown): Promise<T> {
   return data<T>(
     await requestJson(path, {
@@ -144,12 +169,47 @@ async function post<T>(path: string, payload?: unknown): Promise<T> {
   );
 }
 
+export function serializeCrawlRequest(request: CrawlRequest): ApiCrawlRequest {
+  const { overrides: formOverrides, existing_file_policy: existingFilePolicy, ...fields } = request;
+  const overrides = {
+    ...(formOverrides.max_urls === null ? {} : { maximum_urls: formOverrides.max_urls }),
+    ...(formOverrides.max_depth === null ? {} : { maximum_depth: formOverrides.max_depth }),
+    ...(formOverrides.max_duration === null
+      ? {}
+      : { maximum_duration_seconds: formOverrides.max_duration }),
+    ...(formOverrides.max_accepted_bytes === null
+      ? {}
+      : { maximum_accepted_bytes: formOverrides.max_accepted_bytes }),
+    ...(formOverrides.max_concurrency === null
+      ? {}
+      : { maximum_concurrency: formOverrides.max_concurrency }),
+    ...(formOverrides.max_queue === null ? {} : { maximum_queue_size: formOverrides.max_queue }),
+    ...(formOverrides.min_delay === null
+      ? {}
+      : { minimum_request_delay_seconds: formOverrides.min_delay }),
+    ...(formOverrides.max_redirect_hops === null
+      ? {}
+      : { maximum_redirect_hops: formOverrides.max_redirect_hops }),
+    ...(formOverrides.max_response_bytes === null
+      ? {}
+      : { maximum_response_bytes: formOverrides.max_response_bytes }),
+  };
+  return {
+    ...fields,
+    overrides,
+    existing_file_policy: existingFilePolicy === 'fail' ? 'fail_if_exists' : 'overwrite',
+  };
+}
+
 export const workflowApi = {
   validate: async (request: CrawlRequest) =>
-    parseValidation(await post<unknown>(`${API}/requests/validate`, request)),
-  preflight: (request: CrawlRequest) => post<PreflightResult>(`${API}/requests/preflight`, request),
+    parseValidation(
+      await post<unknown>(`${API}/requests/validate`, serializeCrawlRequest(request)),
+    ),
+  preflight: (request: CrawlRequest) =>
+    post<PreflightResult>(`${API}/requests/preflight`, serializeCrawlRequest(request)),
   submit: async (request: CrawlRequest) => {
-    const submission = record(await post<unknown>(`${API}/jobs`, request));
+    const submission = record(await post<unknown>(`${API}/jobs`, serializeCrawlRequest(request)));
     return { outcome: String(submission.outcome), status: parseStatus(submission.status) };
   },
   jobs: async (): Promise<JobList> => {
@@ -196,6 +256,19 @@ export const workflowApi = {
     parseRecommendationPage(
       data(await requestJson(`${API}/jobs/${id(jobId)}/recommendations${query(values)}`)),
     ),
+  recommendation: async (jobId: string, sequence: number): Promise<RecommendationDetail> => {
+    if (!Number.isInteger(sequence) || sequence < 1 || sequence > 50_000)
+      throw new ApiError(
+        400,
+        'invalid_identifier',
+        'The recommendation identifier is invalid.',
+        null,
+        [],
+      );
+    return parseRecommendationDetail(
+      data(await requestJson(`${API}/jobs/${id(jobId)}/recommendations/${String(sequence)}`)),
+    );
+  },
   artifacts: async (
     offset = 0,
     limit = 50,

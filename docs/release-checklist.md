@@ -7,7 +7,7 @@
 - [ ] Required Linux and Windows checks are green.
 - [ ] No unexpected skip, secret, network, lock, migration, or artifact failure exists.
 - [ ] Backend and frontend dependency/lock files changed only when explicitly authorized.
-- [ ] Migration has exactly head `0013_website_migration_qa` with parent `0012_structured_data_audit`, or the release notes explain an approved successor.
+- [ ] The unpublished Phase 29 candidate has exactly head `0015_sitemap_recommendation_retention` with parent `0014_durable_result_projection`, or the release notes explain an approved successor; published `main` remains at `0013_website_migration_qa` until separately authorized publication.
 - [ ] Production frontend build has no source maps or embedded credentials.
 
 ## Candidate evidence

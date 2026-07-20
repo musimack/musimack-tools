@@ -616,8 +616,9 @@ class ArtifactService:
 
         if not isinstance(result, CrawlRunResult):
             raise TypeError("artifact integration requires a CrawlRunResult")  # noqa: TRY003
-        registered: list[ArtifactRecord] = []
-        failures: list[str] = []
+        generated = self.retain_generated_xml(job_id, result)
+        registered: list[ArtifactRecord] = list(generated.registered)
+        failures: list[str] = list(generated.failure_codes)
 
         def attempt(kind: ArtifactType, target: Path, byte_count: int, sha256: str) -> None:
             try:
@@ -675,6 +676,53 @@ class ArtifactService:
                     written.byte_count,
                     written.sha256,
                 )
+        return ArtifactRegistrationBatchResult(tuple(registered), tuple(failures))
+
+    def retain_generated_xml(self, job_id: str, result: object) -> ArtifactRegistrationBatchResult:
+        """Durably retain generated XML independently of publication and summaries."""
+        from musimack_tools.domain.run import CrawlRunResult  # noqa: PLC0415
+
+        if not isinstance(result, CrawlRunResult):
+            raise TypeError("artifact integration requires a CrawlRunResult")  # noqa: TRY003
+        bundle = result.xml_bundle
+        if bundle is None:
+            return ArtifactRegistrationBatchResult((), ())
+        registered: list[ArtifactRecord] = []
+        failures: list[str] = []
+
+        def attempt(kind: ArtifactType, filename: str, content: bytes) -> None:
+            try:
+                registered.append(
+                    self.store_bytes(
+                        job_id=job_id,
+                        run_id=result.run_id,
+                        artifact_type=kind,
+                        filename=filename,
+                        content=content,
+                    )
+                )
+            except (ArtifactError, OSError) as error:
+                code = (
+                    error.code.value
+                    if isinstance(error, ArtifactError)
+                    else ArtifactFailureCode.VERIFICATION_FAILED.value
+                )
+                failures.append(code)
+                _LOGGER.warning(
+                    "generated_xml_retention_failed job_id=%s run_id=%s reason_code=%s",
+                    job_id,
+                    result.run_id,
+                    code,
+                )
+
+        for document in bundle.documents:
+            attempt(ArtifactType.SITEMAP_XML, document.logical_name, document.xml_bytes)
+        if bundle.index_document is not None:
+            attempt(
+                ArtifactType.SITEMAP_INDEX,
+                bundle.index_document.logical_name,
+                bundle.index_document.xml_bytes,
+            )
         return ArtifactRegistrationBatchResult(tuple(registered), tuple(failures))
 
     def _root(self, root_id: str | None) -> ArtifactStorageRootConfiguration:

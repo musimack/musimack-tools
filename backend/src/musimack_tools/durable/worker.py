@@ -21,6 +21,7 @@ from musimack_tools.domain.durable_execution import (
 )
 
 if TYPE_CHECKING:
+    from musimack_tools.domain.run import CrawlRunResult
     from musimack_tools.domain.run_progress import RunProgressEvent
     from musimack_tools.jobs.coordinator import JobRunServiceFactory
     from musimack_tools.persistence.durable_repository import (
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     )
 
 Sleep = Callable[[float], Awaitable[None]]
+ResultObserver = Callable[[str, "CrawlRunResult"], None]
 _INVALID_WORKER_CONFIGURATION = "durable worker requires explicit enabled configuration"
 _LOGGER = getLogger(__name__)
 
@@ -52,6 +54,7 @@ class DurableWorkerService:
         run_service_factory: JobRunServiceFactory,
         *,
         sleep: Sleep = asyncio.sleep,
+        result_observer: ResultObserver | None = None,
     ) -> None:
         configuration = repository.configuration
         if not configuration.worker_enabled or configuration.worker_id is None:
@@ -59,6 +62,7 @@ class DurableWorkerService:
         self._repository = repository
         self._factory = run_service_factory
         self._sleep = sleep
+        self._result_observer = result_observer
         self._configuration = configuration
         self._worker_id = configuration.worker_id.value
         self._stop_requested = asyncio.Event()
@@ -211,6 +215,8 @@ class DurableWorkerService:
             request = self._repository.load_request(claim)
             executor = self._factory(token, _DurableProgressSink(self._repository, claim))
             result = await executor.execute(request)
+            if self._result_observer is not None:
+                self._result_observer(claim.job_id, result)
             self._repository.complete(claim, result)
         except Exception:  # noqa: BLE001 - worker boundary maps unexpected failures.
             with suppress(Exception):  # Failure remains bounded at the worker boundary.

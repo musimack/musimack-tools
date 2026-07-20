@@ -16,6 +16,7 @@ from musimack_tools.persistence.migrations import (
     AUTHENTICATION_AUTHORIZATION_REVISION,
     BROKEN_LINK_REDIRECT_ANALYSIS_REVISION,
     DURABLE_EXECUTION_REVISION,
+    DURABLE_RESULT_PROJECTION_REVISION,
     IMAGE_ALT_TEXT_AUDIT_REVISION,
     INITIAL_PERSISTENCE_REVISION,
     INTERNAL_LINK_ANALYSIS_REVISION,
@@ -23,6 +24,7 @@ from musimack_tools.persistence.migrations import (
     PAGE_CRAWL_EVIDENCE_REVISION,
     PERSISTENCE_HEAD_REVISION,
     SITEMAP_AUDIT_REVISION,
+    SITEMAP_RECOMMENDATION_RETENTION_REVISION,
     STRUCTURED_DATA_AUDIT_REVISION,
     WEBSITE_MIGRATION_QA_REVISION,
     alembic_configuration,
@@ -71,6 +73,70 @@ def test_upgrade_current_downgrade_and_reupgrade(tmp_path: Path) -> None:
     engine = create_engine(url)
     try:
         assert schema_is_current(engine)
+    finally:
+        engine.dispose()
+
+
+def test_durable_result_projection_upgrades_and_downgrades(tmp_path: Path) -> None:
+    database = tmp_path / "durable-result-projection.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, WEBSITE_MIGRATION_QA_REVISION)
+    engine = create_engine(url)
+    try:
+        assert "result_projection_json" not in {
+            item["name"] for item in inspect(engine).get_columns("runs")
+        }
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, DURABLE_RESULT_PROJECTION_REVISION)
+    engine = create_engine(url)
+    try:
+        assert current_revision(engine) == DURABLE_RESULT_PROJECTION_REVISION
+        assert not schema_is_current(engine)
+        assert "result_projection_json" in {
+            item["name"] for item in inspect(engine).get_columns("runs")
+        }
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, WEBSITE_MIGRATION_QA_REVISION)
+    engine = create_engine(url)
+    try:
+        assert not schema_is_current(engine)
+        assert "result_projection_json" not in {
+            item["name"] for item in inspect(engine).get_columns("runs")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_sitemap_recommendation_retention_upgrades_and_downgrades(tmp_path: Path) -> None:
+    database = tmp_path / "sitemap-recommendation-retention.db"
+    url = _url(database)
+    configuration = alembic_configuration(url, backend_root=BACKEND_ROOT)
+    command.upgrade(configuration, DURABLE_RESULT_PROJECTION_REVISION)
+    engine = create_engine(url)
+    try:
+        assert "sitemap_recommendations" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+    command.upgrade(configuration, SITEMAP_RECOMMENDATION_RETENTION_REVISION)
+    engine = create_engine(url)
+    try:
+        database_inspector = inspect(engine)
+        assert current_revision(engine) == SITEMAP_RECOMMENDATION_RETENTION_REVISION
+        assert schema_is_current(engine)
+        assert "sitemap_recommendations" in database_inspector.get_table_names()
+        assert {"recommendations_retained", "recommendation_rule_set_version"} <= {
+            item["name"] for item in database_inspector.get_columns("runs")
+        }
+    finally:
+        engine.dispose()
+    command.downgrade(configuration, DURABLE_RESULT_PROJECTION_REVISION)
+    engine = create_engine(url)
+    try:
+        assert not schema_is_current(engine)
+        assert "sitemap_recommendations" not in inspect(engine).get_table_names()
     finally:
         engine.dispose()
 
@@ -132,6 +198,7 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "sitemap_audit_comparisons",
             "sitemap_audit_exports",
             "sitemap_audit_events",
+            "sitemap_recommendations",
             "crawl_link_evidence",
             "link_audits",
             "link_audit_targets",
@@ -200,6 +267,8 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             for constraint in database.get_foreign_keys(table)
         }
         assert foreign_keys == {
+            ("sitemap_recommendations", "jobs"),
+            ("sitemap_recommendations", "runs"),
             ("artifact_metadata", "jobs"),
             ("artifact_metadata", "runs"),
             ("artifact_records", "jobs"),
@@ -874,7 +943,7 @@ def test_migration_qa_upgrades_downgrades_and_reupgrades_from_structured_data(
         inspector = inspect(engine)
         assert current_revision(engine) == WEBSITE_MIGRATION_QA_REVISION
         assert phase_tables <= set(inspector.get_table_names())
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
         assert {"confidence", "requires_human_review"} <= {
             column["name"] for column in inspector.get_columns("migration_findings")
         }
@@ -926,7 +995,7 @@ def test_migration_qa_upgrades_downgrades_and_reupgrades_from_structured_data(
     engine = create_engine(url)
     try:
         assert phase_tables <= set(inspect(engine).get_table_names())
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
     finally:
         engine.dispose()
 

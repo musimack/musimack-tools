@@ -10,7 +10,9 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import and_, case, func, select
+from sqlalchemy.orm import aliased
 
+from musimack_tools.application.profiles import profiles
 from musimack_tools.domain.metadata_audit import (
     METADATA_AUDIT_PERSISTENCE_VERSION,
     METADATA_AUDIT_VERSION,
@@ -24,6 +26,7 @@ from musimack_tools.domain.metadata_audit import (
     DuplicateType,
     MetadataAudit,
     MetadataAuditConfiguration,
+    MetadataAuditRunCandidate,
     Severity,
     audit_page_identity,
     severity_max,
@@ -36,6 +39,7 @@ from musimack_tools.domain.page_evidence import (
     PageEvidenceState,
 )
 from musimack_tools.persistence.models import (
+    ConfigurationSnapshotModel,
     CrawlPageEvidenceModel,
     CrawlPageEvidenceSummaryModel,
     CrawlPageRedirectHopModel,
@@ -85,6 +89,93 @@ class SQLAlchemyMetadataAuditRepository:
                 terminal,
                 summary.total_records if summary else 0,
             )
+
+    def run_candidates(
+        self, *, maximum_pages: int, limit: int
+    ) -> tuple[MetadataAuditRunCandidate, ...]:
+        latest = aliased(JobModel)
+        max_sequence = (
+            select(func.max(JobModel.created_sequence))
+            .where(JobModel.run_id == RunModel.run_id)
+            .correlate(RunModel)
+            .scalar_subquery()
+        )
+        statement = (
+            select(
+                RunModel,
+                latest,
+                CrawlPageEvidenceSummaryModel,
+                ConfigurationSnapshotModel,
+            )
+            .select_from(RunModel)
+            .join(
+                latest,
+                and_(
+                    latest.run_id == RunModel.run_id,
+                    latest.created_sequence == max_sequence,
+                ),
+            )
+            .outerjoin(
+                CrawlPageEvidenceSummaryModel,
+                CrawlPageEvidenceSummaryModel.run_id == RunModel.run_id,
+            )
+            .join(
+                ConfigurationSnapshotModel,
+                ConfigurationSnapshotModel.snapshot_id == RunModel.configuration_snapshot_id,
+            )
+            .order_by(
+                RunModel.terminal_at.desc().nulls_last(),
+                latest.created_sequence.desc(),
+                RunModel.run_id.desc(),
+            )
+            .limit(limit)
+        )
+        with self._runtime.transaction() as session:
+            rows = session.execute(statement).all()
+        terminal = {
+            "completed",
+            "completed_with_warnings",
+            "partially_completed",
+            "failed",
+            "cancelled",
+        }
+        result: list[MetadataAuditRunCandidate] = []
+        for run, job, summary, snapshot in rows:
+            evidence_count = summary.total_records if summary is not None else 0
+            reason = None
+            if run.lifecycle not in terminal:
+                reason = "The crawl has not reached a terminal state."
+            elif summary is None or evidence_count == 0:
+                reason = "No retained page evidence is available for this run."
+            elif summary.retention_state != "retained":
+                reason = "The page evidence for this run is no longer retained."
+            elif evidence_count > maximum_pages:
+                reason = "The retained page evidence exceeds the metadata-audit limit."
+            evidence_state = (
+                "unavailable"
+                if summary is None or evidence_count == 0
+                else "partial"
+                if summary.projection_truncated
+                or summary.partial_records
+                or summary.failed_records
+                or summary.truncated_records
+                else "complete"
+            )
+            result.append(
+                MetadataAuditRunCandidate(
+                    run.run_id,
+                    job.job_id,
+                    run.normalized_seed_url,
+                    run.terminal_at or job.terminal_at,
+                    job.state,
+                    _crawl_profile(snapshot.canonical_json),
+                    evidence_count,
+                    evidence_state,
+                    reason is None,
+                    reason,
+                )
+            )
+        return tuple(result)
 
     def create(
         self,
@@ -767,6 +858,37 @@ def _evidence(
         row.created_at,
         redirects=redirects,
     )
+
+
+def _crawl_profile(canonical_json: str) -> str:
+    try:
+        snapshot = json.loads(canonical_json)
+        pairs = dict(snapshot.get("crawl_limits", ()))
+    except TypeError, ValueError, json.JSONDecodeError:
+        return "custom"
+    effective = (
+        pairs.get("maximum_unique_urls"),
+        pairs.get("maximum_depth"),
+        pairs.get("maximum_duration_seconds"),
+        pairs.get("maximum_total_fetched_bytes"),
+        pairs.get("maximum_concurrent_fetches"),
+        pairs.get("maximum_queued_urls"),
+        pairs.get("minimum_per_origin_delay_seconds"),
+    )
+    for profile in profiles():
+        limits = profile.limits
+        expected = (
+            limits.maximum_urls,
+            limits.maximum_depth,
+            limits.maximum_duration_seconds,
+            limits.maximum_accepted_bytes,
+            limits.maximum_concurrency,
+            limits.maximum_queue_size,
+            limits.minimum_request_delay_seconds,
+        )
+        if effective == expected:
+            return profile.name.value
+    return "custom"
 
 
 def _page_criteria(filters: dict[str, Any]) -> list[Any]:

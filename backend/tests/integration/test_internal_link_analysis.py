@@ -248,4 +248,4 @@ def test_internal_link_routes_are_private_opt_in_and_authorized(tmp_path: Path) 
 
 
 def test_successor_structured_data_audit_migration_is_registered_head() -> None:
-    assert PERSISTENCE_HEAD_REVISION == "0013_website_migration_qa"
+    assert PERSISTENCE_HEAD_REVISION == "0015_sitemap_recommendation_retention"

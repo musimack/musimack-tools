@@ -31,9 +31,16 @@ from musimack_tools.domain.sitemap_publication import (
     PublishedFileResult,
     SitemapPublicationResult,
 )
+from musimack_tools.domain.sitemap_xml import (
+    GeneratedSitemapDocument,
+    SitemapSerializationCounts,
+    SitemapUrlEntry,
+    SitemapXmlBundle,
+)
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.migrations import upgrade_to_head
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
+from musimack_tools.sitemap.limits import SitemapXmlConfiguration
 from persistence_helpers import BACKEND_ROOT, sample_request, sample_result, sample_snapshot
 
 if TYPE_CHECKING:
@@ -270,6 +277,58 @@ def test_terminal_run_output_registration_reuses_successful_publication_file(
     assert target.read_bytes() == content
 
 
+def test_generated_xml_is_durably_retained_without_publication_or_summary(
+    artifact_runtime: tuple[PersistenceRuntime, str, str], tmp_path: Path
+) -> None:
+    runtime, job_id, _ = artifact_runtime
+    root = tmp_path / "root"
+    service = _service(runtime, root)
+    locations = tuple(f"https://example.test/page-{position}" for position in range(30))
+    content = (
+        "<urlset>"
+        + "".join(f"<url><loc>{location}</loc></url>" for location in locations)
+        + "</urlset>\n"
+    ).encode()
+    document = GeneratedSitemapDocument(
+        "sitemap.xml",
+        tuple(SitemapUrlEntry(location, position) for position, location in enumerate(locations)),
+        content,
+        len(content),
+        len(locations),
+    )
+    bundle = SitemapXmlBundle(
+        (document,),
+        None,
+        (),
+        (),
+        (),
+        SitemapSerializationCounts(30, 30, 0, 30, 0, 0, 1),
+        SitemapXmlConfiguration(),
+    )
+    result = replace(sample_result(sample_request("/artifacts")), xml_bundle=bundle)
+    assert result.publication_result is None
+    assert result.summary_write_result is None
+
+    first = service.register_run_result(job_id, result)
+    repeated = service.register_run_result(job_id, result)
+
+    assert first.failure_codes == repeated.failure_codes == ()
+    assert len(first.registered) == len(repeated.registered) == 1
+    assert first.registered[0].artifact_id == repeated.registered[0].artifact_id
+    assert len(service.list()) == 1
+    record = first.registered[0]
+    assert record.artifact_type is ArtifactType.SITEMAP_XML
+    assert record.filename == "sitemap.xml"
+    assert record.expected_byte_count == len(content)
+    assert record.expected_sha256 == hashlib.sha256(content).hexdigest()
+    restarted = _service(runtime, root)
+    descriptor = restarted.prepare_download(record.artifact_id)
+    assert b"".join(descriptor.iterator_factory()) == content
+    assert content.count(b"<loc>") == 30
+    assert len(set(locations)) == 30
+    assert descriptor.content_type == "application/xml"
+
+
 def test_production_adds_exactly_three_private_artifact_routes(
     artifact_runtime: tuple[PersistenceRuntime, str, str], tmp_path: Path
 ) -> None:
@@ -288,7 +347,7 @@ def test_production_adds_exactly_three_private_artifact_routes(
     internal = {
         path for path in application.openapi()["paths"] if path.startswith("/api/internal/v1")
     }
-    assert len(internal) == 14
+    assert len(internal) == 15
     assert {
         "/api/internal/v1/artifacts",
         "/api/internal/v1/artifacts/{artifact_id}",

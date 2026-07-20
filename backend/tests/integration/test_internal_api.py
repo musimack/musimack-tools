@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from musimack_tools.api.dependencies import permission_for_request
 from musimack_tools.api.internal import mount_internal_api
 from musimack_tools.application.preparation import ApplicationRequestPreparer
 from musimack_tools.application.readiness import capability_report
@@ -27,6 +28,7 @@ from musimack_tools.domain.application import (
     ApplicationPreflightResult,
     ApplicationProgressResult,
     ApplicationReadinessReport,
+    ApplicationRecommendationDetail,
     ApplicationRecommendationPage,
     ApplicationRegistryStatus,
     ApplicationResultProjection,
@@ -40,6 +42,7 @@ from musimack_tools.domain.application import (
     RecommendationItemProjection,
     ValidationSeverity,
 )
+from musimack_tools.domain.authentication import Permission, UserRole, permissions_for_role
 from musimack_tools.domain.crawl import (
     CrawlConfigurationSnapshot,
     CrawlCounters,
@@ -47,7 +50,15 @@ from musimack_tools.domain.crawl import (
     CrawlResult,
     CrawlState,
 )
-from musimack_tools.domain.job import JobLookupOutcome, JobProgressView
+from musimack_tools.domain.job import (
+    DurableRecommendation,
+    DurableRecommendationDetail,
+    JobLookupOutcome,
+    JobProgressView,
+    RecommendationDirectiveGroup,
+    RecommendationRuleDetail,
+    RecommendationWarningDetail,
+)
 from musimack_tools.domain.job_registry import (
     JobRegistryConfiguration,
     JobRegistryCounters,
@@ -154,6 +165,7 @@ class _FakeApplication:
         self.preflight_state = PreflightState.READY
         self.readiness_state = ReadinessState.READY
         self.result_outcome = ApplicationOutcomeCode.FOUND
+        self.recommendation_detail_outcome = ApplicationOutcomeCode.FOUND
         self.cancellation_outcome = ApplicationOutcomeCode.CANCELLATION_REQUESTED
         self.raise_unexpected = False
 
@@ -260,6 +272,7 @@ class _FakeApplication:
                 rule_set_version=None,
             )
         item = RecommendationItemProjection(
+            sequence=1,
             url="https://example.test/guide",
             requested_url="https://example.test/guide",
             final_url="https://example.test/guide",
@@ -294,6 +307,81 @@ class _FakeApplication:
             has_more=False,
             items=(item,),
             rule_set_version="sitemap-recommendation-v1",
+        )
+
+    async def get_job_recommendation_detail(
+        self, job_id: str, sequence: int
+    ) -> ApplicationRecommendationDetail:
+        self.calls.append(f"recommendation_detail:{sequence}")
+        if job_id != _JOB_ID:
+            return ApplicationRecommendationDetail(ApplicationOutcomeCode.JOB_NOT_FOUND, None)
+        if self.recommendation_detail_outcome is not ApplicationOutcomeCode.FOUND:
+            return ApplicationRecommendationDetail(self.recommendation_detail_outcome, None)
+        if sequence != 1:
+            return ApplicationRecommendationDetail(
+                ApplicationOutcomeCode.RECOMMENDATION_NOT_FOUND, None
+            )
+        recommendation = DurableRecommendation(
+            sequence=1,
+            url="https://example.test/guide",
+            requested_url="https://example.test/guide",
+            final_url="https://example.test/guide",
+            state="exclude",
+            determinacy="determinate",
+            primary_reason="generic_noindex",
+            explanation="Generic indexability evidence contains noindex.",
+            http_status=200,
+            content_type="text/html",
+            fetch_failure_code=None,
+            canonical_url="https://example.test/guide",
+            canonical_conflicting=False,
+            redirect_source=False,
+            redirect_hops=0,
+            redirect_final_url=None,
+            robots_available=True,
+            robots_allowed=True,
+            robots_reason_code="allowed",
+            generic_directives=("noindex",),
+            crawler_specific_directives=(),
+            indexability_conflict=False,
+            configured_exclusions=(),
+        )
+        return ApplicationRecommendationDetail(
+            ApplicationOutcomeCode.FOUND,
+            DurableRecommendationDetail(
+                recommendation=recommendation,
+                reason_codes=("generic_noindex",),
+                rule_evidence=(
+                    RecommendationRuleDetail(
+                        "08_generic_indexability",
+                        "hard_exclusion",
+                        "generic_noindex",
+                        "Trustworthy generic indexability evidence contains noindex",
+                    ),
+                ),
+                warning_details=(
+                    RecommendationWarningDetail(
+                        "short_title", "The title is short", "html_metadata"
+                    ),
+                ),
+                metadata_warning_codes=("short_title",),
+                evidence_id="evidence-safe-1",
+                crawl_depth=1,
+                fetch_outcome="success",
+                evidence_state="complete",
+                page_failure_code=None,
+                title_presence="single",
+                title="Guide",
+                description_presence="single",
+                meta_description="A safe description.",
+                canonical_presence="single",
+                meta_robots=(RecommendationDirectiveGroup("robots", ("noindex",)),),
+                x_robots_tag=(),
+                redirect_chain=(),
+                redirect_truncated=False,
+                redirect_loop=False,
+                sitemap_membership=None,
+            ),
         )
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult:
@@ -504,6 +592,7 @@ def test_explicit_routes_are_exact_and_shutdown_is_not_exposed() -> None:
         "/api/internal/v1/jobs/{job_id}/progress",
         "/api/internal/v1/jobs/{job_id}/result",
         "/api/internal/v1/jobs/{job_id}/recommendations",
+        "/api/internal/v1/jobs/{job_id}/recommendations/{sequence}",
         "/api/internal/v1/jobs/{job_id}/cancel",
         "/api/internal/v1/registry",
         "/api/internal/v1/readiness",
@@ -530,6 +619,7 @@ def test_explicit_routes_can_be_hidden_from_openapi_while_remaining_mounted() ->
         ("get", f"/api/internal/v1/jobs/{_JOB_ID}/progress"),
         ("get", f"/api/internal/v1/jobs/{_JOB_ID}/result"),
         ("get", f"/api/internal/v1/jobs/{_JOB_ID}/recommendations"),
+        ("get", f"/api/internal/v1/jobs/{_JOB_ID}/recommendations/1"),
         ("post", f"/api/internal/v1/jobs/{_JOB_ID}/cancel"),
         ("get", "/api/internal/v1/registry"),
         ("get", "/api/internal/v1/readiness"),
@@ -729,17 +819,51 @@ def test_recommendation_page_is_bounded_filterable_and_safe() -> None:
     client = _client(service, verifier=_AllowVerifier())
     response = client.get(
         f"/api/internal/v1/jobs/{_JOB_ID}/recommendations",
-        params={"limit": 25, "state": "include", "text": "guide"},
+        params={"limit": 500, "state": "include", "reason": " Eligible ", "text": "guide"},
     )
     assert response.status_code == 200
     assert response.json()["data"]["total"] == 1
     assert response.json()["data"]["items"][0]["url"] == "https://example.test/guide"
-    assert service.calls[-1] == "recommendations:include:None:guide"
+    assert service.calls[-1] == "recommendations:include: Eligible :guide"
     assert all(word not in response.text.lower() for word in ("html_body", "storage_path", "token"))
-    excessive = client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations?limit=101")
+    maximum = client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations?limit=50000")
+    assert maximum.status_code == 200
+    excessive = client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations?limit=50001")
     assert excessive.status_code == 400
     unknown = client.get(f"/api/internal/v1/jobs/{_UNKNOWN_JOB_ID}/recommendations")
     assert unknown.status_code == 404
+
+
+def test_recommendation_detail_is_restart_safe_bounded_and_body_free() -> None:
+    service = _FakeApplication()
+    client = _client(service, verifier=_AllowVerifier())
+    response = client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations/1")
+    assert response.status_code == 200
+    detail = response.json()["data"]
+    assert detail["recommendation"]["sequence"] == 1
+    assert detail["recommendation"]["state"] == "exclude"
+    assert detail["reason_codes"] == ["generic_noindex"]
+    assert detail["meta_robots"][0]["directives"] == ["noindex"]
+    assert detail["title"] == "Guide"
+    assert detail["evidence_id"] == "evidence-safe-1"
+    assert all(
+        value not in response.text.lower()
+        for value in ("html_body", "raw_html", "storage_path", "token", "secret")
+    )
+    assert client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations/2").status_code == 404
+    service.recommendation_detail_outcome = ApplicationOutcomeCode.RESULT_UNAVAILABLE
+    legacy = client.get(f"/api/internal/v1/jobs/{_JOB_ID}/recommendations/1")
+    assert legacy.status_code == 409
+    assert legacy.json()["error"]["code"] == "job_result_unavailable"
+
+
+def test_recommendation_detail_authorization_matches_the_list_for_every_supported_role() -> None:
+    list_path = f"/api/internal/v1/jobs/{_JOB_ID}/recommendations"
+    detail_path = f"{list_path}/1"
+    assert permission_for_request("GET", list_path) is Permission.RUNS_VIEW
+    assert permission_for_request("GET", detail_path) is Permission.RUNS_VIEW
+    for role in UserRole:
+        assert Permission.RUNS_VIEW in permissions_for_role(role)
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,23 @@ export type CrawlRequest = {
   caller_label: string | null;
 };
 
+export type ApiCrawlLimitOverrides = {
+  maximum_urls?: number;
+  maximum_depth?: number;
+  maximum_duration_seconds?: number;
+  maximum_accepted_bytes?: number;
+  maximum_concurrency?: number;
+  maximum_queue_size?: number;
+  minimum_request_delay_seconds?: number;
+  maximum_redirect_hops?: number;
+  maximum_response_bytes?: number;
+};
+
+export type ApiCrawlRequest = Omit<CrawlRequest, 'overrides' | 'existing_file_policy'> & {
+  overrides: ApiCrawlLimitOverrides;
+  existing_file_policy: 'fail_if_exists' | 'overwrite';
+};
+
 export type ValidationDetail = {
   severity: string;
   code: string;
@@ -138,6 +155,7 @@ export type JobResult = {
   failure_codes: string[];
 };
 export type Recommendation = {
+  sequence: number;
   url: string;
   requested_url: string;
   final_url: string | null;
@@ -160,6 +178,54 @@ export type Recommendation = {
   crawler_specific_directives: string[];
   indexability_conflict: boolean;
   configured_exclusions: [string, string][];
+};
+export type RecommendationRuleDetail = {
+  rule_id: string;
+  outcome: string;
+  reason_code: string | null;
+  explanation: string;
+};
+export type RecommendationWarningDetail = {
+  code: string;
+  explanation: string;
+  source: string;
+};
+export type RecommendationRedirectDetail = {
+  sequence: number;
+  source_url: string;
+  target_url: string | null;
+  status_code: number;
+  terminal: boolean;
+  loop: boolean;
+  failure_code: string | null;
+};
+export type RecommendationDirectiveGroup = {
+  agent: string;
+  directives: string[];
+};
+export type RecommendationDetail = {
+  recommendation: Recommendation;
+  reason_codes: string[];
+  rule_evidence: RecommendationRuleDetail[];
+  warning_details: RecommendationWarningDetail[];
+  metadata_warning_codes: string[];
+  evidence_id: string | null;
+  crawl_depth: number | null;
+  fetch_outcome: string | null;
+  evidence_state: string | null;
+  page_failure_code: string | null;
+  title_presence: string | null;
+  title: string | null;
+  description_presence: string | null;
+  meta_description: string | null;
+  canonical_presence: string | null;
+  meta_robots: RecommendationDirectiveGroup[];
+  x_robots_tag: RecommendationDirectiveGroup[];
+  redirect_chain: RecommendationRedirectDetail[];
+  redirect_truncated: boolean | null;
+  redirect_loop: boolean | null;
+  sitemap_membership: boolean | null;
+  application_service_version: string;
 };
 export type RecommendationPage = {
   job_id: string;

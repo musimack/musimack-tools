@@ -712,7 +712,7 @@ def test_routes_are_private_coherent_and_permission_mapped(tmp_path: Path) -> No
             ("POST", "/api/internal/v1/audits/sitemaps/{audit_id}/exports"),
             ("GET", "/api/internal/v1/audits/sitemaps/{audit_id}/exports"),
         }
-        assert len(paths) == 22
+        assert len(paths) == 23
         assert artifacts is not None
         history = HistoryService(
             HistoryConfiguration(enabled=True), SQLAlchemyHistoryRepository(runtime)
@@ -778,14 +778,14 @@ def test_routes_are_private_coherent_and_permission_mapped(tmp_path: Path) -> No
         }
         assert bearer_counts == {
             "default": 1,
-            "production": 12,
-            "artifacts": 15,
-            "history": 22,
-            "metadata": 21,
-            "sitemaps": 22,
-            "metadata_sitemaps": 31,
-            "all_before_sitemaps": 34,
-            "all_with_sitemaps": 44,
+            "production": 13,
+            "artifacts": 16,
+            "history": 23,
+            "metadata": 23,
+            "sitemaps": 23,
+            "metadata_sitemaps": 33,
+            "all_before_sitemaps": 36,
+            "all_with_sitemaps": 46,
         }
         authentication = AuthenticationService(
             runtime.session_factory,
@@ -852,10 +852,10 @@ def test_routes_are_private_coherent_and_permission_mapped(tmp_path: Path) -> No
                 ).openapi()["paths"]
             ),
         } == {
-            "metadata": 35,
-            "metadata_sitemaps": 45,
-            "all_before_sitemaps": 48,
-            "all_with_sitemaps": 58,
+            "metadata": 37,
+            "metadata_sitemaps": 47,
+            "all_before_sitemaps": 50,
+            "all_with_sitemaps": 60,
         }
         assert "/api/audits/sitemaps" not in paths
         client = TestClient(application, client=("203.0.113.10", 50_000))

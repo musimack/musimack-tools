@@ -50,6 +50,7 @@ class ApiErrorCode(StrEnum):
     REGISTRY_SHUTTING_DOWN = "registry_shutting_down"
     JOB_ID_INVALID = "job_id_invalid"
     JOB_NOT_FOUND = "job_not_found"
+    RECOMMENDATION_NOT_FOUND = "recommendation_not_found"
     JOB_RESULT_UNAVAILABLE = "job_result_unavailable"
     JOB_ALREADY_TERMINAL = "job_already_terminal"
     JOB_CANCELLATION_ALREADY_REQUESTED = "job_cancellation_already_requested"

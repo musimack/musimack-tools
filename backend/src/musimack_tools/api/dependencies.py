@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         ApplicationPreflightResult,
         ApplicationProgressResult,
         ApplicationReadinessReport,
+        ApplicationRecommendationDetail,
         ApplicationRecommendationPage,
         ApplicationRegistryStatus,
         ApplicationResultProjection,
@@ -70,6 +71,10 @@ class InternalApiApplication(Protocol):
         reason: str | None = None,
         text: str | None = None,
     ) -> ApplicationRecommendationPage: ...
+
+    async def get_job_recommendation_detail(
+        self, job_id: str, sequence: int
+    ) -> ApplicationRecommendationDetail: ...
 
     async def cancel_job(self, job_id: str) -> ApplicationCancellationResult: ...
 
@@ -252,7 +257,7 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
         return Permission.RUNS_VIEW
     if path.endswith("/jobs"):
         return Permission.JOBS_SUBMIT if method == "POST" else Permission.JOBS_VIEW
-    if path.endswith("/recommendations"):
+    if "/recommendations" in path:
         return Permission.RUNS_VIEW
     if path.endswith("/cancel"):
         return Permission.JOBS_CANCEL

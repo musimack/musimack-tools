@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 
 from musimack_tools import __version__
 from musimack_tools.persistence.migrations import (
+    PERSISTENCE_HEAD_PARENT_REVISION,
     PERSISTENCE_HEAD_REVISION,
-    STRUCTURED_DATA_AUDIT_REVISION,
 )
 
 if TYPE_CHECKING:
@@ -54,9 +54,14 @@ _REQUIRED_DOCUMENTS = (
     "docs/backup-and-restore.md",
     "docs/ci.md",
     "docs/deployment.md",
+    "docs/final-acceptance.md",
+    "docs/known-limitations.md",
     "docs/operations.md",
+    "docs/accessibility-review.md",
     "docs/release-checklist.md",
     "docs/release-management.md",
+    "docs/release-readiness.md",
+    "docs/security-review.md",
     "docs/templates/release-notes.md",
     "docs/decisions/0073-supervisor-neutral-private-production-operations.md",
     "docs/decisions/0074-pinned-ci-and-review-only-release-candidates.md",
@@ -163,7 +168,7 @@ def create_release_candidate(  # noqa: PLR0913 - explicit release evidence.
             "source_timestamp_utc": timestamp,
             "migration": {
                 "head": PERSISTENCE_HEAD_REVISION,
-                "parent": STRUCTURED_DATA_AUDIT_REVISION,
+                "parent": PERSISTENCE_HEAD_PARENT_REVISION,
             },
             "lock_hashes": {
                 "backend/requirements.lock": _sha256(root / "backend/requirements.lock"),
@@ -171,7 +176,7 @@ def create_release_candidate(  # noqa: PLR0913 - explicit release evidence.
             },
             "tool_versions": dict(sorted(versions.items())),
             "validation": dict(sorted((validation_summary or {}).items())),
-            "known_limitations": "docs/release-management.md#known-limitations",
+            "known_limitations": "docs/known-limitations.md",
             "files": payload_records,
         }
         manifest_bytes = _json_bytes(manifest_value)

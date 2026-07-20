@@ -198,6 +198,7 @@ class JobListSchema(ApiSchema):
 
 
 class RecommendationItemSchema(ApiSchema):
+    sequence: int
     url: str
     requested_url: str
     final_url: str | None
@@ -233,6 +234,59 @@ class RecommendationPageSchema(ApiSchema):
     has_more: bool
     items: tuple[RecommendationItemSchema, ...]
     rule_set_version: str | None
+    application_service_version: str
+
+
+class RecommendationRuleDetailSchema(ApiSchema):
+    rule_id: str
+    outcome: str
+    reason_code: str | None
+    explanation: str
+
+
+class RecommendationWarningDetailSchema(ApiSchema):
+    code: str
+    explanation: str
+    source: str
+
+
+class RecommendationRedirectDetailSchema(ApiSchema):
+    sequence: int
+    source_url: str
+    target_url: str | None
+    status_code: int
+    terminal: bool
+    loop: bool
+    failure_code: str | None
+
+
+class RecommendationDirectiveGroupSchema(ApiSchema):
+    agent: str
+    directives: tuple[str, ...]
+
+
+class RecommendationDetailSchema(ApiSchema):
+    recommendation: RecommendationItemSchema
+    reason_codes: tuple[str, ...]
+    rule_evidence: tuple[RecommendationRuleDetailSchema, ...]
+    warning_details: tuple[RecommendationWarningDetailSchema, ...]
+    metadata_warning_codes: tuple[str, ...]
+    evidence_id: str | None
+    crawl_depth: int | None
+    fetch_outcome: str | None
+    evidence_state: str | None
+    page_failure_code: str | None
+    title_presence: str | None
+    title: str | None
+    description_presence: str | None
+    meta_description: str | None
+    canonical_presence: str | None
+    meta_robots: tuple[RecommendationDirectiveGroupSchema, ...]
+    x_robots_tag: tuple[RecommendationDirectiveGroupSchema, ...]
+    redirect_chain: tuple[RecommendationRedirectDetailSchema, ...]
+    redirect_truncated: bool | None
+    redirect_loop: bool | None
+    sitemap_membership: bool | None
     application_service_version: str
 
 
@@ -395,6 +449,13 @@ class RecommendationPageResponse(ApiSchema):
     api_version: str = INTERNAL_API_VERSION
     request_id: str | None = Field(default_factory=current_request_id)
     data: RecommendationPageSchema
+    warnings: tuple[ApiWarningSchema, ...] = ()
+
+
+class RecommendationDetailResponse(ApiSchema):
+    api_version: str = INTERNAL_API_VERSION
+    request_id: str | None = Field(default_factory=current_request_id)
+    data: RecommendationDetailSchema
     warnings: tuple[ApiWarningSchema, ...] = ()
 
 
