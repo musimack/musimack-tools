@@ -158,6 +158,46 @@ async def test_worker_fails_execution_when_result_observer_fails(tmp_path: Path)
 
 
 @run_async
+async def test_worker_runs_bounded_parent_reconciliation_without_a_crawl_claim(
+    tmp_path: Path,
+) -> None:
+    runtime, repository = durable_repository(tmp_path)
+    scans: list[int] = []
+
+    async def reconcile() -> int:
+        scans.append(1)
+        return 1
+
+    worker = DurableWorkerService(repository, _Factory(), reconciliation_observer=reconcile)
+    try:
+        repository.register_worker(WorkerIdentity("worker-test"), 1)
+        assert await worker.run_once() == 0
+        assert scans == [1]
+    finally:
+        await worker.shutdown()
+        runtime.dispose()
+
+
+@run_async
+async def test_parent_reconciliation_failure_does_not_stop_crawl_claims(tmp_path: Path) -> None:
+    runtime, repository = durable_repository(tmp_path)
+
+    async def reconcile() -> int:
+        raise RuntimeError(_SYNTHETIC_WORKER_FAILURE)
+
+    worker = DurableWorkerService(repository, _Factory(), reconciliation_observer=reconcile)
+    try:
+        repository.submit(JobSubmissionRequest(sample_request()))
+        repository.register_worker(WorkerIdentity("worker-test"), 1)
+        assert await worker.run_once() == 1
+        await _settle()
+        assert repository.registry_snapshot().counters.completed_jobs == 1
+    finally:
+        await worker.shutdown()
+        runtime.dispose()
+
+
+@run_async
 async def test_worker_bounds_concurrency_and_opens_capacity(tmp_path: Path) -> None:
     gate = asyncio.Event()
     configuration = durable_configuration(maximum_concurrent_claimed_jobs=2, maximum_claim_batch=2)

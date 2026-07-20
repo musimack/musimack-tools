@@ -40,6 +40,8 @@ from musimack_tools.domain.application import (
     ReadinessCheckCode,
     ReadinessState,
 )
+from musimack_tools.domain.site_audit_orchestration import SiteAuditStage
+from musimack_tools.domain.sitemap_audit import DiscoveryOptions
 from musimack_tools.durable.service import DurableJobService
 from musimack_tools.image_audit.service import ImageAuditService
 from musimack_tools.internal_link.service import InternalLinkAuditService
@@ -58,7 +60,12 @@ from musimack_tools.persistence.internal_link_repository import SQLAlchemyIntern
 from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAuditRepository
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
 from musimack_tools.persistence.migration_qa_repository import SQLAlchemyMigrationQaRepository
+from musimack_tools.persistence.page_evidence_repository import SQLAlchemyPageEvidenceRepository
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
+from musimack_tools.persistence.site_audit_orchestration_repository import (
+    SQLAlchemySiteAuditOrchestrationRepository,
+)
+from musimack_tools.persistence.site_audit_repository import SQLAlchemySiteAuditRepository
 from musimack_tools.persistence.site_audit_settings_repository import (
     SQLAlchemySiteAuditSettingsRepository,
 )
@@ -68,6 +75,14 @@ from musimack_tools.persistence.structured_data_repository import (
 )
 from musimack_tools.recommendation.sitemap import SitemapRecommendationEngine
 from musimack_tools.run.service import CrawlRunService
+from musimack_tools.site_audit.orchestration import (
+    ApplicationSiteAuditCrawlGateway,
+    SiteAuditOrchestrationService,
+)
+from musimack_tools.site_audit.specialists import (
+    SpecialistAuthority,
+    SQLAlchemySiteAuditSpecialistGateway,
+)
 from musimack_tools.site_audit_settings.service import (
     SiteAuditSettingsConfiguration,
     SiteAuditSettingsService,
@@ -213,6 +228,29 @@ def compose_web_runtime(settings: RuntimeSettings) -> WebRuntime:
         runtime.session_factory, authentication_configuration(settings.production)
     )
     crawler_fetcher = _fetcher(settings.application)
+    metadata_audits = _metadata_service(configuration, runtime, artifact_service)
+    sitemap_audits = _sitemap_service(configuration, runtime, crawler_fetcher, artifact_service)
+    link_audits = _link_service(configuration, runtime, artifact_service)
+    internal_link_audits = _internal_link_service(configuration, runtime, artifact_service)
+    image_audits = _image_service(configuration, runtime, artifact_service)
+    structured_data_audits = _structured_service(configuration, runtime, artifact_service)
+    site_audit_orchestration = SiteAuditOrchestrationService(
+        SQLAlchemySiteAuditRepository(runtime),
+        SQLAlchemySiteAuditOrchestrationRepository(runtime),
+        SQLAlchemyPageEvidenceRepository(runtime),
+        ApplicationSiteAuditCrawlGateway(service),
+        artifact_service,
+        _specialist_gateway(
+            runtime,
+            metadata_audits=metadata_audits,
+            sitemap_audits=sitemap_audits,
+            link_audits=link_audits,
+            internal_link_audits=internal_link_audits,
+            image_audits=image_audits,
+            structured_data_audits=structured_data_audits,
+            launch_enabled=False,
+        ),
+    )
     app = create_production_app(
         service,
         settings.production,
@@ -222,14 +260,15 @@ def compose_web_runtime(settings: RuntimeSettings) -> WebRuntime:
         artifacts=artifact_service,
         history=history,
         authentication=authentication,
-        metadata_audits=_metadata_service(configuration, runtime, artifact_service),
-        sitemap_audits=_sitemap_service(configuration, runtime, crawler_fetcher, artifact_service),
-        link_audits=_link_service(configuration, runtime, artifact_service),
-        internal_link_audits=_internal_link_service(configuration, runtime, artifact_service),
-        image_audits=_image_service(configuration, runtime, artifact_service),
-        structured_data_audits=_structured_service(configuration, runtime, artifact_service),
+        metadata_audits=metadata_audits,
+        sitemap_audits=sitemap_audits,
+        link_audits=link_audits,
+        internal_link_audits=internal_link_audits,
+        image_audits=image_audits,
+        structured_data_audits=structured_data_audits,
         migration_qa=_migration_qa_service(configuration, runtime, artifact_service),
         site_audit_settings=_site_audit_settings_service(runtime),
+        site_audit_orchestration=site_audit_orchestration,
     )
     app.add_middleware(
         TrustedHostMiddleware,
@@ -299,16 +338,56 @@ async def run_worker(settings: RuntimeSettings | None = None) -> None:
         if batch.failure_codes or len(batch.registered) != expected:
             raise RuntimeError("Generated XML artifact retention failed.")
 
+    site_audit_orchestration: SiteAuditOrchestrationService | None = None
+
+    async def reconcile_site_audits() -> int:
+        return (
+            0
+            if site_audit_orchestration is None
+            else await site_audit_orchestration.reconcile_pending(maximum_parents=25)
+        )
+
     durable = prepare_durable_execution(
         resolved.durable,
         prepared,
         runtime=runtime,
         run_service_factory=production_run_service_factory(resolved.application),
         result_observer=retain_generated_xml,
+        reconciliation_observer=reconcile_site_audits,
     )
     if durable.worker is None:
         runtime.dispose()
         raise RuntimeError("Durable worker composition is unavailable.")
+    if durable.repository is None:
+        runtime.dispose()
+        raise RuntimeError("Durable worker repository is unavailable.")
+    jobs = DurableJobService(durable.repository, worker=durable.worker)
+    application_service = ProductionApplicationService(cast("InternalJobService", jobs), lambda: ())
+    crawler_fetcher = _fetcher(resolved.application)
+    configuration = resolved.persistence.to_configuration()
+    metadata_audits = _metadata_service(configuration, runtime, artifact_service)
+    sitemap_audits = _sitemap_service(configuration, runtime, crawler_fetcher, artifact_service)
+    link_audits = _link_service(configuration, runtime, artifact_service)
+    internal_link_audits = _internal_link_service(configuration, runtime, artifact_service)
+    image_audits = _image_service(configuration, runtime, artifact_service)
+    structured_data_audits = _structured_service(configuration, runtime, artifact_service)
+    site_audit_orchestration = SiteAuditOrchestrationService(
+        SQLAlchemySiteAuditRepository(runtime),
+        SQLAlchemySiteAuditOrchestrationRepository(runtime),
+        SQLAlchemyPageEvidenceRepository(runtime),
+        ApplicationSiteAuditCrawlGateway(application_service),
+        artifact_service,
+        _specialist_gateway(
+            runtime,
+            metadata_audits=metadata_audits,
+            sitemap_audits=sitemap_audits,
+            link_audits=link_audits,
+            internal_link_audits=internal_link_audits,
+            image_audits=image_audits,
+            structured_data_audits=structured_data_audits,
+            launch_enabled=True,
+        ),
+    )
     stop = asyncio.Event()
     _install_stop_signals(stop)
     try:
@@ -545,6 +624,79 @@ def _site_audit_settings_service(runtime: PersistenceRuntime) -> SiteAuditSettin
         SiteAuditSettingsConfiguration(enabled=True),
         SQLAlchemySiteAuditSettingsRepository(runtime),
     )
+
+
+def _specialist_gateway(  # noqa: C901, PLR0913 - accepted authorities are explicit.
+    runtime: PersistenceRuntime,
+    *,
+    metadata_audits: MetadataAuditService | None,
+    sitemap_audits: SitemapAuditService | None,
+    link_audits: LinkAuditService | None,
+    internal_link_audits: InternalLinkAuditService | None,
+    image_audits: ImageAuditService | None,
+    structured_data_audits: StructuredDataAuditService | None,
+    launch_enabled: bool,
+) -> SQLAlchemySiteAuditSpecialistGateway:
+    authorities: dict[SiteAuditStage, SpecialistAuthority] = {}
+    if metadata_audits is not None:
+        authorities[SiteAuditStage.METADATA] = SpecialistAuthority(
+            SQLAlchemyMetadataAuditRepository(runtime),
+            launch=(metadata_audits.create_and_run_audit if launch_enabled else None),
+        )
+    if sitemap_audits is not None:
+
+        async def launch_sitemap(run_id: str) -> dict[str, object]:
+            return await sitemap_audits.create_and_run(run_id, DiscoveryOptions())
+
+        authorities[SiteAuditStage.EXISTING_SITEMAP] = SpecialistAuthority(
+            SQLAlchemySitemapAuditRepository(runtime),
+            document_method="list_documents",
+            entry_method="list_entries",
+            launch=launch_sitemap if launch_enabled else None,
+        )
+    if link_audits is not None:
+
+        async def launch_link(run_id: str) -> dict[str, object]:
+            created = link_audits.create_audit(run_id)
+            return await link_audits.execute_audit(str(created["audit_id"]))
+
+        authorities[SiteAuditStage.BROKEN_LINKS] = SpecialistAuthority(
+            SQLAlchemyLinkAuditRepository(runtime),
+            launch=launch_link if launch_enabled else None,
+        )
+    if internal_link_audits is not None:
+
+        async def launch_internal_link(run_id: str) -> dict[str, object]:
+            created = internal_link_audits.create_audit(run_id)
+            return await internal_link_audits.execute_audit(str(created["audit_id"]))
+
+        authorities[SiteAuditStage.INTERNAL_LINKS] = SpecialistAuthority(
+            SQLAlchemyInternalLinkRepository(runtime),
+            launch=launch_internal_link if launch_enabled else None,
+        )
+    if image_audits is not None:
+
+        async def launch_image(run_id: str) -> dict[str, object]:
+            created = image_audits.create_audit(run_id)
+            return await image_audits.execute_audit(str(created["audit_id"]))
+
+        authorities[SiteAuditStage.IMAGES] = SpecialistAuthority(
+            SQLAlchemyImageAuditRepository(runtime),
+            launch=launch_image if launch_enabled else None,
+            paginated_list=False,
+        )
+    if structured_data_audits is not None:
+
+        async def launch_structured(run_id: str) -> dict[str, object]:
+            created = structured_data_audits.create_audit(run_id)
+            return await structured_data_audits.execute_audit(str(created["audit_id"]))
+
+        authorities[SiteAuditStage.STRUCTURED_DATA] = SpecialistAuthority(
+            SQLAlchemyStructuredDataAuditRepository(runtime),
+            launch=launch_structured if launch_enabled else None,
+            paginated_list=False,
+        )
+    return SQLAlchemySiteAuditSpecialistGateway(authorities)
 
 
 def _install_stop_signals(stop: asyncio.Event) -> None:

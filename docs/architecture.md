@@ -773,3 +773,23 @@ The shared bearer is an explicit compatibility administrator principal. Route au
 operations to permissions centrally, without caller-supplied privilege lists or handler-level role
 comparisons. The 16 auth/user operations remain private; sign-in is the only credential-accepting
 route, while every other operation passes the common access and permission gate.
+
+## Combined Site Audit orchestration
+
+CSA-04 adds a supervisor-neutral coordinator over the accepted durable crawl, retained page
+evidence, specialist projections, CSA persistence, and artifact authorities. A submitted immutable
+snapshot creates one parent orchestration and one accepted crawl association. Durable stage rows
+record dependencies, attempts, checkpoints, leases, counts, failures, and completion so a new web
+or worker process can reconcile without repeating completed work.
+
+The coordinator projects safe page evidence, rule decisions, overlapping populations, grouped
+findings, explainable priority, summaries, and bounded artifacts. It never stores response bodies,
+raw HTML, credentials, or filesystem paths in CSA projections. Required-stage failure determines
+parent failure; optional unavailable evidence produces an explicit module state and may complete
+with warnings. Immutable discovery rules and tracking removals execute in the accepted crawl
+frontier before enqueue; excluded occurrences remain durable discoveries. Existing-sitemap state
+comes from Sitemap Audit documents and entries, never recommendation counts. Persisted specialist
+associations select linked, eligible-prior, launched, base-evidence, or unavailable execution modes.
+The durable worker performs the bounded automatic parent scan; the private reconcile operation is
+recovery-only. Private authenticated APIs are composition-injected, while the default application
+remains health-only. The complete operator UI and real-site acceptance remain CSA-05 and CSA-06.

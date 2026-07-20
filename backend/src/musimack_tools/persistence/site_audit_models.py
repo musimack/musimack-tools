@@ -509,3 +509,112 @@ class SiteAuditArtifactAssociationModel(Base):
         ),
         Index("ix_site_audit_artifacts", "audit_id", "purpose", "id"),
     )
+
+
+class SiteAuditOrchestrationModel(Base):
+    __tablename__ = "site_audit_orchestrations"
+
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("site_audits.audit_id", ondelete="CASCADE"), primary_key=True
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("site_audit_snapshots.snapshot_id", ondelete="CASCADE"), nullable=False
+    )
+    snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_stage: Mapped[str | None] = mapped_column(String(64))
+    crawl_job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.job_id", ondelete="SET NULL"))
+    crawl_run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.run_id", ondelete="SET NULL"))
+    cancellation_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recovery_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    projection_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(128))
+    failure_explanation: Mapped[str | None] = mapped_column(Text)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", name="uq_site_audit_orchestration_snapshot"),
+        CheckConstraint("retry_count >= 0", name="ck_site_audit_orchestration_retries"),
+        CheckConstraint("recovery_count >= 0", name="ck_site_audit_orchestration_recoveries"),
+        CheckConstraint("revision > 0", name="ck_site_audit_orchestration_revision"),
+        CheckConstraint(
+            "state in ('queued','running','cancel_requested','cancelled','completed',"
+            "'completed_with_warnings','partially_completed','failed','recovery_required')",
+            name="ck_site_audit_orchestration_state",
+        ),
+        Index("ix_site_audit_orchestration_state", "state", "updated_at", "audit_id"),
+        Index("ix_site_audit_orchestration_job", "crawl_job_id", "crawl_run_id"),
+    )
+
+
+class SiteAuditOrchestrationStageModel(Base):
+    __tablename__ = "site_audit_orchestration_stages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("site_audit_orchestrations.audit_id", ondelete="CASCADE"), nullable=False
+    )
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    stable_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    dependencies_json: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checkpoint: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    projected_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(128))
+    failure_explanation: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("audit_id", "stage", name="uq_site_audit_orchestration_stage"),
+        UniqueConstraint("audit_id", "stable_order", name="uq_site_audit_stage_order"),
+        CheckConstraint("attempt_count >= 0", name="ck_site_audit_stage_attempts"),
+        CheckConstraint("checkpoint >= 0", name="ck_site_audit_stage_checkpoint"),
+        CheckConstraint(
+            "source_count >= 0 and projected_count >= 0", name="ck_site_audit_stage_counts"
+        ),
+        CheckConstraint(
+            "state in ('pending','running','completed','partial','unavailable','failed',"
+            "'cancelled','blocked')",
+            name="ck_site_audit_stage_state",
+        ),
+        Index("ix_site_audit_stage_state", "audit_id", "state", "stable_order"),
+        Index("ix_site_audit_stage_lease", "lease_expires_at", "state"),
+    )
+
+
+class SiteAuditSpecialistAssociationModel(Base):
+    __tablename__ = "site_audit_specialist_associations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    audit_id: Mapped[str] = mapped_column(
+        ForeignKey("site_audit_orchestrations.audit_id", ondelete="CASCADE"), nullable=False
+    )
+    module: Mapped[str] = mapped_column(String(64), nullable=False)
+    specialist_audit_id: Mapped[str | None] = mapped_column(String(64))
+    source_run_id: Mapped[str | None] = mapped_column(String(64))
+    execution_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    eligibility_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    eligibility_reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    freshness_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    partial: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    associated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("audit_id", "module", name="uq_site_audit_specialist_module"),
+        CheckConstraint("evidence_count >= 0", name="ck_site_audit_specialist_evidence"),
+        Index("ix_site_audit_specialist_source", "specialist_audit_id", "source_run_id"),
+    )

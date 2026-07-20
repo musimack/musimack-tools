@@ -100,9 +100,13 @@ class LinkAdmissionReason(StrEnum):
 class ExclusionRuleType(StrEnum):
     """Simple deterministic URL exclusion rule types."""
 
+    EXACT_URL = "exact_url"
     EXACT_PATH = "exact_path"
     PATH_PREFIX = "path_prefix"
+    PATH_CONTAINS = "path_contains"
+    PATH_SUFFIX = "path_ends_with"
     QUERY_PARAMETER = "query_parameter"
+    QUERY_PARAMETER_EQUALS = "query_parameter_equals"
 
 
 class LimitKind(StrEnum):
@@ -142,6 +146,7 @@ class CrawlRequest:
     minimum_per_origin_delay_seconds: float = 0.5
     query_urls_allowed: bool = True
     exclusion_rules: tuple[CrawlExclusionRule, ...] = ()
+    strip_query_parameters: tuple[str, ...] = ()
     correlation_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -174,6 +179,7 @@ class CrawlConfigurationSnapshot:
     minimum_per_origin_delay_seconds: float
     query_urls_allowed: bool
     exclusion_rules: tuple[CrawlExclusionRule, ...]
+    strip_query_parameters: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -116,3 +116,21 @@ settings and governance operations; it does not add an audit or execution route.
 CSA-03 contributes no route. Its repositories are an injected persistence boundary for later
 private services. It adds no public alias and cannot create a crawl, specialist audit, or artifact
 through HTTP.
+
+## CSA-04 private execution surface
+
+An explicitly composed orchestration service contributes authenticated operations under
+`/api/internal/v1/site-audits/{audit_id}` for submit, cancel, retry, reconcile, status, summary,
+modules, pages, issues, rules, artifacts, and summary rebuild. There is no `/api/site-audits`
+alias. GET operations require `runs.view`; cancellation requires `jobs.cancel`; other mutations
+require `jobs.submit`.
+
+The durable worker advances ordinary parent execution automatically. `reconcile` is retained only
+as an authenticated administrative diagnostic/recovery action; clients do not need to call it
+after crawl or specialist completion.
+
+Page, issue, and rule queries use non-negative offsets and page sizes 50, 100, or 500. Invalid
+bounds use the normal structured validation envelope. Responses contain safe projections and
+stable CSA error codes, never database exceptions, response bodies, local artifact paths, tokens,
+or arbitrary headers. Submission is idempotent for the audit's immutable snapshot and returns the
+existing crawl association when repeated.

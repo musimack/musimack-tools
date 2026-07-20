@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from musimack_tools.link_audit.service import LinkAuditService
     from musimack_tools.metadata_audit.service import MetadataAuditService
     from musimack_tools.migration_qa.service import MigrationQaService
+    from musimack_tools.site_audit.orchestration import SiteAuditOrchestrationService
     from musimack_tools.site_audit_settings.service import SiteAuditSettingsService
     from musimack_tools.sitemap_audit.service import SitemapAuditService
     from musimack_tools.structured_data_audit.service import StructuredDataAuditService
@@ -80,6 +81,7 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
     structured_data_audits: StructuredDataAuditService | None = None,
     migration_qa: MigrationQaService | None = None,
     site_audit_settings: SiteAuditSettingsService | None = None,
+    site_audit_orchestration: SiteAuditOrchestrationService | None = None,
 ) -> FastAPI:
     """Create an authenticated internal app, rejecting invalid startup configuration."""
     try:
@@ -400,6 +402,22 @@ def create_production_app(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
         )
         application.state.site_audit_settings_diagnostics = site_audit_diagnostics
+    if site_audit_orchestration is not None:
+        from musimack_tools.api.site_audit_orchestration import (  # noqa: PLC0415
+            create_site_audit_orchestration_router,
+        )
+
+        application.include_router(
+            create_site_audit_orchestration_router(
+                site_audit_orchestration,
+                InternalApiConfiguration(
+                    mount_internal_routes=True,
+                    include_internal_routes_in_schema=configuration.include_openapi,
+                    include_internal_endpoints_in_docs=configuration.include_openapi,
+                    access_verifier=verifier,
+                ),
+            )
+        )
 
     add_internal_cors(
         application,

@@ -65,3 +65,19 @@ on isolated restore.
 CSA-04 owns job/crawl and child-audit orchestration, evidence projection, automatic aggregation,
 recovery reconciliation, and artifact generation. CSA-05 owns the wizard and result interface.
 CSA-06 owns controlled functional and real-site acceptance. Specialist authorities remain intact.
+
+## CSA-04 execution persistence
+
+Migration `0018_combined_site_audit_orchestration` adds one parent orchestration table, ordered stage
+records, and non-owning specialist associations. The parent retains immutable snapshot identity,
+crawl job/run identity, lifecycle, cancellation, retry/recovery counts, projection version, safe
+failure details, and timestamps. Stage rows retain the dependency graph, required/optional flag,
+attempts, checkpoint and counts, lease evidence, and terminal details. Specialist associations
+retain source kind, child identity, eligibility/freshness, partial state, and evidence count without
+taking ownership of specialist records.
+
+Foreign keys cascade orchestration state with its audit and use the existing crawl/job authorities
+by stable identity. Restart reconciliation returns terminal parents unchanged, resumes expired
+active leases as recovery-required, and uses stable URL, group, membership, and artifact identities
+to prevent duplicates. Backup and restore include the new tables through the single Alembic head;
+snapshot and retained projections remain intact across downgrade/re-upgrade validation.

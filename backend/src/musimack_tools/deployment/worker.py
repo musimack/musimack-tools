@@ -18,7 +18,7 @@ from musimack_tools.persistence.durable_repository import (
 if TYPE_CHECKING:
     from musimack_tools.deployment.durable import DurableExecutionSettings
     from musimack_tools.deployment.persistence_runtime import PreparedPersistence
-    from musimack_tools.durable.worker import ResultObserver
+    from musimack_tools.durable.worker import ReconciliationObserver, ResultObserver
     from musimack_tools.jobs.coordinator import JobRunServiceFactory
     from musimack_tools.persistence.engine import PersistenceRuntime
 
@@ -39,13 +39,14 @@ _PERSISTENCE_REQUIRED = "durable execution requires ready persistence"
 _FACTORY_REQUIRED = "enabled worker requires a run-service factory"
 
 
-def prepare_durable_execution(
+def prepare_durable_execution(  # noqa: PLR0913 - explicit optional runtime boundaries.
     settings: DurableExecutionSettings,
     persistence: PreparedPersistence,
     *,
     runtime: PersistenceRuntime | None = None,
     run_service_factory: JobRunServiceFactory | None = None,
     result_observer: ResultObserver | None = None,
+    reconciliation_observer: ReconciliationObserver | None = None,
 ) -> PreparedDurableExecution:
     configuration = settings.to_configuration()
     if not configuration.enabled:
@@ -84,7 +85,10 @@ def prepare_durable_execution(
         if run_service_factory is None:
             raise DurableExecutionStartupError(_FACTORY_REQUIRED)
         worker = DurableWorkerService(
-            repository, run_service_factory, result_observer=result_observer
+            repository,
+            run_service_factory,
+            result_observer=result_observer,
+            reconciliation_observer=reconciliation_observer,
         )
     diagnostics = repository.diagnostics(
         configuration.worker_id.value if configuration.worker_id is not None else None,

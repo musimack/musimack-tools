@@ -61,6 +61,7 @@ def serialize_run_request(request: CrawlRunRequest) -> str:
                 {"rule_type": item.rule_type.value, "value": item.value}
                 for item in crawl.exclusion_rules
             ],
+            "strip_query_parameters": list(crawl.strip_query_parameters),
             "correlation_id": crawl.correlation_id,
         },
         "requested_stages": [stage.value for stage in request.requested_stages],
@@ -130,6 +131,9 @@ def _deserialize_run_request(value: str) -> CrawlRunRequest:
                 ExclusionRuleType(_string(item["rule_type"])), _string(item["value"])
             )
             for item in (_mapping(raw) for raw in _list(crawl["exclusion_rules"]))
+        ),
+        strip_query_parameters=tuple(
+            _string(item) for item in _list(crawl.get("strip_query_parameters", []))
         ),
         correlation_id=_optional_string(crawl["correlation_id"]),
     )

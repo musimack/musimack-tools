@@ -830,10 +830,20 @@ def test_per_response_size_failure_does_not_become_total_byte_limit() -> None:
 @pytest.mark.parametrize(
     ("rule", "href"),
     [
+        (
+            CrawlExclusionRule(ExclusionRuleType.EXACT_URL, "https://example.test/private"),
+            "/private",
+        ),
         (CrawlExclusionRule(ExclusionRuleType.EXACT_PATH, "/private"), "/private"),
         (CrawlExclusionRule(ExclusionRuleType.PATH_PREFIX, "/admin"), "/admin/users"),
+        (CrawlExclusionRule(ExclusionRuleType.PATH_CONTAINS, "private"), "/a/private/b"),
+        (CrawlExclusionRule(ExclusionRuleType.PATH_SUFFIX, ".pdf"), "/document.pdf"),
         (
             CrawlExclusionRule(ExclusionRuleType.QUERY_PARAMETER, "session"),
+            "/page?session=abc",
+        ),
+        (
+            CrawlExclusionRule(ExclusionRuleType.QUERY_PARAMETER_EQUALS, "session=abc"),
             "/page?session=abc",
         ),
     ],
@@ -849,6 +859,31 @@ def test_explicit_exclusion_rules_are_deterministic(
 
     assert fetcher.calls == [_SEED]
     assert result.discoveries[0].reason is LinkAdmissionReason.EXCLUDED_BY_RULE
+
+
+def test_tracking_parameters_are_stripped_before_frontier_identity_and_deduplication() -> None:
+    target = "https://example.test/page?id=7"
+    result, fetcher, _clock = _run(
+        {
+            _SEED: _Page(
+                body=_html(
+                    '<a href="/page?utm_source=one&id=7">First</a>',
+                    '<a href="/page?id=7&utm_source=two">Second</a>',
+                )
+            ),
+            target: _Page(body=_html()),
+        },
+        request=_request(strip_query_parameters=("utm_source",)),
+    )
+
+    assert fetcher.calls == [_SEED, target]
+    assert [item.normalized_url for item in result.discoveries] == [target, target]
+    assert [item.raw_href for item in result.discoveries] == [
+        "/page?utm_source=one&id=7",
+        "/page?id=7&utm_source=two",
+    ]
+    assert result.discoveries[0].admitted is True
+    assert result.discoveries[1].reason is LinkAdmissionReason.DUPLICATE_URL
 
 
 def test_same_origin_minimum_delay_is_shared_across_workers() -> None:

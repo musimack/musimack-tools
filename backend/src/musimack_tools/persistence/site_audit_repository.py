@@ -208,6 +208,24 @@ class SQLAlchemySiteAuditRepository:
             session.flush()
             return _audit_record(row)
 
+    def set_completeness(
+        self,
+        audit_id: str,
+        *,
+        population: str,
+        modules: str,
+        partial: bool,
+    ) -> dict[str, Any]:
+        with self._runtime.transaction() as session:
+            row = self._audit_for_update(session, audit_id)
+            row.population_completeness = population
+            row.module_completeness = modules
+            row.partial = partial
+            row.updated_at = datetime.now(UTC)
+            row.revision += 1
+            session.flush()
+            return _audit_record(row)
+
     def create_snapshot(  # noqa: PLR0913
         self,
         audit_id: str,
@@ -478,6 +496,15 @@ class SQLAlchemySiteAuditRepository:
                 "site_audit_discovery_conflict", "This discovery evidence is already retained."
             ) from error
 
+    def next_discovery_sequence(self, audit_id: str) -> int:
+        with self._runtime.transaction() as session:
+            value = session.scalar(
+                select(func.max(SiteAuditDiscoverySourceModel.sequence)).where(
+                    SiteAuditDiscoverySourceModel.audit_id == audit_id
+                )
+            )
+            return int(value) + 1 if value is not None else 0
+
     def set_populations(
         self, audit_id: str, url_id: str, populations: tuple[Population, ...]
     ) -> tuple[str, ...]:
@@ -591,6 +618,25 @@ class SQLAlchemySiteAuditRepository:
             session.flush()
             return _model_dict(row)
 
+    def finding(self, audit_id: str, finding_id: str) -> dict[str, Any] | None:
+        with self._runtime.transaction() as session:
+            row = session.get(SiteAuditFindingModel, finding_id)
+            return _model_dict(row) if row is not None and row.audit_id == audit_id else None
+
+    def findings(
+        self, audit_id: str, *, page_size: int = 50, offset: int = 0
+    ) -> tuple[dict[str, Any], ...]:
+        validate_page_size(page_size)
+        with self._runtime.transaction() as session:
+            rows = session.scalars(
+                select(SiteAuditFindingModel)
+                .where(SiteAuditFindingModel.audit_id == audit_id)
+                .order_by(SiteAuditFindingModel.code, SiteAuditFindingModel.finding_id)
+                .offset(offset)
+                .limit(page_size)
+            )
+            return tuple(_model_dict(row) for row in rows)
+
     def upsert_issue_group(self, audit_id: str, record: dict[str, Any]) -> dict[str, Any]:
         with self._runtime.transaction() as session:
             self._audit_for_update(session, audit_id)
@@ -644,6 +690,18 @@ class SQLAlchemySiteAuditRepository:
                     "The finding is already a member of this issue group.",
                 ) from error
             return _model_dict(row)
+
+    def issue_membership_exists(self, group_id: str, finding_id: str) -> bool:
+        with self._runtime.transaction() as session:
+            return (
+                session.scalar(
+                    select(SiteAuditIssueMembershipModel.id).where(
+                        SiteAuditIssueMembershipModel.group_id == group_id,
+                        SiteAuditIssueMembershipModel.finding_id == finding_id,
+                    )
+                )
+                is not None
+            )
 
     def issue_groups(
         self, audit_id: str, *, page_size: int = 50, offset: int = 0
@@ -802,6 +860,25 @@ class SQLAlchemySiteAuditRepository:
             row = session.get(SiteAuditSummaryModel, audit_id)
             return _model_dict(row) if row else None
 
+    def set_specialist_summaries(
+        self,
+        audit_id: str,
+        *,
+        image_summary: dict[str, Any],
+        structured_data_summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self._runtime.transaction() as session:
+            row = session.get(SiteAuditSummaryModel, audit_id)
+            if row is None:
+                raise SiteAuditPersistenceError(
+                    "site_audit_projection_unavailable", "The Site Audit summary is unavailable."
+                )
+            row.image_summary_json = canonical_json(image_summary)
+            row.structured_data_summary_json = canonical_json(structured_data_summary)
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return _model_dict(row)
+
     def associate_artifact(  # noqa: PLR0913
         self,
         audit_id: str,
@@ -834,6 +911,18 @@ class SQLAlchemySiteAuditRepository:
                     "The artifact association is invalid or already retained.",
                 ) from error
             return _model_dict(row)
+
+    def artifact_associations(self, audit_id: str) -> tuple[dict[str, Any], ...]:
+        with self._runtime.transaction() as session:
+            rows = session.scalars(
+                select(SiteAuditArtifactAssociationModel)
+                .where(SiteAuditArtifactAssociationModel.audit_id == audit_id)
+                .order_by(
+                    SiteAuditArtifactAssociationModel.purpose,
+                    SiteAuditArtifactAssociationModel.id,
+                )
+            )
+            return tuple(_model_dict(row) for row in rows)
 
     @staticmethod
     def _audit_for_update(session: Session, audit_id: str) -> SiteAuditModel:

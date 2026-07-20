@@ -101,4 +101,5 @@ def configuration_snapshot(request: CrawlRequest) -> CrawlConfigurationSnapshot:
         minimum_per_origin_delay_seconds=request.minimum_per_origin_delay_seconds,
         query_urls_allowed=request.query_urls_allowed,
         exclusion_rules=request.exclusion_rules,
+        strip_query_parameters=request.strip_query_parameters,
     )

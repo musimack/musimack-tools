@@ -200,6 +200,12 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
             method in {"POST", "PUT", "PATCH", "DELETE"} or path.endswith("/versions")
         ):
             return Permission.SETTINGS_MANAGE
+        if method == "GET" and path.endswith(
+            ("/status", "/summary", "/modules", "/pages", "/issues", "/rules", "/artifacts")
+        ):
+            return Permission.RUNS_VIEW
+        if path.endswith("/cancel"):
+            return Permission.JOBS_CANCEL
         return Permission.JOBS_SUBMIT
     if path.endswith(("/auth/me", "/auth/sessions")):
         return Permission.SESSIONS_VIEW_OWN

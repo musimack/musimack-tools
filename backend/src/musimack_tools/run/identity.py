@@ -61,6 +61,7 @@ def canonical_identity_bytes(request: CrawlRunRequest) -> bytes:
             {"type": item.rule_type.value, "value": item.value}
             for item in request.crawl_request.exclusion_rules
         ],
+        "strip_query_parameters": sorted(request.crawl_request.strip_query_parameters),
         "recommendation_policy": asdict(request.recommendation_policy),
         "scope_origins": sorted(
             (item.scheme, item.effective_port)

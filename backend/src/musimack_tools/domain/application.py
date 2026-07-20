@@ -12,6 +12,7 @@ from musimack_tools.domain.sitemap_publication import ExistingFilePolicy
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from musimack_tools.domain.crawl import CrawlExclusionRule
     from musimack_tools.domain.job import DurableRecommendationDetail, JobProgressView
     from musimack_tools.domain.job_registry import JobRegistrySnapshot, JobShutdownResult
     from musimack_tools.domain.run import CrawlRunRequest
@@ -197,6 +198,8 @@ class RawApplicationCrawlRequest:
     create_summary_directory: bool = False
     summary_dry_run: bool = False
     caller_label: str | None = None
+    exclusion_rules: tuple[CrawlExclusionRule, ...] = ()
+    strip_query_parameters: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

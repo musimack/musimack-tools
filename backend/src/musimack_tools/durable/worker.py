@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 Sleep = Callable[[float], Awaitable[None]]
 ResultObserver = Callable[[str, "CrawlRunResult"], None]
+ReconciliationObserver = Callable[[], Awaitable[int]]
 _INVALID_WORKER_CONFIGURATION = "durable worker requires explicit enabled configuration"
 _LOGGER = getLogger(__name__)
 
@@ -55,6 +56,7 @@ class DurableWorkerService:
         *,
         sleep: Sleep = asyncio.sleep,
         result_observer: ResultObserver | None = None,
+        reconciliation_observer: ReconciliationObserver | None = None,
     ) -> None:
         configuration = repository.configuration
         if not configuration.worker_enabled or configuration.worker_id is None:
@@ -63,6 +65,7 @@ class DurableWorkerService:
         self._factory = run_service_factory
         self._sleep = sleep
         self._result_observer = result_observer
+        self._reconciliation_observer = reconciliation_observer
         self._configuration = configuration
         self._worker_id = configuration.worker_id.value
         self._stop_requested = asyncio.Event()
@@ -110,6 +113,14 @@ class DurableWorkerService:
         return self._startup
 
     async def run_once(self) -> int:
+        if self._reconciliation_observer is not None and not self._stop_requested.is_set():
+            try:
+                await self._reconciliation_observer()
+            except Exception:  # Parent recovery must not stop crawl claims.
+                _LOGGER.exception(
+                    "site_audit_reconciliation_scan_failed",
+                    extra={"worker_id": self._worker_id},
+                )
         capacity = self._configuration.maximum_concurrent_claimed_jobs - len(self._tasks)
         if capacity <= 0 or self._stop_requested.is_set():
             return 0

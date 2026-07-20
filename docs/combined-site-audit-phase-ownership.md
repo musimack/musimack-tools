@@ -94,3 +94,21 @@ not hidden open requirements:
 
 Implementation details such as exact SQL table names are intentionally owned by CSA-03 and are not
 product decisions, provided they satisfy the immutable external contract.
+
+## CSA-04 delivered boundary
+
+CSA-04 owns the durable parent/stage graph, accepted crawl submission and association, safe evidence
+ingestion, immutable rule projection, population classification, base specialist availability,
+issue grouping and priority, summary reconciliation, cancellation/retry/recovery, and the first
+bounded artifact set. It provides private execution and inspection APIs only.
+
+Metadata, image/alt, and structured-data summaries can be projected from accepted crawl evidence.
+Existing-sitemap membership uses authoritative Sitemap Audit documents and entries. Specialist
+child or eligible-prior records drive reconciliation with explicit provenance; the worker launches
+an authorized missing child without duplicating a retained association. Optional unavailable depth
+is not presented as complete. Frontier-time discovery governance and automatic parent scans are
+part of CSA-04, while all presentation remains in CSA-05.
+
+CSA-05 still owns the complete wizard, lifecycle presentation, tables, issue dashboard, exclusion
+review, and client-report experience. CSA-06 owns controlled fixture and explicitly authorized
+real-site acceptance. CSA-04 performs no public-network acceptance crawl.

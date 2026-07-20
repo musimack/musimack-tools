@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Protocol, cast
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from musimack_tools.crawl.cancellation import CancellationToken, NeverCancelledToken
 from musimack_tools.crawl.frontier import CrawlFrontier
@@ -632,7 +632,9 @@ class SingleSiteCrawlOrchestrator:
         reason = self._pre_admission_reason(runtime, link, candidate_depth)
         normalized: NormalizedUrl | None = None
         if reason is None and link.normalized_url is not None:
-            normalized = normalize_url(link.normalized_url)
+            normalized = _normalize_discovered_url(
+                link.normalized_url, runtime.request.strip_query_parameters
+            )
             reason = self._policy_admission_reason(runtime, normalized, candidate_depth)
 
         admitted = False
@@ -684,7 +686,9 @@ class SingleSiteCrawlOrchestrator:
             LinkDiscoveryEvidence(
                 source_url=source_url,
                 raw_href=link.raw_href,
-                normalized_url=link.normalized_url,
+                normalized_url=(
+                    normalized.normalized if normalized is not None else link.normalized_url
+                ),
                 candidate_depth=candidate_depth,
                 occurrence_index=link.occurrence_index,
                 nofollow=link.nofollow,
@@ -1153,13 +1157,38 @@ def _matches_exclusion_rule(
     rules: tuple[CrawlExclusionRule, ...],
 ) -> bool:
     parts = urlsplit(url.normalized)
-    query_names = {name for name, _value in parse_qsl(parts.query, keep_blank_values=True)}
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    query_names = {name for name, _value in query}
     return any(
-        (rule.rule_type is ExclusionRuleType.EXACT_PATH and parts.path == rule.value)
+        (rule.rule_type is ExclusionRuleType.EXACT_URL and url.normalized == rule.value)
+        or (rule.rule_type is ExclusionRuleType.EXACT_PATH and parts.path == rule.value)
         or (rule.rule_type is ExclusionRuleType.PATH_PREFIX and parts.path.startswith(rule.value))
+        or (rule.rule_type is ExclusionRuleType.PATH_CONTAINS and rule.value in parts.path)
+        or (rule.rule_type is ExclusionRuleType.PATH_SUFFIX and parts.path.endswith(rule.value))
         or (rule.rule_type is ExclusionRuleType.QUERY_PARAMETER and rule.value in query_names)
+        or (
+            rule.rule_type is ExclusionRuleType.QUERY_PARAMETER_EQUALS
+            and tuple(rule.value.split("=", 1)) in query
+        )
         for rule in rules
     )
+
+
+def _normalize_discovered_url(value: str, strip_query_parameters: tuple[str, ...]) -> NormalizedUrl:
+    normalized = normalize_url(value)
+    if not strip_query_parameters:
+        return normalized
+    parts = urlsplit(normalized.normalized)
+    stripped = frozenset(strip_query_parameters)
+    query = urlencode(
+        [
+            (name, item)
+            for name, item in parse_qsl(parts.query, keep_blank_values=True)
+            if name not in stripped
+        ],
+        doseq=True,
+    )
+    return normalize_url(urlunsplit((parts.scheme, parts.netloc, parts.path, query, "")))
 
 
 def _safe_url_summary(url: NormalizedUrl) -> str:

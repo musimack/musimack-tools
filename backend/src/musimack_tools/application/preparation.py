@@ -217,6 +217,8 @@ class ApplicationRequestPreparer:
                 maximum_concurrent_fetches=limits.maximum_concurrency,
                 maximum_queued_urls=limits.maximum_queue_size,
                 minimum_per_origin_delay_seconds=limits.minimum_request_delay_seconds,
+                exclusion_rules=raw.exclusion_rules,
+                strip_query_parameters=raw.strip_query_parameters,
             )
             publication = _publication_configuration(raw)
             summary_configuration = _summary_configuration(raw, summary)

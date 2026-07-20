@@ -34,6 +34,9 @@ from musimack_tools.persistence.models import (
     JobModel,
     RunModel,
 )
+from musimack_tools.persistence.site_audit_orchestration_repository import (
+    SQLAlchemySiteAuditOrchestrationRepository,
+)
 from musimack_tools.persistence.site_audit_repository import SQLAlchemySiteAuditRepository
 
 if TYPE_CHECKING:
@@ -57,6 +60,12 @@ CSA_TABLES = {
     "site_audit_module_statuses",
     "site_audit_summary_projections",
     "site_audit_artifact_associations",
+}
+
+CSA_ORCHESTRATION_TABLES = {
+    "site_audit_orchestrations",
+    "site_audit_orchestration_stages",
+    "site_audit_specialist_associations",
 }
 
 
@@ -472,7 +481,9 @@ def test_migration_head_schema_downgrade_and_reupgrade(tmp_path: Path) -> None:
         PersistenceConfiguration(enabled=True, database_path=database)
     )
     assert current_revision(downgraded.engine) == PERSISTENCE_HEAD_PARENT_REVISION
-    assert not (CSA_TABLES & set(inspect(downgraded.engine).get_table_names()))
+    downgraded_tables = set(inspect(downgraded.engine).get_table_names())
+    assert downgraded_tables >= CSA_TABLES
+    assert not (CSA_ORCHESTRATION_TABLES & downgraded_tables)
     downgraded.dispose()
     command.upgrade(configuration, "head")
     reupgraded = create_persistence_runtime(
@@ -486,7 +497,8 @@ def test_populated_csa_database_backup_and_restore(
     repository: tuple[PersistenceRuntime, SQLAlchemySiteAuditRepository], tmp_path: Path
 ) -> None:
     runtime, repo = repository
-    _snapshot(repo)
+    snapshot = _snapshot(repo)
+    SQLAlchemySiteAuditOrchestrationRepository(runtime).initialize("audit-1", snapshot)
     _url(repo)
     repo.set_populations("audit-1", "url-1", (Population.DISCOVERED, Population.FETCHED))
     repo.rebuild_summary("audit-1", expected_revision=0)
@@ -518,7 +530,7 @@ def test_populated_csa_database_backup_and_restore(
         closing(sqlite3.connect(database)) as source,
         closing(sqlite3.connect(result.database_path)) as target,
     ):
-        for table in CSA_TABLES:
+        for table in CSA_TABLES | CSA_ORCHESTRATION_TABLES:
             source_count = source.execute(
                 f'SELECT count(*) FROM "{table}"'  # noqa: S608 - closed constant inventory.
             ).fetchone()

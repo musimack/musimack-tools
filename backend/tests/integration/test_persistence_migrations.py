@@ -216,6 +216,9 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "site_audit_module_statuses",
             "site_audit_summary_projections",
             "site_audit_artifact_associations",
+            "site_audit_orchestrations",
+            "site_audit_orchestration_stages",
+            "site_audit_specialist_associations",
             "crawl_link_evidence",
             "link_audits",
             "link_audit_targets",
@@ -310,6 +313,12 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             ("site_audit_summary_projections", "site_audits"),
             ("site_audit_artifact_associations", "site_audits"),
             ("site_audit_artifact_associations", "artifact_records"),
+            ("site_audit_orchestrations", "site_audits"),
+            ("site_audit_orchestrations", "site_audit_snapshots"),
+            ("site_audit_orchestrations", "jobs"),
+            ("site_audit_orchestrations", "runs"),
+            ("site_audit_orchestration_stages", "site_audit_orchestrations"),
+            ("site_audit_specialist_associations", "site_audit_orchestrations"),
             ("sitemap_recommendations", "jobs"),
             ("sitemap_recommendations", "runs"),
             ("artifact_metadata", "jobs"),
@@ -618,6 +627,9 @@ def test_offline_sql_contains_authorized_schema(tmp_path: Path) -> None:
     assert "CREATE TABLE internal_link_opportunities" in sql
     assert "CREATE TABLE crawl_structured_data_evidence" in sql
     assert "CREATE TABLE structured_data_audits" in sql
+    assert "CREATE TABLE site_audit_orchestrations" in sql
+    assert "CREATE TABLE site_audit_orchestration_stages" in sql
+    assert "CREATE TABLE site_audit_specialist_associations" in sql
     assert "INSERT INTO persistence_metadata" in sql
     assert not (tmp_path / "offline.db").exists()
 

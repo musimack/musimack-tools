@@ -54,16 +54,24 @@ def configured_exclusion_matches(
 ) -> tuple[ConfiguredExclusionEvidence, ...]:
     """Return every matching accepted crawl exclusion rule in configured order."""
     parts = urlsplit(normalized_url)
-    query_names = {name for name, _value in parse_qsl(parts.query, keep_blank_values=True)}
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    query_names = {name for name, _value in query}
     matches: list[ConfiguredExclusionEvidence] = []
     for rule in rules:
         matched = (
-            (rule.rule_type is ExclusionRuleType.EXACT_PATH and parts.path == rule.value)
+            (rule.rule_type is ExclusionRuleType.EXACT_URL and normalized_url == rule.value)
+            or (rule.rule_type is ExclusionRuleType.EXACT_PATH and parts.path == rule.value)
             or (
                 rule.rule_type is ExclusionRuleType.PATH_PREFIX
                 and _path_prefix_matches(parts.path, rule.value)
             )
             or (rule.rule_type is ExclusionRuleType.QUERY_PARAMETER and rule.value in query_names)
+            or (rule.rule_type is ExclusionRuleType.PATH_CONTAINS and rule.value in parts.path)
+            or (rule.rule_type is ExclusionRuleType.PATH_SUFFIX and parts.path.endswith(rule.value))
+            or (
+                rule.rule_type is ExclusionRuleType.QUERY_PARAMETER_EQUALS
+                and tuple(rule.value.split("=", 1)) in query
+            )
         )
         if matched:
             matches.append(ConfiguredExclusionEvidence(rule.rule_type.value, rule.value))

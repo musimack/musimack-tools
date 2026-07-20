@@ -311,6 +311,140 @@ class SQLAlchemyPageEvidenceRepository:
             value = session.get(CrawlPageEvidenceModel, evidence_id)
             return _item(value) if value is not None else None
 
+    def get_safe_page_evidence(self, evidence_id: str) -> dict[str, object] | None:
+        """Return the bounded metadata/directive projection; never return response content."""
+        with self._runtime.transaction() as session:
+            row = session.get(CrawlPageEvidenceModel, evidence_id)
+            if row is None:
+                return None
+            return {
+                "evidence_id": row.evidence_id,
+                "requested_url": row.requested_url,
+                "final_url": row.final_url,
+                "title_presence": row.title_presence,
+                "title_value": row.title_value,
+                "description_presence": row.description_presence,
+                "description_value": row.description_value,
+                "canonical_presence": row.canonical_presence,
+                "canonical_url": row.canonical_url,
+                "canonical_conflicting": row.canonical_conflicting,
+                "meta_robots_json": row.meta_robots_json,
+                "x_robots_json": row.x_robots_json,
+                "robots_allowed": row.robots_allowed,
+                "robots_reason_code": row.robots_reason_code,
+                "indexability_evidence_json": row.indexability_evidence_json,
+                "parse_warning_count": row.parse_warning_count,
+                "evidence_state": row.evidence_state,
+                "value_truncated": row.value_truncated,
+            }
+
+    def base_evidence_counts(self, run_id: str) -> dict[str, int]:
+        """Return bounded aggregate counts without exposing retained raw evidence."""
+        with self._runtime.transaction() as session:
+            images = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlImageEvidenceModel)
+                    .where(CrawlImageEvidenceModel.run_id == run_id)
+                )
+                or 0
+            )
+            missing_alt = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlImageEvidenceModel)
+                    .where(
+                        CrawlImageEvidenceModel.run_id == run_id,
+                        CrawlImageEvidenceModel.alt_present.is_(False),
+                    )
+                )
+                or 0
+            )
+            empty_alt = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlImageEvidenceModel)
+                    .where(
+                        CrawlImageEvidenceModel.run_id == run_id,
+                        CrawlImageEvidenceModel.alt_present.is_(True),
+                        CrawlImageEvidenceModel.alt_normalized == "",
+                    )
+                )
+                or 0
+            )
+            structured = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlStructuredDataEvidenceModel)
+                    .where(CrawlStructuredDataEvidenceModel.run_id == run_id)
+                )
+                or 0
+            )
+            invalid_structured = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlStructuredDataEvidenceModel)
+                    .where(
+                        CrawlStructuredDataEvidenceModel.run_id == run_id,
+                        CrawlStructuredDataEvidenceModel.parse_status != "parsed",
+                    )
+                )
+                or 0
+            )
+            links = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlLinkEvidenceModel)
+                    .where(CrawlLinkEvidenceModel.run_id == run_id)
+                )
+                or 0
+            )
+        return {
+            "image_occurrences": images,
+            "images_missing_alt": missing_alt,
+            "images_empty_alt": empty_alt,
+            "structured_data_blocks": structured,
+            "structured_data_invalid": invalid_structured,
+            "link_occurrences": links,
+        }
+
+    def list_link_discoveries(
+        self, run_id: str, *, offset: int = 0, limit: int = 500
+    ) -> tuple[dict[str, object], ...]:
+        """Return bounded link-discovery facts without page bodies or raw HTML."""
+        if offset < 0 or not 1 <= limit <= self._configuration.maximum_page_size:
+            raise ValueError(PageEvidenceReasonCode.INVALID_PAGE_SIZE)
+        with self._runtime.transaction() as session:
+            rows = session.scalars(
+                select(CrawlLinkEvidenceModel)
+                .where(CrawlLinkEvidenceModel.run_id == run_id)
+                .order_by(
+                    CrawlLinkEvidenceModel.discovery_sequence,
+                    CrawlLinkEvidenceModel.link_id,
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+            return tuple(
+                {
+                    "link_id": row.link_id,
+                    "source_evidence_id": row.source_evidence_id,
+                    "source_requested_url": row.source_requested_url,
+                    "source_final_url": row.source_final_url,
+                    "source_crawl_depth": row.source_crawl_depth,
+                    "discovery_sequence": row.discovery_sequence,
+                    "raw_href": row.raw_href,
+                    "resolved_url": row.resolved_url,
+                    "link_type": row.link_type,
+                    "in_scope": row.in_scope,
+                    "scope_reason_code": row.scope_reason_code,
+                    "nofollow": row.nofollow,
+                    "created_at": row.created_at,
+                    "evidence_version": row.evidence_version,
+                }
+                for row in rows
+            )
+
     def list_pages(
         self,
         filters: PageEvidenceFilters,

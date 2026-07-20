@@ -109,7 +109,7 @@ _TRANSITIONS: dict[AuditLifecycle, frozenset[AuditLifecycle]] = {
     AuditLifecycle.COMPLETED: frozenset({AuditLifecycle.ARCHIVED}),
     AuditLifecycle.COMPLETED_WITH_WARNINGS: frozenset({AuditLifecycle.ARCHIVED}),
     AuditLifecycle.PARTIALLY_COMPLETED: frozenset({AuditLifecycle.ARCHIVED}),
-    AuditLifecycle.FAILED: frozenset({AuditLifecycle.ARCHIVED}),
+    AuditLifecycle.FAILED: frozenset({AuditLifecycle.RECOVERY_REQUIRED, AuditLifecycle.ARCHIVED}),
     AuditLifecycle.ARCHIVED: frozenset(),
 }
 
