@@ -49,7 +49,7 @@ Before backup, run reconciliation and resolve missing, corrupt, unsafe, bounded,
 - `configuration_invalid`: correct every named environment setting; values and credentials are intentionally redacted.
 - `database_parent` or `artifact_parent`: run `initialize` only after confirming the configured absolute locations.
 - `database_connectivity`: confirm the file exists after migration, service identity permissions, and that no restore or offline maintenance holds it.
-- `migration_head` or `migration_current`: stop services, inspect `migration-status`, confirm the single code head shipped by the exact application version (the unpublished Phase 29 candidate is `0015_sitemap_recommendation_retention`; published `main` remains at `0013_website_migration_qa`), back up, and run the explicit migration. An unknown/ahead revision requires the matching application version or human recovery; do not edit `alembic_version`.
+- `migration_head` or `migration_current`: stop services, inspect `migration-status`, confirm the single code head shipped by the exact application version (the accepted published Phase 29 head is `0015_sitemap_recommendation_retention`), back up, and run the explicit migration. An unknown/ahead revision requires the matching application version or human recovery; do not edit `alembic_version`.
 - `artifact_safety` or `artifact_writable`: remove symlinks/junctions from the managed path and correct ownership/permissions. Do not relax path checks.
 - `frontend_build`: produce a fresh Vite build and point to the directory containing `index.html`.
 - Readiness database/migration/artifact failure: keep ingress disabled and repair the failing dependency. Worker failure requires the configured worker identity to register and heartbeat as ready.

@@ -30,9 +30,9 @@ publish, deploy, migrate a production database, or run a customer crawl.
 - Semantic landmarks, headings, form labels, accessible control names, the skip link, mobile menu
   state, and visible focus treatment passed manual smoke review. Detailed boundaries are in
   `accessibility-review.md`.
-- The published baseline remains at `0013_website_migration_qa`. The unpublished Phase 29 worktree
-  has one head, `0015_sitemap_recommendation_retention`, with parent
-  `0014_durable_result_projection`; empty and existing databases upgrade successfully.
+- The accepted Phase 29 baseline is published with one head,
+  `0015_sitemap_recommendation_retention`, with parent `0014_durable_result_projection`; empty and
+  existing databases upgrade successfully.
 - Offline backup/restore, integrity verification, authenticated restored composition, worker
   lifecycle, reconciliation, retention, and deterministic release-candidate packaging are exercised
   by the operations and release suites and the Phase 29 rehearsal.
@@ -40,16 +40,15 @@ publish, deploy, migrate a production database, or run a customer crawl.
   289 focused Phase 29 backend tests; 2,215 full backend tests with three accepted Windows
   symlink-privilege skips; `pip check`; import/lock/migration/workflow/repository audits; 65 focused
   frontend tests; 22 frontend test files and 253 tests; production build; and both offline npm audits
-  with zero vulnerabilities. Hosted CI at the Phase 29 commit cannot be claimed until a later
-  authorized push completes.
+  with zero vulnerabilities. Phase 29 was later published and its hosted CI passed.
 
 ## Role acceptance
 
-| Role | Read scope | Write scope | Administrative scope | Browser result |
-| --- | --- | --- | --- | --- |
-| Administrator | All accepted resources | All accepted workflows | Users, roles, sessions, audit | Passed |
-| Operator | Jobs, runs, history, artifacts, diagnostics, settings | Submit and cancel jobs/audits | Denied | Passed |
-| Viewer | Jobs, runs, history, artifacts, diagnostics, settings | Denied | Denied | Passed |
+| Role          | Read scope                                            | Write scope                   | Administrative scope          | Browser result |
+| ------------- | ----------------------------------------------------- | ----------------------------- | ----------------------------- | -------------- |
+| Administrator | All accepted resources                                | All accepted workflows        | Users, roles, sessions, audit | Passed         |
+| Operator      | Jobs, runs, history, artifacts, diagnostics, settings | Submit and cancel jobs/audits | Denied                        | Passed         |
+| Viewer        | Jobs, runs, history, artifacts, diagnostics, settings | Denied                        | Denied                        | Passed         |
 
 ## Error, performance, and recovery acceptance
 
