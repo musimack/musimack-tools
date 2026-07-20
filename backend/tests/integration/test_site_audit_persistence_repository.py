@@ -354,7 +354,28 @@ def test_url_identity_discoveries_populations_matches_and_filters(
     )
     assert total == 1
     assert rows[0]["url_id"] == "url-1"
+    filtered, filtered_total = repo.urls(
+        "audit-1",
+        filters={
+            "content_type": "text/html",
+            "indexability": "indexable",
+            "only_actionable": True,
+        },
+        sort="url",
+        direction="desc",
+    )
+    assert filtered_total == 1
+    assert filtered[0]["url_id"] == "url-1"
+    exclusions, exclusion_total = repo.excluded_urls("audit-1")
+    assert exclusion_total == 1
+    assert exclusions[0]["rule_matches"][0]["rule"]["stable_rule_id"] == "rule-1"
+    assert exclusions[0]["rule_matches"][0]["rule"]["rule_source"] == "per_audit"
     assert repo.rule_matches("audit-1")[0]["match_id"] == "match-1"
+    detail = repo.url_detail("audit-1", 1)
+    assert detail is not None
+    assert detail["url_id"] == "url-1"
+    assert detail["discoveries"][0]["discovery_id"] == "discovery-1"
+    assert detail["rule_matches"][0]["match_id"] == "match-1"
     with pytest.raises(SiteAuditPersistenceError) as captured:
         repo.add_url(
             "audit-1",
@@ -439,8 +460,52 @@ def test_findings_groups_membership_modules_and_restart_safe_rebuild(
     restored_group = reopened.issue_groups("audit-1")[0]
     assert restored_group["group_id"] == "group-1"
     assert restored_group["affected_url_count"] == 1
+    assert restored_group["finding_count"] == 1
+    assert restored_group["modules"] == ("metadata",)
+    assert reopened.issue_groups("audit-1", filters={"module": "metadata", "severity": "high"})
+    assert (
+        reopened.issue_group_count("audit-1", filters={"module": "metadata", "severity": "high"})
+        == 1
+    )
     assert reopened.module_statuses("audit-1")[0]["module"] == "metadata"
+    assert reopened.issue_group_count("audit-1") == 1
+    group_detail = reopened.issue_group_detail("audit-1", "group-1")
+    assert group_detail is not None
+    assert group_detail["total"] == 1
+    assert group_detail["memberships"][0]["finding"]["code"] == "title_missing"
     reopened_runtime.dispose()
+
+
+def test_exclusion_projection_is_filtered_and_paginated_in_storage(
+    repository: tuple[PersistenceRuntime, SQLAlchemySiteAuditRepository],
+) -> None:
+    _runtime, repo = repository
+    _snapshot(repo)
+    _url(repo, 1)
+    repo.add_url(
+        "audit-1",
+        "url-2",
+        sequence=2,
+        original_url="https://example.com/private",
+        requested_url="https://example.com/private",
+        normalized_url="https://example.com/private",
+        values={
+            "discovery_decision": "exclude_from_discovery",
+            "metadata_scoring_decision": "exclude_from_metadata_scoring",
+            "sitemap_policy_decision": "exclude",
+        },
+    )
+    first, total = repo.excluded_urls("audit-1", page_size=50, offset=0)
+    assert total == 2
+    assert [item["url_id"] for item in first] == ["url-1", "url-2"]
+    filtered, filtered_total = repo.excluded_urls(
+        "audit-1", filters={"url": "private", "action": "exclude_from_discovery"}
+    )
+    assert filtered_total == 1
+    assert filtered[0]["url_id"] == "url-2"
+    second, total = repo.excluded_urls("audit-1", page_size=50, offset=50)
+    assert total == 2
+    assert second == ()
 
 
 def test_migration_head_schema_downgrade_and_reupgrade(tmp_path: Path) -> None:

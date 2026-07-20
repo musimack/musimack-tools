@@ -193,17 +193,19 @@ def permission_for_request(  # noqa: C901, PLR0911, PLR0912
     method: str, path: str
 ) -> Permission | None:
     """Central resource mapping; an unknown protected operation is denied by the caller."""
-    if "/site-audits/" in path:
+    if "/site-audits" in path:
         if path.endswith("/settings"):
             return Permission.SETTINGS_MANAGE
         if "/site-profiles" in path and (
             method in {"POST", "PUT", "PATCH", "DELETE"} or path.endswith("/versions")
         ):
             return Permission.SETTINGS_MANAGE
-        if method == "GET" and path.endswith(
-            ("/status", "/summary", "/modules", "/pages", "/issues", "/rules", "/artifacts")
-        ):
+        if method == "GET" and (path.endswith("/presets") or "/site-profiles" in path):
+            return Permission.JOBS_SUBMIT
+        if method == "GET":
             return Permission.RUNS_VIEW
+        if path.endswith(("/reconcile", "/rebuild-summary", "/archive")):
+            return Permission.SETTINGS_MANAGE
         if path.endswith("/cancel"):
             return Permission.JOBS_CANCEL
         return Permission.JOBS_SUBMIT

@@ -67,6 +67,13 @@ import {
   MigrationQaInventoryPage,
   NewMigrationQaPage,
 } from '../pages/MigrationQaPages';
+import {
+  NewSiteAuditPage,
+  SiteAuditIssueDetailPage,
+  SiteAuditLifecyclePage,
+  SiteAuditPageDetailPage,
+  SiteAuditResultsPage,
+} from '../pages/SiteAuditPages';
 
 function DocumentTitle() {
   const location = useLocation();
@@ -79,25 +86,27 @@ function DocumentTitle() {
     };
     const workflowTitle = location.pathname.startsWith('/migration-qa')
       ? 'Website migration QA'
-      : location.pathname.startsWith('/structured-data-audits')
-        ? 'Structured data'
-        : location.pathname.startsWith('/image-audits')
-          ? 'Images and alt text'
-          : location.pathname.startsWith('/internal-links')
-            ? 'Internal links'
-            : location.pathname.startsWith('/link-audits')
-              ? 'Link audit'
-              : location.pathname.startsWith('/sitemap-audits')
-                ? 'Sitemap audit'
-                : location.pathname.startsWith('/jobs/')
-                  ? 'Job workflow'
-                  : location.pathname.startsWith('/history/')
-                    ? 'History detail'
-                    : location.pathname.startsWith('/artifacts/')
-                      ? 'Artifact detail'
-                      : location.pathname.startsWith('/audits/')
-                        ? 'Metadata audit'
-                        : null;
+      : location.pathname.startsWith('/site-audits')
+        ? 'Site Audits'
+        : location.pathname.startsWith('/structured-data-audits')
+          ? 'Structured data'
+          : location.pathname.startsWith('/image-audits')
+            ? 'Images and alt text'
+            : location.pathname.startsWith('/internal-links')
+              ? 'Internal links'
+              : location.pathname.startsWith('/link-audits')
+                ? 'Link audit'
+                : location.pathname.startsWith('/sitemap-audits')
+                  ? 'Sitemap audit'
+                  : location.pathname.startsWith('/jobs/')
+                    ? 'Job workflow'
+                    : location.pathname.startsWith('/history/')
+                      ? 'History detail'
+                      : location.pathname.startsWith('/artifacts/')
+                        ? 'Artifact detail'
+                        : location.pathname.startsWith('/audits/')
+                          ? 'Metadata audit'
+                          : null;
     const label = workspace
       ? workspace.label
       : (systemTitles[location.pathname] ?? workflowTitle ?? 'Not Found');
@@ -132,6 +141,22 @@ export function AppRoutes() {
         ))}
         <Route element={<Protected permission="jobs.submit" />}>
           <Route path="/jobs/new" element={<NewCrawlPage />} />
+        </Route>
+        <Route element={<Protected permission="jobs.submit" />}>
+          <Route path="/site-audits/new" element={<NewSiteAuditPage />} />
+          <Route path="/site-audits/:auditId/edit" element={<NewSiteAuditPage />} />
+        </Route>
+        <Route element={<Protected permission="runs.view" />}>
+          <Route path="/site-audits/:auditId" element={<SiteAuditLifecyclePage />} />
+          <Route path="/site-audits/:auditId/results/:tab" element={<SiteAuditResultsPage />} />
+          <Route
+            path="/site-audits/:auditId/results/pages/:sequence"
+            element={<SiteAuditPageDetailPage />}
+          />
+          <Route
+            path="/site-audits/:auditId/results/issues/:groupId"
+            element={<SiteAuditIssueDetailPage />}
+          />
         </Route>
         <Route element={<Protected permission="jobs.view" />}>
           <Route path="/jobs/:jobId" element={<JobDetailPage />} />

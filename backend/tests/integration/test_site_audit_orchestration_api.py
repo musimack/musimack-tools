@@ -47,6 +47,43 @@ class _Service:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Any]] = []
 
+    def history(
+        self,
+        *,
+        offset: int,
+        page_size: int,
+        lifecycle: str | None,
+        search: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "items": (),
+            "total": 0,
+            "offset": offset,
+            "page_size": page_size,
+            "lifecycle": lifecycle,
+            "search": search,
+        }
+
+    def create_draft(
+        self, draft: dict[str, Any], *, actor: str, idempotency_key: str | None
+    ) -> dict[str, Any]:
+        self.calls.append(("create", (actor, idempotency_key)))
+        return {"audit_id": "audit-created", "draft": draft, "revision": 1}
+
+    def audit_detail(self, audit_id: str) -> dict[str, Any]:
+        return {"audit": {"audit_id": audit_id, "revision": 1, "draft": {}}}
+
+    def update_draft(
+        self, audit_id: str, draft: dict[str, Any], *, expected_revision: int
+    ) -> dict[str, Any]:
+        return {"audit_id": audit_id, "revision": expected_revision + 1, "draft": draft}
+
+    def validate_draft(self, audit_id: str, *, expected_revision: int) -> dict[str, Any]:
+        return {"audit": {"audit_id": audit_id, "revision": expected_revision + 2}}
+
+    async def preflight_draft(self, audit_id: str, *, expected_revision: int) -> dict[str, Any]:
+        return {"audit": {"audit_id": audit_id, "revision": expected_revision + 2}}
+
     async def submit(self, audit_id: str, *, actor: str) -> dict[str, Any]:
         self.calls.append(("submit", actor))
         return {"audit_id": audit_id, "state": "queued"}
@@ -70,14 +107,75 @@ class _Service:
     def summary(self, audit_id: str) -> dict[str, Any]:
         return {"audit_id": audit_id, "urls": 2}
 
-    def pages(self, audit_id: str, *, offset: int, page_size: int) -> dict[str, Any]:
-        return {"audit_id": audit_id, "offset": offset, "page_size": page_size, "items": ()}
+    def pages(  # noqa: PLR0913 - fake mirrors the explicit bounded route contract.
+        self,
+        audit_id: str,
+        *,
+        offset: int,
+        page_size: int,
+        filters: dict[str, Any] | None = None,
+        sort: str = "sequence",
+        direction: str = "asc",
+    ) -> dict[str, Any]:
+        return {
+            "audit_id": audit_id,
+            "offset": offset,
+            "page_size": page_size,
+            "total": 0,
+            "items": (),
+            "filters": filters,
+            "ordering": f"{sort}:{direction}",
+        }
 
-    def issues(self, audit_id: str, *, offset: int, page_size: int) -> dict[str, Any]:
-        return self.pages(audit_id, offset=offset, page_size=page_size)
+    def page_detail(self, audit_id: str, sequence: int) -> dict[str, Any]:
+        return {"audit_id": audit_id, "sequence": sequence}
+
+    def issues(
+        self,
+        audit_id: str,
+        *,
+        offset: int,
+        page_size: int,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.pages(audit_id, offset=offset, page_size=page_size, filters=filters)
 
     def rules(self, audit_id: str, *, offset: int, page_size: int) -> dict[str, Any]:
         return self.pages(audit_id, offset=offset, page_size=page_size)
+
+    def issue_detail(
+        self, audit_id: str, group_id: str, *, offset: int, page_size: int
+    ) -> dict[str, Any]:
+        return {
+            "audit_id": audit_id,
+            "group_id": group_id,
+            "offset": offset,
+            "page_size": page_size,
+        }
+
+    def sitemap_comparison(
+        self, audit_id: str, *, offset: int, page_size: int, filters: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return self.pages(audit_id, offset=offset, page_size=page_size, filters=filters)
+
+    def sitemap_documents(
+        self, audit_id: str, *, offset: int, page_size: int, filters: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return self.pages(audit_id, offset=offset, page_size=page_size, filters=filters)
+
+    def exclusions(
+        self, audit_id: str, *, offset: int, page_size: int, filters: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return self.pages(audit_id, offset=offset, page_size=page_size, filters=filters)
+
+    def evidence(self, audit_id: str) -> dict[str, Any]:
+        return {"audit_id": audit_id, "body_content_retained": False}
+
+    def settings_snapshot(self, audit_id: str) -> dict[str, Any]:
+        return {"audit_id": audit_id, "configuration": {}}
+
+    def archive(self, audit_id: str) -> dict[str, Any]:
+        return {"audit_id": audit_id, "lifecycle": "archived"}
 
     def artifact_associations(self, audit_id: str) -> tuple[dict[str, Any], ...]:
         return ({"audit_id": audit_id, "filename": "site-audit-summary.md"},)
@@ -103,6 +201,8 @@ def test_roles_routes_errors_and_bounded_pagination() -> None:
     service = _Service()
     base = "/api/internal/v1/site-audits/audit-1"
     with _client(service, UserRole.VIEWER) as viewer:
+        assert viewer.get("/api/internal/v1/site-audits").status_code == 200
+        assert viewer.get(f"{base}").status_code == 200
         assert viewer.get(f"{base}/status").status_code == 200
         assert viewer.get(f"{base}/summary").status_code == 200
         assert viewer.post(f"{base}/submit").status_code == 403
@@ -113,12 +213,43 @@ def test_roles_routes_errors_and_bounded_pagination() -> None:
         bounded = viewer.get(f"{base}/pages?page_size=501")
         assert bounded.status_code == 400
         assert bounded.json()["error"]["code"] == "request_validation_failed"
+        assert viewer.get(f"{base}/pages/7").json()["data"]["sequence"] == 7
+        assert viewer.get(f"{base}/issues/group-1").status_code == 200
+        filtered = viewer.get(
+            f"{base}/pages?url=product&only_actionable=true&sort=severity&direction=desc"
+        )
+        assert filtered.status_code == 200
+        assert filtered.json()["data"]["filters"]["url"] == "product"
+        assert filtered.json()["data"]["filters"]["only_actionable"] is True
+        assert filtered.json()["data"]["ordering"] == "severity:desc"
+        assert viewer.get(f"{base}/sitemap-documents?parse_state=invalid").status_code == 200
+        assert viewer.get(f"{base}/sitemap-comparisons").status_code == 200
+        assert viewer.get(f"{base}/exclusions").status_code == 200
+        assert viewer.get(f"{base}/evidence").json()["data"]["body_content_retained"] is False
+        assert viewer.get(f"{base}/snapshot").status_code == 200
+        assert viewer.post(f"{base}/archive").status_code == 403
     with _client(service, UserRole.OPERATOR) as operator:
+        created = operator.post(
+            "/api/internal/v1/site-audits",
+            headers={"Idempotency-Key": "create-1"},
+            json={"draft": {"seed_url": "https://example.com/"}},
+        )
+        assert created.status_code == 200
+        assert service.calls[-1] == ("create", ("operator-1", "create-1"))
+        assert (
+            operator.patch(
+                f"{base}/draft", json={"revision": 1, "draft": {"audit_name": "Edited"}}
+            ).status_code
+            == 200
+        )
+        assert operator.post(f"{base}/validate", json={"revision": 2}).status_code == 200
+        assert operator.post(f"{base}/preflight", json={"revision": 4}).status_code == 200
         assert operator.post(f"{base}/submit").status_code == 200
         assert operator.post(f"{base}/cancel").status_code == 200
         assert operator.post(f"{base}/retry").status_code == 200
     with _client(service, UserRole.ADMINISTRATOR) as administrator:
         assert administrator.post(f"{base}/rebuild-summary").status_code == 200
+        assert administrator.post(f"{base}/archive").status_code == 200
         missing = administrator.get("/api/internal/v1/site-audits/missing/status")
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "site_audit_not_found"
@@ -126,6 +257,11 @@ def test_roles_routes_errors_and_bounded_pagination() -> None:
     assert permission_for_request("GET", f"{base}/status") is Permission.RUNS_VIEW
     assert permission_for_request("POST", f"{base}/cancel") is Permission.JOBS_CANCEL
     assert permission_for_request("POST", f"{base}/retry") is Permission.JOBS_SUBMIT
+    assert (
+        permission_for_request("GET", "/api/internal/v1/site-audits/presets")
+        is Permission.JOBS_SUBMIT
+    )
+    assert permission_for_request("GET", "/api/internal/v1/site-audits") is Permission.RUNS_VIEW
 
 
 def test_anonymous_access_fails_closed_and_default_application_is_health_only() -> None:

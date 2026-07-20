@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { Button, SkipLink, StatusBadge } from '../design-system/components';
 import { workspaceRoutes } from '../routes/routeConfig';
 
 export function AppShell() {
   const { principal, can, signOut } = useAuth();
+  const location = useLocation();
   const [signingOut, setSigningOut] = useState(false);
   return (
     <div className="app-shell">
@@ -36,9 +37,25 @@ export function AppShell() {
           {workspaceRoutes
             .filter((route) => can(route.permission))
             .map((route) => (
-              <NavLink key={route.path} to={route.path} end={route.path === '/'}>
-                {route.label}
-              </NavLink>
+              <span key={route.path} className="nav-destination">
+                <NavLink to={route.path} end={route.path === '/' || route.path === '/site-audits'}>
+                  {route.label}
+                </NavLink>
+                {route.path === '/site-audits' && location.pathname.startsWith('/site-audits') ? (
+                  <span className="nav-submenu" aria-label="Site Audit destinations">
+                    {can('jobs.submit') ? (
+                      <NavLink to="/site-audits/new">New Site Audit</NavLink>
+                    ) : null}
+                    <NavLink to="/site-audits">Audit History</NavLink>
+                    {can('jobs.submit') ? (
+                      <NavLink to="/settings?view=profiles">Saved Site Profiles</NavLink>
+                    ) : null}
+                    {can('settings.manage') ? (
+                      <NavLink to="/settings?view=global">Global Audit Settings</NavLink>
+                    ) : null}
+                  </span>
+                ) : null}
+              </span>
             ))}
         </nav>
         <div className="sidebar__footer">

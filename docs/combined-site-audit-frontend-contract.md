@@ -136,3 +136,19 @@ label association, error announcement, table captions or accessible names, keybo
 actions, focus restoration, 200% zoom/reflow, status text independent of color, reduced motion, and
 minimum usable touch targets. Dense tables provide a small-screen record layout without dropping
 data or actions. Loading announcements are polite and do not repeatedly steal focus.
+
+## CSA-05 implementation
+
+The implemented `/site-audits` workspace provides Audit History and role-aware destinations for a
+new audit, saved site profiles, and global settings. The durable wizard uses seven addressable
+steps: Website, Platform and Preset, URL Governance, Crawl Limits, Audit Modules, Thresholds, and
+Review and Submit. Saving uses optimistic revisions; refresh and direct navigation reload the
+durable draft; submission requires successful validation and preflight and creates an immutable
+snapshot.
+
+Results use eight stable tabs: Summary, Pages, Issues, Sitemap, Exclusions, Evidence, Settings
+Snapshot, and Artifacts. Page and issue details are internal routes. External URL actions allow
+only HTTP(S), open a new tab, and use `noopener noreferrer`. Filters, offsets, and page size remain
+in the route query. Layouts reflow at tablet and phone widths, preserve semantic navigation and
+headings, use labelled controls, expose status text independently of color, and honor reduced
+motion.

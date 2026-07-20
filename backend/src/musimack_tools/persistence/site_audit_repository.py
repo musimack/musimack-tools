@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from musimack_tools.domain.site_audit_persistence import (
@@ -38,9 +38,11 @@ from musimack_tools.persistence.site_audit_models import (
     SiteAuditRuleMatchModel,
     SiteAuditRuleSnapshotModel,
     SiteAuditSnapshotModel,
+    SiteAuditSpecialistAssociationModel,
     SiteAuditSummaryModel,
     SiteAuditURLModel,
 )
+from musimack_tools.persistence.sitemap_audit_models import SitemapAuditDocumentModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -163,6 +165,17 @@ class SQLAlchemySiteAuditRepository:
                 )
             row.draft_json = canonical_json(draft)
             row.draft_hash = snapshot_hash(draft)
+            row.audit_name = str(draft.get("audit_name", row.audit_name))[:200]
+            label = draft.get("site_label", row.site_label)
+            row.site_label = str(label)[:200] if label else None
+            if draft.get("seed_url"):
+                row.seed_url = str(draft["seed_url"])
+            if draft.get("normalized_seed_url"):
+                row.normalized_seed_url = str(draft["normalized_seed_url"])
+            row.site_profile_id = _optional_string(draft.get("site_profile_id"))
+            row.site_profile_version = _optional_int(draft.get("site_profile_version"))
+            row.platform_preset_id = _optional_string(draft.get("platform_preset_id"))
+            row.platform_preset_version = _optional_string(draft.get("platform_preset_version"))
             row.revision += 1
             row.updated_at = datetime.now(UTC)
             if row.lifecycle != AuditLifecycle.DRAFT.value:
@@ -418,7 +431,7 @@ class SQLAlchemySiteAuditRepository:
                 "This normalized URL already exists in the Site Audit.",
             ) from error
 
-    def urls(  # noqa: PLR0913
+    def urls(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         audit_id: str,
         *,
@@ -428,6 +441,9 @@ class SQLAlchemySiteAuditRepository:
         http_status: int | None = None,
         sitemap_state: str | None = None,
         only_partial: bool | None = None,
+        filters: dict[str, Any] | None = None,
+        sort: str = "sequence",
+        direction: str = "asc",
     ) -> tuple[tuple[dict[str, Any], ...], int]:
         validate_page_size(page_size)
         if offset < 0:
@@ -456,11 +472,224 @@ class SQLAlchemySiteAuditRepository:
             partial_condition = SiteAuditURLModel.partial == only_partial
             statement = statement.where(partial_condition)
             count = count.where(partial_condition)
-        statement = statement.order_by(SiteAuditURLModel.sequence, SiteAuditURLModel.url_id)
+        values = filters or {}
+        filter_columns = {
+            "content_type": SiteAuditURLModel.content_type,
+            "fetch_state": SiteAuditURLModel.fetch_state,
+            "indexability": SiteAuditURLModel.indexability_state,
+            "canonical": SiteAuditURLModel.canonical_state,
+            "existing_sitemap": SiteAuditURLModel.existing_sitemap_state,
+            "recommended_sitemap": SiteAuditURLModel.recommended_sitemap_state,
+            "metadata_eligibility": SiteAuditURLModel.metadata_scoring_decision,
+            "severity": SiteAuditURLModel.highest_severity,
+            "business_importance": SiteAuditURLModel.business_importance,
+            "exclusion_reason": SiteAuditURLModel.failure_code,
+            "crawl_depth": SiteAuditURLModel.crawl_depth,
+        }
+        for key, column in filter_columns.items():
+            if value := values.get(key):
+                condition = column == value
+                statement = statement.where(condition)
+                count = count.where(condition)
+        if values.get("query_parameter") is True:
+            condition = SiteAuditURLModel.query != ""
+            statement = statement.where(condition)
+            count = count.where(condition)
+        if values.get("only_actionable") is True:
+            condition = or_(
+                SiteAuditURLModel.issue_count > 0,
+                SiteAuditURLModel.discovery_decision != "enqueue",
+                SiteAuditURLModel.metadata_scoring_decision != "include_in_metadata_scoring",
+                SiteAuditURLModel.sitemap_policy_decision.notin_(("include", "evidence_derived")),
+            )
+            statement = statement.where(condition)
+            count = count.where(condition)
+        if values.get("only_sitemap_issues") is True:
+            condition = SiteAuditURLModel.sitemap_policy_decision.notin_(
+                ("include", "evidence_derived")
+            )
+            statement = statement.where(condition)
+            count = count.where(condition)
+        if values.get("only_metadata_issues") is True:
+            condition = SiteAuditURLModel.metadata_scoring_decision != "include_in_metadata_scoring"
+            statement = statement.where(condition)
+            count = count.where(condition)
+        if values.get("only_excluded") is True:
+            condition = or_(
+                SiteAuditURLModel.discovery_decision != "enqueue",
+                SiteAuditURLModel.metadata_scoring_decision != "include_in_metadata_scoring",
+                SiteAuditURLModel.sitemap_policy_decision.notin_(("include", "evidence_derived")),
+            )
+            statement = statement.where(condition)
+            count = count.where(condition)
+        if issue_category := values.get("issue_category"):
+            condition = exists(
+                select(SiteAuditFindingModel.finding_id).where(
+                    SiteAuditFindingModel.url_id == SiteAuditURLModel.url_id,
+                    SiteAuditFindingModel.category == issue_category,
+                )
+            )
+            statement = statement.where(condition)
+            count = count.where(condition)
+        sort_columns = {
+            "sequence": SiteAuditURLModel.sequence,
+            "url": SiteAuditURLModel.normalized_url,
+            "status": SiteAuditURLModel.http_status,
+            "severity": SiteAuditURLModel.highest_severity,
+            "depth": SiteAuditURLModel.crawl_depth,
+            "issues": SiteAuditURLModel.issue_count,
+        }
+        sort_column = sort_columns.get(sort, SiteAuditURLModel.sequence)
+        primary_order = sort_column.desc() if direction == "desc" else sort_column.asc()
+        statement = statement.order_by(
+            primary_order, SiteAuditURLModel.sequence, SiteAuditURLModel.url_id
+        )
         with self._runtime.transaction() as session:
             self._audit_for_update(session, audit_id)
             rows = session.execute(statement.offset(offset).limit(page_size)).scalars()
             return tuple(_model_dict(row) for row in rows), int(session.execute(count).scalar_one())
+
+    def excluded_urls(  # noqa: C901, PLR0912
+        self,
+        audit_id: str,
+        *,
+        page_size: int = 50,
+        offset: int = 0,
+        filters: dict[str, Any] | None = None,
+    ) -> tuple[tuple[dict[str, Any], ...], int]:
+        """Return one stable bounded page of URLs affected by governance decisions."""
+
+        validate_page_size(page_size)
+        if offset < 0:
+            raise SiteAuditPersistenceError("site_audit_invalid_pagination", "Invalid offset.")
+        governed = or_(
+            SiteAuditURLModel.discovery_decision != "enqueue",
+            SiteAuditURLModel.metadata_scoring_decision != "include_in_metadata_scoring",
+            SiteAuditURLModel.sitemap_policy_decision.notin_(("include", "evidence_derived")),
+        )
+        base: list[Any] = [SiteAuditURLModel.audit_id == audit_id, governed]
+        values = filters or {}
+        if url_text := values.get("url"):
+            base.append(
+                SiteAuditURLModel.normalized_url.ilike(
+                    f"%{_safe_search(str(url_text))}%", escape="\\"
+                )
+            )
+        if action := values.get("action"):
+            base.append(
+                or_(
+                    SiteAuditURLModel.discovery_decision == action,
+                    SiteAuditURLModel.metadata_scoring_decision == action,
+                    SiteAuditURLModel.sitemap_policy_decision == action,
+                )
+            )
+        if values.get("enqueued"):
+            base.append(SiteAuditURLModel.enqueued_state == values["enqueued"])
+        if values.get("fetched"):
+            base.append(SiteAuditURLModel.fetch_state == values["fetched"])
+        if values.get("partial") is True:
+            base.append(SiteAuditURLModel.partial.is_(True))
+        match_conditions = [SiteAuditRuleMatchModel.url_id == SiteAuditURLModel.url_id]
+        if decision_layer := values.get("decision_layer"):
+            match_conditions.append(SiteAuditRuleMatchModel.decision_layer == decision_layer)
+        if reason := values.get("reason"):
+            match_conditions.append(
+                SiteAuditRuleMatchModel.reason.ilike(f"%{_safe_search(str(reason))}%", escape="\\")
+            )
+        if values.get("override") is True:
+            match_conditions.append(SiteAuditRuleMatchModel.overridden.is_(True))
+        if values.get("conflict") is True:
+            match_conditions.append(SiteAuditRuleMatchModel.conflict_code.is_not(None))
+        if len(match_conditions) > 1:
+            base.append(exists(select(SiteAuditRuleMatchModel.match_id).where(*match_conditions)))
+        statement = (
+            select(SiteAuditURLModel)
+            .where(*base)
+            .order_by(SiteAuditURLModel.sequence, SiteAuditURLModel.url_id)
+            .offset(offset)
+            .limit(page_size)
+        )
+        count = select(func.count()).select_from(SiteAuditURLModel).where(*base)
+        with self._runtime.transaction() as session:
+            self._audit_for_update(session, audit_id)
+            rows = tuple(session.execute(statement).scalars())
+            items: list[dict[str, Any]] = []
+            for row in rows:
+                matches = tuple(
+                    session.scalars(
+                        select(SiteAuditRuleMatchModel)
+                        .where(SiteAuditRuleMatchModel.url_id == row.url_id)
+                        .order_by(
+                            SiteAuditRuleMatchModel.decision_layer,
+                            SiteAuditRuleMatchModel.precedence_key,
+                        )
+                        .limit(100)
+                    )
+                )
+                item = _model_dict(row)
+                match_records: list[dict[str, Any]] = []
+                for match in matches:
+                    match_record = _model_dict(match)
+                    rule = session.get(SiteAuditRuleSnapshotModel, match.snapshot_rule_id)
+                    match_record["rule"] = _model_dict(rule) if rule is not None else None
+                    match_records.append(match_record)
+                item["rule_matches"] = tuple(match_records)
+                items.append(item)
+            return tuple(items), int(session.execute(count).scalar_one())
+
+    def url_detail(self, audit_id: str, sequence: int) -> dict[str, Any] | None:
+        """Return one safe URL projection with bounded related evidence."""
+
+        with self._runtime.transaction() as session:
+            row = session.execute(
+                select(SiteAuditURLModel).where(
+                    SiteAuditURLModel.audit_id == audit_id,
+                    SiteAuditURLModel.sequence == sequence,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            discoveries = session.execute(
+                select(SiteAuditDiscoverySourceModel)
+                .where(SiteAuditDiscoverySourceModel.url_id == row.url_id)
+                .order_by(SiteAuditDiscoverySourceModel.sequence)
+                .limit(500)
+            ).scalars()
+            populations = session.execute(
+                select(SiteAuditPopulationModel)
+                .where(SiteAuditPopulationModel.url_id == row.url_id)
+                .order_by(SiteAuditPopulationModel.population)
+                .limit(100)
+            ).scalars()
+            matches = session.execute(
+                select(SiteAuditRuleMatchModel)
+                .where(SiteAuditRuleMatchModel.url_id == row.url_id)
+                .order_by(
+                    SiteAuditRuleMatchModel.decision_layer,
+                    SiteAuditRuleMatchModel.precedence_key,
+                )
+                .limit(500)
+            ).scalars()
+            findings = session.execute(
+                select(SiteAuditFindingModel)
+                .where(SiteAuditFindingModel.url_id == row.url_id)
+                .order_by(SiteAuditFindingModel.code, SiteAuditFindingModel.finding_id)
+                .limit(500)
+            ).scalars()
+            result = _model_dict(row)
+            result["discoveries"] = tuple(_model_dict(item) for item in discoveries)
+            result["populations"] = tuple(_model_dict(item) for item in populations)
+            result["rule_matches"] = tuple(_model_dict(item) for item in matches)
+            result["findings"] = tuple(_model_dict(item) for item in findings)
+            result["issue_group_ids"] = tuple(
+                session.execute(
+                    select(SiteAuditIssueMembershipModel.group_id)
+                    .where(SiteAuditIssueMembershipModel.url_id == row.url_id)
+                    .order_by(SiteAuditIssueMembershipModel.group_id)
+                    .limit(500)
+                ).scalars()
+            )
+            return result
 
     def add_discovery(self, audit_id: str, url_id: str, record: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -704,18 +933,120 @@ class SQLAlchemySiteAuditRepository:
             )
 
     def issue_groups(
-        self, audit_id: str, *, page_size: int = 50, offset: int = 0
+        self,
+        audit_id: str,
+        *,
+        page_size: int = 50,
+        offset: int = 0,
+        filters: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], ...]:
         validate_page_size(page_size)
+        conditions = _issue_group_conditions(audit_id, filters)
         with self._runtime.transaction() as session:
             rows = session.execute(
                 select(SiteAuditIssueGroupModel)
-                .where(SiteAuditIssueGroupModel.audit_id == audit_id)
+                .where(*conditions)
                 .order_by(SiteAuditIssueGroupModel.priority_key, SiteAuditIssueGroupModel.group_id)
                 .offset(offset)
                 .limit(page_size)
             ).scalars()
-            return tuple(_model_dict(row) for row in rows)
+            items: list[dict[str, Any]] = []
+            for row in rows:
+                item = _model_dict(row)
+                membership = SiteAuditIssueMembershipModel.group_id == row.group_id
+                item["finding_count"] = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(SiteAuditIssueMembershipModel)
+                        .where(membership)
+                    )
+                    or 0
+                )
+                item["modules"] = tuple(
+                    session.scalars(
+                        select(SiteAuditFindingModel.module)
+                        .join(
+                            SiteAuditIssueMembershipModel,
+                            SiteAuditIssueMembershipModel.finding_id
+                            == SiteAuditFindingModel.finding_id,
+                        )
+                        .where(membership)
+                        .distinct()
+                        .order_by(SiteAuditFindingModel.module)
+                    )
+                )
+                items.append(item)
+            return tuple(items)
+
+    def issue_group_count(self, audit_id: str, *, filters: dict[str, Any] | None = None) -> int:
+        with self._runtime.transaction() as session:
+            self._audit_for_update(session, audit_id)
+            return int(
+                session.execute(
+                    select(func.count())
+                    .select_from(SiteAuditIssueGroupModel)
+                    .where(*_issue_group_conditions(audit_id, filters))
+                ).scalar_one()
+            )
+
+    def issue_group_detail(
+        self,
+        audit_id: str,
+        group_id: str,
+        *,
+        page_size: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any] | None:
+        """Return a group and one stable bounded membership page."""
+
+        validate_page_size(page_size)
+        if offset < 0:
+            raise SiteAuditPersistenceError("site_audit_invalid_pagination", "Invalid offset.")
+        with self._runtime.transaction() as session:
+            group = session.get(SiteAuditIssueGroupModel, group_id)
+            if group is None or group.audit_id != audit_id:
+                return None
+            base = (
+                select(SiteAuditIssueMembershipModel, SiteAuditFindingModel, SiteAuditURLModel)
+                .join(
+                    SiteAuditFindingModel,
+                    SiteAuditFindingModel.finding_id == SiteAuditIssueMembershipModel.finding_id,
+                )
+                .outerjoin(
+                    SiteAuditURLModel,
+                    SiteAuditURLModel.url_id == SiteAuditIssueMembershipModel.url_id,
+                )
+                .where(SiteAuditIssueMembershipModel.group_id == group_id)
+            )
+            total = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(SiteAuditIssueMembershipModel)
+                    .where(SiteAuditIssueMembershipModel.group_id == group_id)
+                )
+                or 0
+            )
+            rows = session.execute(
+                base.order_by(
+                    SiteAuditIssueMembershipModel.sequence,
+                    SiteAuditIssueMembershipModel.id,
+                )
+                .offset(offset)
+                .limit(page_size)
+            ).all()
+            result = _model_dict(group)
+            result["memberships"] = tuple(
+                {
+                    **_model_dict(membership),
+                    "finding": _model_dict(finding),
+                    "url": _model_dict(url) if url is not None else None,
+                }
+                for membership, finding, url in rows
+            )
+            result["offset"] = offset
+            result["page_size"] = page_size
+            result["total"] = total
+            return result
 
     def upsert_module_status(self, audit_id: str, record: dict[str, Any]) -> dict[str, Any]:
         with self._runtime.transaction() as session:
@@ -924,6 +1255,60 @@ class SQLAlchemySiteAuditRepository:
             )
             return tuple(_model_dict(row) for row in rows)
 
+    def sitemap_documents(
+        self,
+        audit_id: str,
+        *,
+        page_size: int = 50,
+        offset: int = 0,
+        filters: dict[str, Any] | None = None,
+    ) -> tuple[tuple[dict[str, Any], ...], int]:
+        """Return the linked existing-sitemap specialist's safe document projection."""
+
+        validate_page_size(page_size)
+        if offset < 0:
+            raise SiteAuditPersistenceError("site_audit_invalid_pagination", "Invalid offset.")
+        values = filters or {}
+        with self._runtime.transaction() as session:
+            self._audit_for_update(session, audit_id)
+            association = session.scalar(
+                select(SiteAuditSpecialistAssociationModel).where(
+                    SiteAuditSpecialistAssociationModel.audit_id == audit_id,
+                    SiteAuditSpecialistAssociationModel.module == "existing_sitemap",
+                )
+            )
+            specialist_id = association.specialist_audit_id if association else None
+            if not specialist_id:
+                return (), 0
+            conditions: list[Any] = [SitemapAuditDocumentModel.audit_id == specialist_id]
+            if document_type := values.get("document_type"):
+                conditions.append(SitemapAuditDocumentModel.root_type == document_type)
+            if parse_state := values.get("parse_state"):
+                conditions.append(SitemapAuditDocumentModel.parse_state == parse_state)
+            if url := values.get("url"):
+                conditions.append(
+                    SitemapAuditDocumentModel.requested_url.ilike(
+                        f"%{_safe_search(str(url))}%", escape="\\"
+                    )
+                )
+            if values.get("partial") is True:
+                conditions.append(SitemapAuditDocumentModel.parse_state != "parsed")
+            statement = (
+                select(SitemapAuditDocumentModel)
+                .where(*conditions)
+                .order_by(
+                    SitemapAuditDocumentModel.discovery_sequence,
+                    SitemapAuditDocumentModel.document_id,
+                )
+                .offset(offset)
+                .limit(page_size)
+            )
+            rows = session.scalars(statement)
+            count = session.scalar(
+                select(func.count()).select_from(SitemapAuditDocumentModel).where(*conditions)
+            )
+            return tuple(_model_dict(row) for row in rows), int(count or 0)
+
     @staticmethod
     def _audit_for_update(session: Session, audit_id: str) -> SiteAuditModel:
         row = session.get(SiteAuditModel, audit_id)
@@ -979,6 +1364,55 @@ def _rule_snapshot(
         overrides_rule_ids_json=canonical_json(rule.get("overrides_rule_ids", [])),
         stable_order=order,
     )
+
+
+def _issue_group_conditions(audit_id: str, filters: dict[str, Any] | None) -> list[Any]:
+    values = filters or {}
+    conditions: list[Any] = [SiteAuditIssueGroupModel.audit_id == audit_id]
+    if search := values.get("search"):
+        token = f"%{_safe_search(str(search))}%"
+        conditions.append(
+            or_(
+                SiteAuditIssueGroupModel.title.ilike(token, escape="\\"),
+                SiteAuditIssueGroupModel.code.ilike(token, escape="\\"),
+            )
+        )
+    exact: dict[str, Any] = {
+        "category": SiteAuditIssueGroupModel.category,
+        "severity": SiteAuditIssueGroupModel.severity,
+        "priority": SiteAuditIssueGroupModel.priority_band,
+        "business_importance": SiteAuditIssueGroupModel.highest_business_importance,
+        "confidence": SiteAuditIssueGroupModel.confidence,
+        "determinacy": SiteAuditIssueGroupModel.determinacy,
+    }
+    for key, column in exact.items():
+        if value := values.get(key):
+            conditions.append(column == value)
+    boolean_filters: dict[str, Any] = {
+        "sitemap_impact": SiteAuditIssueGroupModel.sitemap_impact,
+        "metadata_impact": SiteAuditIssueGroupModel.metadata_impact,
+        "indexability_impact": SiteAuditIssueGroupModel.indexability_impact,
+    }
+    for key, column in boolean_filters.items():
+        if values.get(key) is True:
+            conditions.append(column.is_(True))
+    if module := values.get("module"):
+        conditions.append(
+            exists(
+                select(SiteAuditFindingModel.finding_id)
+                .join(
+                    SiteAuditIssueMembershipModel,
+                    SiteAuditIssueMembershipModel.finding_id == SiteAuditFindingModel.finding_id,
+                )
+                .where(
+                    SiteAuditIssueMembershipModel.group_id == SiteAuditIssueGroupModel.group_id,
+                    SiteAuditFindingModel.module == module,
+                )
+            )
+        )
+    if values.get("actionable") is True:
+        conditions.append(SiteAuditIssueGroupModel.recommended_action != "")
+    return conditions
 
 
 def _issue_group_values(audit_id: str, record: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -1070,3 +1504,11 @@ def _model_dict(row: Base) -> dict[str, Any]:
 
 def _safe_search(value: str) -> str:
     return value[:256].replace("%", "\\%").replace("_", "\\_")
+
+
+def _optional_string(value: object) -> str | None:
+    return str(value) if value not in {None, ""} else None
+
+
+def _optional_int(value: object) -> int | None:
+    return int(str(value)) if value not in {None, ""} else None

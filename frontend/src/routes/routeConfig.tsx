@@ -10,6 +10,7 @@ import { InternalLinksPage } from '../pages/InternalLinkPages';
 import { ImageAuditsPage } from '../pages/ImageAuditPages';
 import { StructuredDataAuditsPage } from '../pages/StructuredDataAuditPages';
 import { MigrationQaProjectsPage } from '../pages/MigrationQaPages';
+import { SiteAuditHistoryPage } from '../pages/SiteAuditPages';
 
 export type WorkspaceRoute = {
   path: string;
@@ -20,6 +21,13 @@ export type WorkspaceRoute = {
 };
 
 export const workspaceRoutes: readonly WorkspaceRoute[] = [
+  {
+    path: '/site-audits',
+    label: 'Site Audits',
+    description: 'Create and review combined, governed website audits',
+    permission: 'runs.view',
+    component: SiteAuditHistoryPage,
+  },
   {
     path: '/migration-qa',
     label: 'Migration QA',

@@ -134,3 +134,13 @@ bounds use the normal structured validation envelope. Responses contain safe pro
 stable CSA error codes, never database exceptions, response bodies, local artifact paths, tokens,
 or arbitrary headers. Submission is idempotent for the audit's immutable snapshot and returns the
 existing crawl association when repeated.
+
+## CSA-05 UI support routes
+
+CSA-05 adds private authenticated draft and read projections without a public alias: history and
+draft creation at `/site-audits`, audit detail, revision-checked draft update, validation,
+preflight, page and issue detail, sitemap comparison, exclusions, evidence, settings snapshot,
+artifacts, and archive. Administrator-only recovery and archive operations require
+`settings.manage`; operators create, edit, validate, preflight, submit, retry, and cancel within
+their existing permissions; viewers have bounded read access only. Existing settings/preset and
+site-profile permission behavior is unchanged.

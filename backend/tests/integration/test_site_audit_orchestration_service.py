@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Never, cast
 
 import pytest
 from sqlalchemy import select
@@ -57,6 +57,25 @@ class _Gateway:
         self.run_id = run_id
         self.submissions = 0
         self.cancellations = 0
+
+    def validate(self, request: RawApplicationCrawlRequest) -> ApplicationValidationReport:
+        return ApplicationValidationReport(
+            True,
+            (),
+            request.seed_url,
+            str(request.crawl_profile),
+            ("crawl",),
+            None,
+            "exact host",
+            False,
+            False,
+            self.run_id,
+            (),
+        )
+
+    async def preflight(self, request: RawApplicationCrawlRequest) -> Never:
+        del request
+        raise NotImplementedError
 
     async def submit(self, request: RawApplicationCrawlRequest) -> ApplicationSubmissionResult:
         self.submissions += 1
@@ -486,6 +505,9 @@ async def test_authoritative_sitemap_entries_project_sitemap_only_inventory(
     assert sitemap_only["existing_sitemap_state"] == "present"
     assert sitemap_only["fetch_state"] == "not_fetched"
     assert sitemap_only["enqueued_state"] == "not_enqueued"
+    sitemap = orchestration.sitemap_comparison("audit-service", page_size=50)
+    assert sitemap["document_count"] == 0
+    assert sitemap["document_preview"] == ()
     assert orchestration.status("audit-service")["specialists"]
 
 

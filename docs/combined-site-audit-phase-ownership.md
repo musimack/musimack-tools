@@ -109,6 +109,8 @@ an authorized missing child without duplicating a retained association. Optional
 is not presented as complete. Frontier-time discovery governance and automatic parent scans are
 part of CSA-04, while all presentation remains in CSA-05.
 
-CSA-05 still owns the complete wizard, lifecycle presentation, tables, issue dashboard, exclusion
-review, and client-report experience. CSA-06 owns controlled fixture and explicitly authorized
-real-site acceptance. CSA-04 performs no public-network acceptance crawl.
+CSA-05 implements the complete wizard, lifecycle presentation, bounded tables, issue dashboard,
+exclusion review, safe evidence views, and artifact navigation. Its narrow backend additions are
+draft-management and bounded read projections over the accepted CSA-03/CSA-04 schema; it adds no
+migration and changes no orchestration authority. CSA-06 owns controlled real-site acceptance.
+CSA-05 performs no public-network acceptance crawl.

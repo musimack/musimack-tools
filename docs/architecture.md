@@ -792,4 +792,10 @@ comes from Sitemap Audit documents and entries, never recommendation counts. Per
 associations select linked, eligible-prior, launched, base-evidence, or unavailable execution modes.
 The durable worker performs the bounded automatic parent scan; the private reconcile operation is
 recovery-only. Private authenticated APIs are composition-injected, while the default application
-remains health-only. The complete operator UI and real-site acceptance remain CSA-05 and CSA-06.
+remains health-only.
+
+CSA-05 adds an authenticated browser layer over those authorities. Durable drafts, immutable
+submission snapshots, lifecycle inspection, and bounded result projections all use private
+same-origin routes. Browser tables request 50, 100, or 500 rows; the optional All view walks
+500-row pages and stops at 5,000. The interface does not retain or render response bodies, raw
+HTML, secrets, or filesystem paths. Controlled real-site acceptance remains CSA-06.

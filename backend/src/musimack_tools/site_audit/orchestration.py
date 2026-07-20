@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import uuid
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from musimack_tools.domain.application import (
@@ -37,6 +39,7 @@ from musimack_tools.domain.site_audit_persistence import (
     AuditLifecycle,
     Population,
     SiteAuditPersistenceError,
+    snapshot_hash,
 )
 from musimack_tools.domain.site_audit_settings import (
     RuleAction,
@@ -69,6 +72,38 @@ _SPECIALIST_STAGES = (
     SiteAuditStage.STRUCTURED_DATA,
 )
 
+
+def _sitemap_comparison_state(item: dict[str, Any]) -> str:  # noqa: C901, PLR0911
+    if item.get("partial"):
+        return "indeterminate"
+    status = item.get("http_status")
+    if item.get("fetch_state") == "failed" or (
+        isinstance(status, int) and status >= _HTTP_ERROR_MINIMUM
+    ):
+        return "broken"
+    if item.get("content_type") and "html" not in str(item["content_type"]).lower():
+        return "non_html"
+    if item.get("redirect_state") not in {None, "none", "not_redirected"}:
+        return "redirect_source"
+    if item.get("canonical_state") not in {"self", "self_canonical", "canonical", "unknown"}:
+        return "canonicalized_elsewhere"
+    recommended = item.get("recommended_sitemap_state")
+    existing = item.get("existing_sitemap_state")
+    if recommended == "include" and existing in {"present", "included"}:
+        return "valid_unchanged"
+    if recommended == "include":
+        return "add"
+    if recommended == "exclude" and existing in {"present", "included"}:
+        return "remove"
+    if recommended == "review":
+        return "review"
+    if item.get("sitemap_policy_decision") not in {"include", "evidence_derived"}:
+        return "excluded_by_rule"
+    if item.get("robots_state") in {"blocked", "disallowed"}:
+        return "not_crawlable"
+    return "indeterminate"
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -77,9 +112,11 @@ if TYPE_CHECKING:
     from musimack_tools.domain.application import (
         ApplicationCancellationResult,
         ApplicationJobStatus,
+        ApplicationPreflightResult,
         ApplicationRecommendationPage,
         ApplicationResultProjection,
         ApplicationSubmissionResult,
+        ApplicationValidationReport,
     )
     from musimack_tools.persistence.page_evidence_repository import (
         SQLAlchemyPageEvidenceRepository,
@@ -91,6 +128,12 @@ if TYPE_CHECKING:
 
 
 class SiteAuditCrawlGateway(Protocol):
+    def validate(self, request: RawApplicationCrawlRequest) -> ApplicationValidationReport: ...
+
+    async def preflight(
+        self, request: RawApplicationCrawlRequest
+    ) -> ApplicationPreflightResult: ...
+
     async def submit(self, request: RawApplicationCrawlRequest) -> ApplicationSubmissionResult: ...
 
     async def status(self, job_id: str) -> ApplicationJobStatus: ...
@@ -109,6 +152,12 @@ class ApplicationSiteAuditCrawlGateway:
 
     def __init__(self, application: InternalApiApplication) -> None:
         self._application = application
+
+    def validate(self, request: RawApplicationCrawlRequest) -> ApplicationValidationReport:
+        return self._application.validate_request(request)
+
+    async def preflight(self, request: RawApplicationCrawlRequest) -> ApplicationPreflightResult:
+        return await self._application.preflight(request)
 
     async def submit(self, request: RawApplicationCrawlRequest) -> ApplicationSubmissionResult:
         return await self._application.submit(request)
@@ -147,10 +196,144 @@ class SiteAuditOrchestrationService:
         self._artifacts = artifacts
         self._specialists = specialists
 
-    async def submit(self, audit_id: str, *, actor: str) -> dict[str, Any]:
-        del actor  # Authorization is enforced by the private API boundary.
+    def create_draft(
+        self,
+        draft: dict[str, Any],
+        *,
+        actor: str,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a durable UI draft without creating a crawl or snapshot."""
+
+        normalized = _normalized_draft(draft)
+        audit_id = (
+            stable_identifier("audit", actor, idempotency_key)
+            if idempotency_key
+            else f"audit-{uuid.uuid4().hex[:24]}"
+        )
+        existing = self._repository.audit(audit_id)
+        if existing is not None:
+            if existing["draft_hash"] == _draft_hash(normalized):
+                return existing
+            raise SiteAuditOrchestrationError(
+                "site_audit_submission_conflict",
+                "The idempotency key was already used for a different Site Audit draft.",
+            )
+        return self._repository.create_audit(
+            audit_id,
+            audit_name=str(normalized["audit_name"]),
+            site_label=_string_or_none(normalized.get("site_label")),
+            seed_url=str(normalized["seed_url"]),
+            normalized_seed_url=str(normalized["normalized_seed_url"]),
+            draft=normalized,
+            created_by=actor,
+            site_profile_id=_string_or_none(normalized.get("site_profile_id")),
+            site_profile_version=_int_or_none(normalized.get("site_profile_version")),
+            platform_preset_id=_string_or_none(normalized.get("platform_preset_id")),
+            platform_preset_version=_string_or_none(normalized.get("platform_preset_version")),
+        )
+
+    def update_draft(
+        self, audit_id: str, patch: dict[str, Any], *, expected_revision: int
+    ) -> dict[str, Any]:
         audit = self._required_audit(audit_id)
-        snapshot = self._required_snapshot(audit_id)
+        current = dict(audit["draft"])
+        current.update(patch)
+        normalized = _normalized_draft(current)
+        return self._repository.update_draft(
+            audit_id, normalized, expected_revision=expected_revision
+        )
+
+    def history(
+        self,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+        lifecycle: str | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        items, total = self._repository.audits(
+            offset=offset,
+            page_size=page_size,
+            lifecycle=lifecycle,
+            search=search,
+        )
+        return {
+            "items": items,
+            "offset": offset,
+            "page_size": page_size,
+            "total": total,
+            "ordering": "created_at_desc,audit_id_desc",
+        }
+
+    def audit_detail(self, audit_id: str) -> dict[str, Any]:
+        audit = self._required_audit(audit_id)
+        return {
+            "audit": audit,
+            "snapshot": self._repository.snapshot(audit_id),
+            "orchestration": self._orchestration.orchestration(audit_id),
+        }
+
+    def validate_draft(self, audit_id: str, *, expected_revision: int) -> dict[str, Any]:
+        audit = self._required_audit(audit_id)
+        if int(audit["revision"]) != expected_revision:
+            raise SiteAuditPersistenceError(
+                "site_audit_revision_conflict", "The draft changed; reload before validating."
+            )
+        validating = self._repository.transition(
+            audit_id, AuditLifecycle.VALIDATING, expected_revision=expected_revision
+        )
+        report = self._crawl.validate(_draft_crawl_request(validating))
+        target = AuditLifecycle.VALIDATED if report.valid else AuditLifecycle.VALIDATION_FAILED
+        updated = self._repository.transition(
+            audit_id,
+            target,
+            expected_revision=int(validating["revision"]),
+            failure_code=None if report.valid else "site_audit_validation_failed",
+            failure_explanation=None if report.valid else "The draft has validation errors.",
+        )
+        return {"audit": updated, "validation": asdict(report)}
+
+    async def preflight_draft(self, audit_id: str, *, expected_revision: int) -> dict[str, Any]:
+        audit = self._required_audit(audit_id)
+        if int(audit["revision"]) != expected_revision:
+            raise SiteAuditPersistenceError(
+                "site_audit_revision_conflict", "The draft changed; reload before preflight."
+            )
+        preflighting = self._repository.transition(
+            audit_id, AuditLifecycle.PREFLIGHTING, expected_revision=expected_revision
+        )
+        report = await self._crawl.preflight(_draft_crawl_request(preflighting))
+        ready = report.state.value != "blocked" and report.validation.valid
+        updated = self._repository.transition(
+            audit_id,
+            AuditLifecycle.READY if ready else AuditLifecycle.PREFLIGHT_FAILED,
+            expected_revision=int(preflighting["revision"]),
+            failure_code=None if ready else "site_audit_preflight_failed",
+            failure_explanation=None if ready else "The bounded preflight did not pass.",
+        )
+        return {"audit": updated, "preflight": asdict(report)}
+
+    async def submit(self, audit_id: str, *, actor: str) -> dict[str, Any]:
+        audit = self._required_audit(audit_id)
+        snapshot = self._repository.snapshot(audit_id)
+        if snapshot is None:
+            if audit["lifecycle"] != AuditLifecycle.READY.value:
+                raise SiteAuditOrchestrationError(
+                    "site_audit_not_ready", "Only a ready Site Audit may be submitted."
+                )
+            configuration = dict(audit["draft"])
+            configuration.setdefault("application_version", SITE_AUDIT_ORCHESTRATION_VERSION)
+            snapshot = self._repository.create_snapshot(
+                audit_id,
+                stable_identifier("snapshot", audit_id, str(audit["draft_hash"])),
+                configuration,
+                expected_revision=int(audit["revision"]),
+                rules=_snapshot_rules(configuration),
+                disabled_rules=_disabled_rules(configuration),
+            )
+            audit = self._required_audit(audit_id)
+        del actor  # Retained only at the authenticated draft boundary.
         validate_snapshot_integrity(snapshot)
         existing = self._orchestration.orchestration(audit_id)
         if existing is not None and existing.get("crawl_job_id"):
@@ -318,13 +501,80 @@ class SiteAuditOrchestrationService:
             )
         return value
 
-    def pages(self, audit_id: str, *, offset: int = 0, page_size: int = 50) -> dict[str, Any]:
-        items, total = self._repository.urls(audit_id, offset=offset, page_size=page_size)
-        return {"items": items, "offset": offset, "page_size": page_size, "total": total}
+    def pages(  # noqa: PLR0913
+        self,
+        audit_id: str,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+        filters: dict[str, Any] | None = None,
+        sort: str = "sequence",
+        direction: str = "asc",
+    ) -> dict[str, Any]:
+        values = filters or {}
+        items, total = self._repository.urls(
+            audit_id,
+            offset=offset,
+            page_size=page_size,
+            url_text=cast("str | None", values.get("url")),
+            http_status=cast("int | None", values.get("http_status")),
+            sitemap_state=cast("str | None", values.get("recommended_sitemap")),
+            only_partial=cast("bool | None", values.get("partial")),
+            filters=values,
+            sort=sort,
+            direction=direction,
+        )
+        return {
+            "items": items,
+            "offset": offset,
+            "page_size": page_size,
+            "total": total,
+            "ordering": f"{sort}:{direction},sequence,url_id",
+        }
 
-    def issues(self, audit_id: str, *, offset: int = 0, page_size: int = 50) -> dict[str, Any]:
-        items = self._repository.issue_groups(audit_id, offset=offset, page_size=page_size)
-        return {"items": items, "offset": offset, "page_size": page_size}
+    def page_detail(self, audit_id: str, sequence: int) -> dict[str, Any]:
+        value = self._repository.url_detail(audit_id, sequence)
+        if value is None:
+            raise SiteAuditOrchestrationError(
+                "site_audit_evidence_unavailable", "The requested URL evidence is unavailable."
+            )
+        return value
+
+    def issues(
+        self,
+        audit_id: str,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        items = self._repository.issue_groups(
+            audit_id, offset=offset, page_size=page_size, filters=filters
+        )
+        return {
+            "items": items,
+            "offset": offset,
+            "page_size": page_size,
+            "total": self._repository.issue_group_count(audit_id, filters=filters),
+            "ordering": "priority_key,group_id",
+        }
+
+    def issue_detail(
+        self,
+        audit_id: str,
+        group_id: str,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        value = self._repository.issue_group_detail(
+            audit_id, group_id, offset=offset, page_size=page_size
+        )
+        if value is None:
+            raise SiteAuditOrchestrationError(
+                "site_audit_projection_unavailable", "The issue group is unavailable."
+            )
+        return value
 
     def rules(self, audit_id: str, *, offset: int = 0, page_size: int = 50) -> dict[str, Any]:
         return {
@@ -334,7 +584,157 @@ class SiteAuditOrchestrationService:
         }
 
     def artifact_associations(self, audit_id: str) -> tuple[dict[str, Any], ...]:
-        return self._repository.artifact_associations(audit_id)
+        items: list[dict[str, Any]] = []
+        for association in self._repository.artifact_associations(audit_id):
+            item = dict(association)
+            try:
+                artifact = self._artifacts.get(str(item["artifact_id"]))
+            except Exception:  # noqa: BLE001 - unavailable artifacts remain explicit and safe.
+                item["artifact"] = None
+            else:
+                item["artifact"] = {
+                    "artifact_id": artifact.artifact_id,
+                    "artifact_type": artifact.artifact_type.value,
+                    "filename": artifact.filename,
+                    "content_type": artifact.content_type,
+                    "byte_count": artifact.expected_byte_count,
+                    "sha256": artifact.expected_sha256,
+                    "lifecycle_state": artifact.lifecycle_state.value,
+                    "integrity_state": artifact.integrity_state.value,
+                    "created_at": artifact.created_at.isoformat(),
+                    "expires_at": artifact.expires_at.isoformat() if artifact.expires_at else None,
+                    "download_available": artifact.lifecycle_state.value
+                    in {"available", "retained"}
+                    and artifact.integrity_state.value == "verified",
+                }
+            items.append(item)
+        return tuple(items)
+
+    def sitemap_comparison(
+        self,
+        audit_id: str,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        values = filters or {}
+        items, total = self._repository.urls(
+            audit_id,
+            offset=offset,
+            page_size=page_size,
+            url_text=cast("str | None", values.get("url")),
+            sitemap_state=cast("str | None", values.get("state")),
+            only_partial=cast("bool | None", values.get("partial")),
+        )
+        selected = tuple(
+            {
+                "sequence": item["sequence"],
+                "url_id": item["url_id"],
+                "url": item["normalized_url"],
+                "existing_sitemap_state": item["existing_sitemap_state"],
+                "recommended_sitemap_state": item["recommended_sitemap_state"],
+                "sitemap_policy_decision": item["sitemap_policy_decision"],
+                "comparison_state": _sitemap_comparison_state(item),
+                "primary_reason": item.get("failure_code") or item["sitemap_policy_decision"],
+                "http_status": item["http_status"],
+                "robots_state": item["robots_state"],
+                "indexability_state": item["indexability_state"],
+                "canonical_state": item["canonical_state"],
+                "partial": item["partial"],
+            }
+            for item in items
+        )
+        modules = self._repository.module_statuses(audit_id)
+        existing = next((item for item in modules if item["module"] == "existing_sitemap"), None)
+        documents, document_total = self._repository.sitemap_documents(
+            audit_id, offset=0, page_size=50
+        )
+        summary = self._repository.summary(audit_id) or {}
+        return {
+            "items": selected,
+            "offset": offset,
+            "page_size": page_size,
+            "total": total,
+            "existing_sitemap_module": existing,
+            "document_count": document_total,
+            "document_preview": documents,
+            "comparison_totals": {
+                "include": summary.get("recommendation_include", 0),
+                "exclude": summary.get("recommendation_exclude", 0),
+                "review": summary.get("recommendation_review", 0),
+                "indeterminate": summary.get("recommendation_indeterminate", 0),
+            },
+            "ordering": "sequence,url_id",
+        }
+
+    def exclusions(
+        self,
+        audit_id: str,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        governed, total = self._repository.excluded_urls(
+            audit_id, offset=offset, page_size=page_size, filters=filters
+        )
+        return {
+            "items": governed,
+            "offset": offset,
+            "page_size": page_size,
+            "total": total,
+            "ordering": "sequence,url_id",
+        }
+
+    def sitemap_documents(
+        self,
+        audit_id: str,
+        *,
+        offset: int = 0,
+        page_size: int = 50,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        items, total = self._repository.sitemap_documents(
+            audit_id, offset=offset, page_size=page_size, filters=filters
+        )
+        return {
+            "items": items,
+            "offset": offset,
+            "page_size": page_size,
+            "total": total,
+            "ordering": "discovery_sequence,document_id",
+        }
+
+    def evidence(self, audit_id: str) -> dict[str, Any]:
+        status = self.status(audit_id)
+        findings = self._repository.findings(audit_id, offset=0, page_size=500)
+        return {
+            "audit": status["audit"],
+            "orchestration": status["orchestration"],
+            "stages": status["stages"],
+            "modules": status["modules"],
+            "specialists": status["specialists"],
+            "findings": findings,
+            "finding_count": len(findings),
+            "projection_version": SITE_AUDIT_ORCHESTRATION_VERSION,
+            "body_content_retained": False,
+        }
+
+    def settings_snapshot(self, audit_id: str) -> dict[str, Any]:
+        snapshot = self._repository.snapshot(audit_id)
+        if snapshot is None:
+            raise SiteAuditOrchestrationError(
+                "site_audit_projection_unavailable",
+                "The immutable settings snapshot is unavailable for this draft.",
+            )
+        return snapshot
+
+    def archive(self, audit_id: str) -> dict[str, Any]:
+        audit = self._required_audit(audit_id)
+        return self._repository.transition(
+            audit_id, AuditLifecycle.ARCHIVED, expected_revision=int(audit["revision"])
+        )
 
     def rebuild_summary(self, audit_id: str) -> dict[str, Any]:
         return self._repository.rebuild_summary(audit_id)
@@ -1305,6 +1705,123 @@ def _crawl_request(audit: dict[str, Any], snapshot: dict[str, Any]) -> RawApplic
         exclusion_rules=_discovery_exclusion_rules(snapshot),
         strip_query_parameters=_tracking_parameters(snapshot),
     )
+
+
+def _draft_crawl_request(audit: dict[str, Any]) -> RawApplicationCrawlRequest:
+    draft = audit.get("draft")
+    if not isinstance(draft, dict):
+        raise SiteAuditOrchestrationError(
+            "site_audit_evidence_unavailable", "The Site Audit draft is unavailable."
+        )
+    return _crawl_request(audit, {"configuration": draft, "rules": _snapshot_rules(draft)})
+
+
+def _normalized_draft(value: dict[str, Any]) -> dict[str, Any]:
+    seed = str(value.get("seed_url", "")).strip()
+    if not seed:
+        raise SiteAuditOrchestrationError(
+            "site_audit_not_ready", "A seed URL is required to create a Site Audit."
+        )
+    normalized = str(normalize_governed_url(seed, strip_parameters=set())["normalized_url"])
+    result = dict(value)
+    result["seed_url"] = seed
+    result["normalized_seed_url"] = normalized
+    result["audit_name"] = str(value.get("audit_name") or f"Site Audit: {normalized}")[:200]
+    result["site_label"] = _string_or_none(value.get("site_label"))
+    result.setdefault("approved_hosts", [])
+    result.setdefault("scope_policy", {"mode": "exact_host"})
+    result.setdefault("crawl_profile", CrawlProfileName.STANDARD_CRAWL.value)
+    result.setdefault("crawl_limits", {})
+    result.setdefault("rules", [])
+    result.setdefault("disabled_inherited_rules", [])
+    result.setdefault("tracking_parameters", [])
+    result.setdefault("tracking_parameters_accepted", False)
+    result.setdefault("tracking_parameter_exceptions", [])
+    result.setdefault("enabled_modules", [])
+    result.setdefault("thresholds", {})
+    result.setdefault("business_importance", [])
+    result.setdefault("publication_requested", False)
+    return result
+
+
+def _snapshot_rules(configuration: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    actions = {
+        RuleAction.EXCLUDE_FROM_DISCOVERY.value: "discovery",
+        RuleAction.EXCLUDE_FROM_METADATA.value: "metadata_scoring",
+        RuleAction.EXCLUDE_FROM_SITEMAP.value: "sitemap",
+        RuleAction.MARK_FOR_REVIEW.value: "discovery",
+        RuleAction.STRIP_QUERY_PARAMETER.value: "normalization",
+    }
+    specificity = {
+        RuleMatchType.EXACT_URL.value: 7,
+        RuleMatchType.EXACT_PATH.value: 6,
+        RuleMatchType.QUERY_PARAMETER_EQUALS.value: 5,
+        RuleMatchType.QUERY_PARAMETER_EXISTS.value: 4,
+        RuleMatchType.PATH_STARTS_WITH.value: 3,
+        RuleMatchType.PATH_ENDS_WITH.value: 3,
+        RuleMatchType.PATH_CONTAINS.value: 2,
+    }
+    result: list[dict[str, Any]] = []
+    raw = configuration.get("rules", ())
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action", ""))
+        match_type = str(item.get("match_type", ""))
+        result.append(
+            {
+                "stable_rule_id": str(
+                    item.get("rule_id") or stable_identifier("rule", index, item)
+                ),
+                "rule_source": str(item.get("source") or "per_audit"),
+                "source_version": str(item.get("source_version") or "1"),
+                "decision_layer": str(item.get("scope") or actions.get(action, "discovery")),
+                "match_type": match_type,
+                "match_value": str(item.get("match_value", "")),
+                "action": action,
+                "enabled": bool(item.get("enabled", True)),
+                "priority": int(item.get("priority", 0)),
+                "specificity": specificity.get(match_type, 0),
+                "reason_code": str(item.get("reason_code") or "per_audit_rule"),
+                "explanation": str(
+                    item.get("reason") or item.get("description") or "Rule applied."
+                ),
+                "overrides_rule_ids": tuple(
+                    str(value) for value in item.get("overrides_rule_ids", ())
+                ),
+            }
+        )
+    return tuple(result)
+
+
+def _disabled_rules(configuration: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = configuration.get("disabled_inherited_rules", ())
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(
+        {
+            "stable_rule_id": str(item.get("stable_rule_id") or item.get("rule_id")),
+            "rule_source": str(item.get("rule_source") or item.get("source") or "preset"),
+            "source_version": str(item.get("source_version") or "1"),
+            "reason_code": str(item.get("reason_code") or "disabled_by_override"),
+        }
+        for item in raw
+        if isinstance(item, dict) and (item.get("stable_rule_id") or item.get("rule_id"))
+    )
+
+
+def _draft_hash(value: dict[str, Any]) -> str:
+    return snapshot_hash(value)
+
+
+def _string_or_none(value: object) -> str | None:
+    return str(value) if value not in {None, ""} else None
+
+
+def _int_or_none(value: object) -> int | None:
+    return int(str(value)) if value not in {None, ""} else None
 
 
 def _inventory_url(snapshot: dict[str, Any], url: str) -> str:
