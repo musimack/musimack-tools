@@ -1,6 +1,8 @@
 # Combined Site Audit conceptual private API
 
-Status: CSA-01 design contract; no production routes are implemented here.
+Status: CSA-01 contract. CSA-02 implements the private settings, preset, profile, rule-validation,
+sample-test, effective-settings, and explicitly deferred retained-preview subset. Audit aggregate,
+draft, execution, results, and artifact operations remain conceptual for their owning phases.
 
 Resource family: `/api/internal/v1/site-audits`
 
@@ -106,5 +108,6 @@ CSA runs, but may be offered as eligible prior evidence when all identity checks
 
 ## Conceptual route composition
 
-All routes remain private and mount only when explicitly enabled composition supplies the future CSA
-service. The default application remains health-only. CSA-01 adds no OpenAPI operation.
+All routes remain private and mount only when explicitly enabled composition supplies the relevant
+CSA service. The default application remains health-only. CSA-02 contributes only its bounded
+settings and governance operations; it does not add an audit or execution route.

@@ -69,6 +69,14 @@ describe('authenticated application routing', () => {
     ).toBeInTheDocument();
   });
 
+  test('denies the Site Audit Settings management surface to viewers', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(principalJson())));
+    renderAt('/settings');
+    expect(
+      await screen.findByRole('heading', { name: 'That area is restricted' }),
+    ).toBeInTheDocument();
+  });
+
   test('allows an operator to open the explicit sitemap creation route', async () => {
     vi.stubGlobal(
       'fetch',
@@ -97,7 +105,6 @@ describe('authenticated application routing', () => {
     ['/jobs', 'Jobs'],
     ['/history', 'History'],
     ['/artifacts', 'Artifacts'],
-    ['/settings', 'Settings'],
   ])('renders protected landing page %s', async (path, heading) => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(principalJson())));
     renderAt(path);
@@ -129,7 +136,7 @@ describe('authenticated application routing', () => {
     );
     renderAt('/');
     expect(await screen.findByRole('link', { name: 'Users' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Site Audit Settings' })).toBeInTheDocument();
   });
 
   test('does not infer administrator navigation for an operator role', async () => {

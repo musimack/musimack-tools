@@ -122,8 +122,8 @@ def test_migration_audit_upgrades_an_empty_database() -> None:
     result = audit_migrations(REPOSITORY_ROOT / "backend")
     assert result == {
         "head_count": 1,
-        "head": "0015_sitemap_recommendation_retention",
-        "parent": "0014_durable_result_projection",
+        "head": "0016_site_audit_settings",
+        "parent": "0015_sitemap_recommendation_retention",
         "empty_database_upgrade": "passed",
     }
 

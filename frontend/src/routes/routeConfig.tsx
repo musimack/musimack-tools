@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import type { Permission } from '../auth/contracts';
-import { OverviewPage, SettingsPage, UsersPage } from '../pages/WorkspacePages';
+import { OverviewPage, UsersPage } from '../pages/WorkspacePages';
+import { SiteAuditSettingsPage } from '../pages/SiteAuditSettingsPage';
 import { ArtifactsPage, HistoryPage, JobsPage } from '../pages/WorkflowPages';
 import { AuditsPage } from '../pages/AuditPages';
 import { SitemapAuditsPage } from '../pages/SitemapAuditPages';
@@ -105,9 +106,9 @@ export const workspaceRoutes: readonly WorkspaceRoute[] = [
   },
   {
     path: '/settings',
-    label: 'Settings',
-    description: 'Inspect toolkit configuration',
-    permission: 'settings.view',
-    component: SettingsPage,
+    label: 'Site Audit Settings',
+    description: 'Manage URL governance, presets, and saved site profiles',
+    permission: 'jobs.submit',
+    component: SiteAuditSettingsPage,
   },
 ] as const;

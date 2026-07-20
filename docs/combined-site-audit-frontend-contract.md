@@ -1,6 +1,8 @@
 # Combined Site Audit frontend interaction contract
 
-Status: CSA-01 design contract; no production screen or route is implemented here.
+Status: CSA-01 interaction contract. CSA-02 implements only the bounded Site Audit Settings,
+preset/profile management, effective-settings preview, and sample-URL tester surface. The combined
+audit wizard, history, results, and retained-evidence preview remain assigned to later phases.
 
 ## Information architecture
 

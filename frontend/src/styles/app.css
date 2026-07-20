@@ -238,6 +238,76 @@
   border: 0;
   padding: 0;
 }
+.preset-review,
+.rule-list,
+.profile-editor,
+.settings-breakdown {
+  display: grid;
+  margin-top: var(--space-3);
+  gap: var(--space-2);
+}
+.check-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+.check-control input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.15rem;
+}
+.check-control small,
+.secondary-id {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+.code-list {
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.sample-urls {
+  display: grid;
+  margin-top: var(--space-3);
+  gap: 0.35rem;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.sample-urls textarea {
+  min-height: 7rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #b9beb9;
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+.sample-urls input {
+  min-height: 44px;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #b9beb9;
+  border-radius: var(--radius-sm);
+}
+.settings-breakdown {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.settings-breakdown div {
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.settings-breakdown dt {
+  font-weight: 800;
+}
+.settings-breakdown dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
 .workflow-form legend {
   margin-bottom: var(--space-2);
   font-weight: 800;
@@ -262,8 +332,22 @@
 .override-grid {
   display: grid;
   margin-top: var(--space-3);
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
+}
+.override-grid > * {
+  min-width: 0;
+}
+.override-grid input:not([type='checkbox']):not([type='radio']),
+.override-grid select,
+.override-grid textarea {
+  width: 100%;
+}
+@media (max-width: 760px) {
+  .override-grid,
+  .settings-breakdown {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .filter-bar {
   display: flex;

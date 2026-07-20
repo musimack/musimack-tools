@@ -125,7 +125,7 @@ def test_sitemap_recommendation_retention_upgrades_and_downgrades(tmp_path: Path
     try:
         database_inspector = inspect(engine)
         assert current_revision(engine) == SITEMAP_RECOMMENDATION_RETENTION_REVISION
-        assert schema_is_current(engine)
+        assert not schema_is_current(engine)
         assert "sitemap_recommendations" in database_inspector.get_table_names()
         assert {"recommendations_retained", "recommendation_rule_set_version"} <= {
             item["name"] for item in database_inspector.get_columns("runs")
@@ -199,6 +199,9 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             "sitemap_audit_exports",
             "sitemap_audit_events",
             "sitemap_recommendations",
+            "site_audit_global_settings_versions",
+            "site_audit_profiles",
+            "site_audit_profile_versions",
             "crawl_link_evidence",
             "link_audits",
             "link_audit_targets",
@@ -267,6 +270,7 @@ def test_migrated_schema_has_expected_tables_constraints_indexes_and_revision(  
             for constraint in database.get_foreign_keys(table)
         }
         assert foreign_keys == {
+            ("site_audit_profile_versions", "site_audit_profiles"),
             ("sitemap_recommendations", "jobs"),
             ("sitemap_recommendations", "runs"),
             ("artifact_metadata", "jobs"),

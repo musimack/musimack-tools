@@ -59,12 +59,19 @@ from musimack_tools.persistence.link_audit_repository import SQLAlchemyLinkAudit
 from musimack_tools.persistence.metadata_audit_repository import SQLAlchemyMetadataAuditRepository
 from musimack_tools.persistence.migration_qa_repository import SQLAlchemyMigrationQaRepository
 from musimack_tools.persistence.repositories import SQLAlchemyPersistenceRepository
+from musimack_tools.persistence.site_audit_settings_repository import (
+    SQLAlchemySiteAuditSettingsRepository,
+)
 from musimack_tools.persistence.sitemap_audit_repository import SQLAlchemySitemapAuditRepository
 from musimack_tools.persistence.structured_data_repository import (
     SQLAlchemyStructuredDataAuditRepository,
 )
 from musimack_tools.recommendation.sitemap import SitemapRecommendationEngine
 from musimack_tools.run.service import CrawlRunService
+from musimack_tools.site_audit_settings.service import (
+    SiteAuditSettingsConfiguration,
+    SiteAuditSettingsService,
+)
 from musimack_tools.sitemap_audit.service import SitemapAuditService
 from musimack_tools.structured_data_audit.service import StructuredDataAuditService
 
@@ -222,6 +229,7 @@ def compose_web_runtime(settings: RuntimeSettings) -> WebRuntime:
         image_audits=_image_service(configuration, runtime, artifact_service),
         structured_data_audits=_structured_service(configuration, runtime, artifact_service),
         migration_qa=_migration_qa_service(configuration, runtime, artifact_service),
+        site_audit_settings=_site_audit_settings_service(runtime),
     )
     app.add_middleware(
         TrustedHostMiddleware,
@@ -529,6 +537,13 @@ def _migration_qa_service(
         MigrationQaService(value, SQLAlchemyMigrationQaRepository(runtime), artifacts)
         if value.enabled
         else None
+    )
+
+
+def _site_audit_settings_service(runtime: PersistenceRuntime) -> SiteAuditSettingsService:
+    return SiteAuditSettingsService(
+        SiteAuditSettingsConfiguration(enabled=True),
+        SQLAlchemySiteAuditSettingsRepository(runtime),
     )
 
 

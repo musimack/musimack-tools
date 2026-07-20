@@ -8,8 +8,8 @@ its own assignment and human gate.
 | Capability                                             | CSA-01                | CSA-02                                          | CSA-03                                     | CSA-04                                                    | CSA-05                                                     | CSA-06                    | Deferred                |
 | ------------------------------------------------------ | --------------------- | ----------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------- | ------------------------- | ----------------------- |
 | Terminology, lifecycle, populations, priority contract | Define                | Conform                                         | Persist versions                           | Project                                                   | Present                                                    | Acceptance                | —                       |
-| Global settings and site profiles                      | Define                | Domain/service/API implementation               | Persist references as needed by owned plan | Consume snapshots                                         | Management/selection UI                                    | Security/real-site QA     | —                       |
-| Presets, rules, preview, parameter governance          | Define semantics      | Implement bounded rule engine and contracts     | Persist definitions/snapshots/matches      | Apply in crawl/orchestration                              | Wizard/preview UI                                          | Collision/safety QA       | Regex                   |
+| Global settings and site profiles                      | Define                | Domain/service/API and bounded management UI    | Persist references as needed by owned plan | Consume snapshots                                         | Wizard selection/integration                               | Security/real-site QA     | —                       |
+| Presets, rules, preview, parameter governance          | Define semantics      | Bounded engine, sample tester, settings UI       | Persist definitions/snapshots/matches      | Apply in crawl/orchestration                              | Wizard/retained-evidence preview                           | Collision/safety QA       | Regex                   |
 | CSA audit/run persistence                              | Define entities       | Provide settings inputs only                    | Migration, models, repositories, retention | Consume                                                   | Consume                                                    | Backup/recovery QA        | —                       |
 | Crawl and specialist orchestration                     | Define integration    | No orchestration                                | Persist links/status                       | Durable parent/child execution, recovery, priority/groups | Status/results UI                                          | Real-site hardening       | Automatic schedules     |
 | Combined UI/navigation                                 | Define interaction    | No production CSA wizard                        | No production UI                           | API-ready projections                                     | Implement wizard/history/results while specialists coexist | Browser/accessibility QA  | —                       |
@@ -70,7 +70,8 @@ requiring pasted internal IDs. It must not broadly redesign specialist screens a
 
 ## Repository gaps assigned forward
 
-- No CSA draft/profile/preset/rule domain authority: CSA-02.
+- CSA-02 owns the profile, preset, global-setting, rule, normalization, and stateless preview
+  authorities. No CSA draft or submitted settings snapshot exists yet: CSA-03.
 - No immutable CSA aggregate/population/rule-match persistence: CSA-03.
 - No parent-child coordinator or combined priority/group projection: CSA-04.
 - No CSA routes or screens: CSA-04/05 respectively.

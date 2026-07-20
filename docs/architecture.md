@@ -2,14 +2,18 @@
 
 ## Combined Site Audit design boundary
 
-CSA-01 defines a documentation-only product and architecture contract for future CSA-02 through
-CSA-06 work. It introduces no production route, table, migration, worker, rule engine, or frontend
-screen. The future aggregate must reuse accepted crawl/run evidence, durable coordination,
-authenticated artifacts, and specialist authorities while keeping discovery, metadata scoring, and
-sitemap decisions separate. See [the product contract](combined-site-audit-product-contract.md),
+CSA-01 defines the accepted product and architecture contract. CSA-02 implements its bounded,
+network-free settings authority: global-setting versions, reusable site-profile versions,
+deterministic built-in presets, literal URL governance, parameter normalization, private APIs, and
+the protected settings/tester surface. CSA-02 does not create a combined audit aggregate, run a
+crawl, alter the accepted crawl frontier, persist match evidence, orchestrate specialists, or
+generate artifacts. The future aggregate must reuse accepted crawl/run evidence, durable
+coordination, authenticated artifacts, and specialist authorities while keeping discovery,
+metadata scoring, and sitemap decisions separate. See [the product contract](combined-site-audit-product-contract.md),
 [conceptual API](combined-site-audit-api-contract.md), [frontend contract](combined-site-audit-frontend-contract.md),
-and [phase ownership](combined-site-audit-phase-ownership.md). The published single Alembic head at
-this design baseline is `0015_sitemap_recommendation_retention`.
+the [settings implementation](site-audit-settings.md), and [phase ownership](combined-site-audit-phase-ownership.md).
+The single CSA-02 development head is `0016_site_audit_settings`, parent
+`0015_sitemap_recommendation_retention`.
 
 ## Phase 26 migration QA boundary
 
@@ -46,7 +50,7 @@ Twelve operations across ten private paths mount only when an enabled service is
 `crawl_page_evidence` is the only page authority. The explicit metadata-audit service validates a terminal run, snapshots immutable configuration, evaluates bounded batches, persists pages/issues/groups/summary/events, and then permits bounded exports. Applicability and severity are centralized in the domain; API handlers and the frontend do not recompute them.
 
 At Phase 20 acceptance, the persistence head was `0007_metadata_audit`. The current published
-baseline has one accepted head, `0015_sitemap_recommendation_retention`. Eight metadata-audit tables reference jobs, runs, page evidence, and
+CSA-02 development has one head, `0016_site_audit_settings`. Eight metadata-audit tables reference jobs, runs, page evidence, and
 artifacts without storing raw HTML, bodies, complete headers, parser objects, or artifact bytes.
 Ordering identifiers are `created_at_desc_audit_id_desc-v1`,
 `highest_severity_desc_url_identity_asc-v1`,
