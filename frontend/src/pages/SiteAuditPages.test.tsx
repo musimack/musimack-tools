@@ -205,6 +205,19 @@ test('review shows the resolved rule count, sources, disabled rules, and trackin
       disabled_inherited_rules: [{ rule_id: 'wordpress.wp_json' }],
       tracking_parameters_accepted: true,
       tracking_parameters: ['utm_source'],
+      real_site_operations: { status: 'enabled', enabled: true },
+      outbound_policy_version: 'seo-toolkit-outbound-destination-policy-v1',
+      normalized_seed_url: 'https://example.com/',
+      submitted_by: 'operator',
+      crawler_user_agent: 'MusimackSeoToolkit/1.0',
+      dns_timeout_seconds: 5,
+      external_ai_enabled: false,
+      summary_writing_enabled: false,
+      crawl_limits: {
+        maximum_urls: 25,
+        maximum_queue_size: 100,
+        maximum_response_bytes: 3000000,
+      },
       warnings: [],
     },
   });
@@ -220,6 +233,11 @@ test('review shows the resolved rule count, sources, disabled rules, and trackin
   expect(screen.getByText('Exclude /cdn-cgi/ from discovery')).toBeVisible();
   expect(screen.getByText('{"preset":1,"per_audit":1}')).toBeVisible();
   expect(screen.getByText('["utm_source"]')).toBeVisible();
+  expect(screen.getByText('enabled')).toBeVisible();
+  expect(screen.getByText('seo-toolkit-outbound-destination-policy-v1')).toBeVisible();
+  expect(screen.getByText('MusimackSeoToolkit/1.0')).toBeVisible();
+  expect(screen.getByText('operator')).toBeVisible();
+  expect(screen.getByText('3000000')).toBeVisible();
   const disabled = screen.getByText('Disabled inherited rules').parentElement;
   expect(disabled).not.toBeNull();
   expect(within(disabled!).getByText('1')).toBeVisible();
@@ -245,6 +263,19 @@ test('summary renders bounded metrics without a request loop or raw projection',
     recommendation_indeterminate: 0,
     high_issue_groups: 3,
     projection_version: 'site-audit-summary-v1',
+    operational_accounting: {
+      request_count: 33,
+      accepted_byte_count: 424360,
+      redirect_count: 2,
+      rejected_destination_count: 0,
+      scope_denial_count: 9,
+      url_admission: {
+        admitted: 25,
+        fetched: 25,
+        over_limit: 1,
+        definition: 'Over-limit discoveries are retained; queued work continues.',
+      },
+    },
   });
   render(
     <MemoryRouter initialEntries={['/site-audits/audit-1/results/summary']}>
@@ -256,6 +287,8 @@ test('summary renders bounded metrics without a request loop or raw projection',
   expect(await screen.findByText('132')).toBeVisible();
   expect(screen.getByText('131 fetched')).toBeVisible();
   expect(screen.getByText('30')).toBeVisible();
+  expect(screen.getByText(/Over-limit discoveries are retained/iu)).toBeVisible();
+  expect(screen.getByText('424360')).toBeVisible();
   await waitFor(() => {
     expect(api.summary).toHaveBeenCalledTimes(1);
   });

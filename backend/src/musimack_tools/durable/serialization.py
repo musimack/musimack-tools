@@ -88,6 +88,7 @@ def serialize_run_request(request: CrawlRunRequest) -> str:
             }
         ),
         "caller_label": request.caller_label,
+        "execution_identity": request.execution_identity,
         "robots_product_token": request.robots_product_token,
         "orchestration_version": request.orchestration_version,
     }
@@ -169,6 +170,7 @@ def _deserialize_run_request(value: str) -> CrawlRunRequest:
         publication_configuration=publication,
         summary_configuration=summary,
         caller_label=_optional_string(payload["caller_label"]),
+        execution_identity=_optional_string(payload.get("execution_identity")),
         robots_product_token=_string(payload["robots_product_token"]),
         orchestration_version=_string(payload["orchestration_version"]),
     )

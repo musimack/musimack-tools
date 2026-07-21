@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+import json
+from dataclasses import FrozenInstanceError, asdict, replace
 from datetime import UTC, datetime
 
 import pytest
@@ -22,8 +23,13 @@ from musimack_tools.domain.durable_execution import (
 )
 from musimack_tools.durable.retry import classify_retry
 from musimack_tools.durable.serialization import deserialize_run_request, serialize_run_request
+from musimack_tools.persistence.mapping import (
+    durable_result_projection,
+    durable_result_projection_json,
+    load_durable_result_projection,
+)
 from musimack_tools.run.identity import run_identity
-from persistence_helpers import sample_request
+from persistence_helpers import sample_request, sample_result
 
 
 def test_versions_are_exact() -> None:
@@ -143,10 +149,38 @@ def test_retry_classifier_is_bounded(  # noqa: PLR0913
 
 
 def test_run_request_round_trips_without_identity_change() -> None:
-    request = sample_request("/durable?q=1")
+    request = replace(sample_request("/durable?q=1"), execution_identity="audit:execution-1")
     restored = deserialize_run_request(serialize_run_request(request))
     assert restored == request
     assert run_identity(restored) == run_identity(request)
+
+
+def test_legacy_run_request_without_execution_identity_remains_readable() -> None:
+    serialized = serialize_run_request(sample_request("/legacy"))
+    payload = json.loads(serialized)
+    payload.pop("execution_identity")
+
+    restored = deserialize_run_request(json.dumps(payload))
+
+    assert restored.execution_identity is None
+
+
+def test_durable_result_serializes_elapsed_time_and_reads_legacy_monotonic_markers() -> None:
+    request = sample_request("/timing")
+    serialized = durable_result_projection_json(sample_result(request))
+    assert "crawl_started_at_seconds" not in serialized
+    assert "crawl_ended_at_seconds" not in serialized
+    assert "crawl_elapsed_seconds" in serialized
+
+    legacy = asdict(durable_result_projection(sample_result(request)))
+    legacy.pop("crawl_elapsed_seconds")
+    legacy["crawl_started_at_seconds"] = 100.0
+    legacy["crawl_ended_at_seconds"] = 112.5
+    restored = load_durable_result_projection(json.dumps(legacy))
+
+    assert restored.crawl_elapsed_seconds == 12.5
+    legacy["crawl_ended_at_seconds"] = 99.0
+    assert load_durable_result_projection(json.dumps(legacy)).crawl_elapsed_seconds is None
 
 
 @pytest.mark.parametrize("value", ["", "null", "[]", "{}", '{"version":"future"}'])

@@ -96,6 +96,24 @@ class SiteAuditSettingsService:
 
         return int(self.settings()["version"])
 
+    def current_real_site_authorization(self) -> dict[str, Any]:
+        """Return the fail-closed authorization attached to the latest global version."""
+
+        record = self.settings()
+        configuration = global_settings_from_mapping(
+            _mapping(record["configuration"]), created_by="system", now=_now()
+        )
+        return {
+            "enabled": configuration.real_site_operations_enabled,
+            "status": "enabled" if configuration.real_site_operations_enabled else "suspended",
+            "authorized_by": (
+                record["created_by"] if configuration.real_site_operations_enabled else None
+            ),
+            "global_settings_version": record["version"],
+            "global_settings_hash": record["configuration_hash"],
+            "default_limits": dict(configuration.real_site_default_limits),
+        }
+
     def update_settings(
         self, payload: Mapping[str, Any], *, expected_version: int, actor: str
     ) -> dict[str, Any]:
@@ -434,6 +452,18 @@ class SiteAuditSettingsService:
             "protected_boundaries": protected_boundaries(),
             "global_settings_version": global_record["version"],
             "global_settings_hash": global_record["configuration_hash"],
+            "real_site_operations": {
+                "enabled": global_configuration.real_site_operations_enabled,
+                "status": (
+                    "enabled" if global_configuration.real_site_operations_enabled else "suspended"
+                ),
+                "authorized_by": (
+                    global_record["created_by"]
+                    if global_configuration.real_site_operations_enabled
+                    else None
+                ),
+                "default_limits": dict(global_configuration.real_site_default_limits),
+            },
             "preset": preset.to_dict() if preset else None,
             "preset_accepted": preset_accepted,
             "site_profile": (

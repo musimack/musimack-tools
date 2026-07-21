@@ -65,7 +65,14 @@ def generate_site_audit_artifacts(  # noqa: PLR0913
             ArtifactPurpose.EVIDENCE,
             ArtifactType.RUN_SUMMARY_JSON,
             "site-audit-evidence-v1",
-            _evidence_json(audit, snapshot, selected_urls, evidence, truncated=truncated),
+            _evidence_json(
+                audit,
+                snapshot,
+                summary,
+                selected_urls,
+                evidence,
+                truncated=truncated,
+            ),
             rows=len(selected_urls),
             truncated=truncated,
         ),
@@ -124,7 +131,7 @@ def generate_site_audit_artifacts(  # noqa: PLR0913
             ArtifactPurpose.CONFIGURATION,
             ArtifactType.RUN_SUMMARY_JSON,
             "site-audit-configuration-v1",
-            _configuration_json(snapshot),
+            _configuration_json(snapshot, summary),
             rows=None,
             truncated=False,
         ),
@@ -171,6 +178,7 @@ def _executive(
         "- Executive metadata denominator: indexable, canonical, "
         "metadata-scoring-eligible HTML pages",
         f"- Executive denominator count: {summary.get('metadata_scoring_eligible_urls', 0)}",
+        f"- URL ceiling effect: {_url_limit_explanation(summary)}",
         "",
         "## Top issue groups",
         "",
@@ -218,7 +226,11 @@ def _pages_csv(
         "recommended_sitemap_state",
         "metadata_scoring_decision",
         "title",
-        "description_state",
+        "title_length",
+        "meta_description",
+        "description_length",
+        "meta_robots",
+        "x_robots_tag",
         "issue_count",
         "highest_severity",
         "business_importance",
@@ -233,7 +245,11 @@ def _pages_csv(
             {
                 **item,
                 "title": source.get("title_value"),
-                "description_state": source.get("description_presence"),
+                "title_length": source.get("title_length"),
+                "meta_description": source.get("description_value"),
+                "description_length": source.get("description_length"),
+                "meta_robots": source.get("meta_robots_json"),
+                "x_robots_tag": source.get("x_robots_json"),
                 "issue_count": counts.get(str(item["url_id"]), 0),
                 "rule_reason": item.get("discovery_decision"),
             }
@@ -241,9 +257,10 @@ def _pages_csv(
     return _csv(columns, rows)
 
 
-def _evidence_json(
+def _evidence_json(  # noqa: PLR0913 - final retained artifact inputs are explicit.
     audit: dict[str, Any],
     snapshot: dict[str, Any],
+    summary: dict[str, Any],
     urls: tuple[dict[str, Any], ...],
     evidence: dict[str, dict[str, Any]],
     *,
@@ -264,7 +281,14 @@ def _evidence_json(
                 "canonical_state": item.get("canonical_state"),
                 "robots_state": item.get("robots_state"),
                 "title_presence": page.get("title_presence"),
+                "title": page.get("title_value"),
+                "title_length": page.get("title_length"),
                 "description_presence": page.get("description_presence"),
+                "meta_description": page.get("description_value"),
+                "description_length": page.get("description_length"),
+                "canonical": page.get("canonical_url"),
+                "meta_robots": page.get("meta_robots_json"),
+                "x_robots_tag": page.get("x_robots_json"),
                 "parse_warning_count": page.get("parse_warning_count"),
                 "evidence_id": item.get("evidence_id"),
             }
@@ -276,6 +300,7 @@ def _evidence_json(
             "snapshot_sha256": snapshot["sha256"],
             "partial": bool(audit.get("partial")),
             "truncated": truncated,
+            "operational_accounting": _operational_accounting(summary),
             "urls": safe,
         },
         ensure_ascii=True,
@@ -372,7 +397,16 @@ def _action_plan_csv(groups: tuple[dict[str, Any], ...]) -> str:
     return _csv(columns, list(groups[:MAXIMUM_ARTIFACT_ROWS]))
 
 
-def _configuration_json(snapshot: dict[str, Any]) -> str:
+def _configuration_json(snapshot: dict[str, Any], summary: dict[str, Any]) -> str:
+    module_counts = summary.get("module_counts_json")
+    decoded_counts: dict[str, Any] = {}
+    if isinstance(module_counts, str):
+        try:
+            candidate = json.loads(module_counts)
+        except json.JSONDecodeError:
+            candidate = {}
+        if isinstance(candidate, dict):
+            decoded_counts = candidate
     return json.dumps(
         {
             "schema_version": "site-audit-configuration-v1",
@@ -381,11 +415,40 @@ def _configuration_json(snapshot: dict[str, Any]) -> str:
             "configuration": snapshot["configuration"],
             "rules": snapshot.get("rules", ()),
             "disabled_inherited_rules": snapshot.get("disabled_inherited_rules", ()),
+            "operational_accounting": decoded_counts.get("operational_accounting"),
         },
         ensure_ascii=True,
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _operational_accounting(summary: dict[str, Any]) -> object:
+    module_counts = summary.get("module_counts_json")
+    if not isinstance(module_counts, str):
+        return None
+    try:
+        decoded = json.loads(module_counts)
+    except json.JSONDecodeError:
+        return None
+    return decoded.get("operational_accounting") if isinstance(decoded, dict) else None
+
+
+def _url_limit_explanation(summary: dict[str, Any]) -> str:
+    operational = _operational_accounting(summary)
+    if not isinstance(operational, dict):
+        return "No retained URL-ceiling accounting is available."
+    admission = operational.get("url_admission")
+    if not isinstance(admission, dict):
+        return "No retained URL-ceiling accounting is available."
+    over_limit = int(admission.get("over_limit", 0))
+    admitted = int(admission.get("admitted", 0))
+    if over_limit:
+        return (
+            f"{admitted} URLs were admitted; {over_limit} additional unique discoveries "
+            "were not admitted, while queued work continued."
+        )
+    return f"{admitted} URLs were admitted; no over-limit discoveries were retained."
 
 
 def _csv(columns: tuple[str, ...], rows: list[dict[str, Any]]) -> str:

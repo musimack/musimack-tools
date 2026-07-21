@@ -168,6 +168,20 @@ class DurableResultProjection:
     warning_codes: tuple[str, ...]
     failure_codes: tuple[str, ...]
     downstream_versions: tuple[tuple[str, str], ...]
+    crawl_elapsed_seconds: float | None = None
+    outbound_request_count: int = 0
+    outbound_redirect_count: int = 0
+    rejected_destination_count: int = 0
+    resolved_address_fingerprints: tuple[str, ...] = ()
+    robots_outcome_counts: tuple[tuple[str, int], ...] = ()
+    dns_resolution_count: int = 0
+    robots_request_count: int = 0
+    page_request_count: int = 0
+    accepted_byte_count: int = 0
+    scope_denial_count: int = 0
+    retry_count: int = 0
+    timeout_count: int = 0
+    response_size_rejection_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

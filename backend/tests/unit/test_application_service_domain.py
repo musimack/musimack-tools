@@ -140,6 +140,20 @@ def test_http_https_normalization_and_deterministic_run_identity() -> None:
     assert https.report.run_id != http.report.run_id
 
 
+def test_submission_execution_identity_separates_identical_configurations() -> None:
+    preparer = ApplicationRequestPreparer()
+    first = preparer.prepare(
+        RawApplicationCrawlRequest("https://example.com/", execution_identity="site-audit:first")
+    )
+    second = preparer.prepare(
+        RawApplicationCrawlRequest("https://example.com/", execution_identity="site-audit:second")
+    )
+
+    assert first.prepared is not None and second.prepared is not None
+    assert first.report.run_id != second.report.run_id
+    assert first.prepared.run_request.crawl_request == second.prepared.run_request.crawl_request
+
+
 def test_approved_hosts_normalize_and_scope_is_explicit() -> None:
     result = ApplicationRequestPreparer().prepare(
         RawApplicationCrawlRequest(

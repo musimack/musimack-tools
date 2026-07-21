@@ -37,6 +37,14 @@ const date = (value: unknown): string => {
   return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString();
 };
 
+const duration = (value: unknown): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 'Not available';
+  if (value < 60) return `${value.toFixed(1)} seconds`;
+  const minutes = Math.floor(value / 60);
+  const seconds = value - minutes * 60;
+  return `${String(minutes)} minutes ${seconds.toFixed(1)} seconds`;
+};
+
 const errorMessage = (error: unknown): string =>
   error instanceof ApiError
     ? `${error.message}${error.requestId ? ` Support reference: ${error.requestId}.` : ''}`
@@ -235,6 +243,7 @@ export function SitemapResult({ auditId }: { auditId: string }) {
   if (!comparison || !documents) return <Loading />;
   const module = row(comparison.existing_sitemap_module);
   const totals = row(comparison.comparison_totals);
+  const sitemapTotals = row(comparison.sitemap_totals);
   return (
     <div className="result-stack">
       <Card>
@@ -246,23 +255,12 @@ export function SitemapResult({ auditId }: { auditId: string }) {
             ['Completeness', module.completeness],
             ['Execution source', module.execution_source],
             ['Specialist provenance', module.specialist_audit_id],
-            ['Document count', comparison.document_count],
-            [
-              'Index count',
-              documents.items.filter((item) => item.root_type === 'sitemap_index').length,
-            ],
-            [
-              'Entry count',
-              documents.items.reduce((sum, item) => sum + Number(item.entry_count ?? 0), 0),
-            ],
-            [
-              'Invalid documents',
-              documents.items.filter((item) => item.parse_state !== 'parsed').length,
-            ],
-            [
-              'Sitemap-only URLs',
-              comparison.items.filter((item) => item.discovery_state === 'sitemap_only').length,
-            ],
+            ['Document count', sitemapTotals.document_count],
+            ['Index count', sitemapTotals.index_count],
+            ['Entry count', sitemapTotals.entry_count],
+            ['Sitemap fetch failures', sitemapTotals.fetch_failure_count],
+            ['Sitemap-only URLs', sitemapTotals.sitemap_only_count],
+            ['Sitemap-only definition', sitemapTotals.definition],
             ['Recommended artifact', 'See Artifacts → Recommended sitemap XML'],
             [
               'Include / Exclude / Review / Indeterminate',
@@ -665,6 +663,12 @@ export function EvidenceResult({ auditId }: { auditId: string }) {
     total: findings.length,
     ordering: 'code,finding_id',
   };
+  const snapshot = row(value.snapshot);
+  const configuration = row(snapshot.configuration);
+  const authorization = row(configuration.real_site_authorization);
+  const limits = row(configuration.crawl_limits);
+  const accounting = row(value.operational_accounting);
+  const admission = row(accounting.url_admission);
   return (
     <div className="result-stack">
       <Card>
@@ -696,6 +700,64 @@ export function EvidenceResult({ auditId }: { auditId: string }) {
           <summary>Stage evidence</summary>
           <StructuredRows values={rows(value.stages)} />
         </details>
+      </Card>
+      <Card>
+        <h3>Authorization and immutable safety envelope</h3>
+        <FieldGrid
+          values={[
+            ['Operation mode', configuration.operation_mode],
+            ['Real-site authorization', authorization.status],
+            ['Authorizing administrator', authorization.authorized_by],
+            [
+              'Authorization version',
+              authorization.global_settings_version ?? authorization.version,
+            ],
+            ['Submitter', configuration.submitted_by],
+            ['Settings version', configuration.global_settings_version],
+            ['Settings hash', configuration.global_settings_hash],
+            ['Destination-policy version', configuration.outbound_policy_version],
+            ['User-agent', configuration.crawler_user_agent],
+            ['DNS timeout (seconds)', configuration.dns_timeout_seconds],
+            ['Maximum URLs', limits.maximum_urls],
+            ['Maximum depth', limits.maximum_depth],
+            ['Maximum duration (seconds)', limits.maximum_duration_seconds],
+            ['Maximum accepted bytes', limits.maximum_accepted_bytes],
+            ['Maximum concurrency', limits.maximum_concurrency],
+            ['Maximum queue size', limits.maximum_queue_size],
+            ['Minimum request delay (seconds)', limits.minimum_request_delay_seconds],
+            ['Maximum redirect hops', limits.maximum_redirect_hops],
+            ['Maximum response bytes', limits.maximum_response_bytes],
+            ['Publication', configuration.publication_enabled ? 'Enabled' : 'Disabled'],
+            ['External AI', configuration.external_ai_enabled ? 'Enabled' : 'Disabled'],
+          ]}
+        />
+      </Card>
+      <Card>
+        <h3>Aggregate operational totals</h3>
+        <FieldGrid
+          values={[
+            ['Crawl elapsed duration', duration(accounting.crawl_elapsed_seconds)],
+            ['DNS operations', accounting.dns_operation_count],
+            ['Requests', accounting.request_count],
+            ['Accepted bytes', accounting.accepted_byte_count],
+            ['Redirects', accounting.redirect_count],
+            ['Rejected destinations', accounting.rejected_destination_count],
+            ['Scope denials', accounting.scope_denial_count],
+            ['Robots requests', accounting.robots_request_count],
+            ['Page and resource requests', accounting.page_request_count],
+            ['Robots outcomes', accounting.robots_outcomes],
+            ['Sitemap requests', accounting.sitemap_request_count],
+            ['Sitemap outcomes', accounting.sitemap_outcomes],
+            ['Retries', accounting.retry_count],
+            ['Timeouts', accounting.timeout_count],
+            ['Response-size rejections', accounting.response_size_rejection_count],
+            ['Address fingerprints', accounting.resolved_address_fingerprints],
+            ['URLs admitted', admission.admitted],
+            ['URLs fetched', admission.fetched],
+            ['Over-limit discoveries', admission.over_limit],
+            ['URL-limit behavior', admission.definition],
+          ]}
+        />
       </Card>
       <Card id="modules">
         <h3>Module completeness</h3>
@@ -836,6 +898,9 @@ export function SettingsSnapshotResult({ auditId }: { auditId: string }) {
   if (error) return <Failure error={error} />;
   if (!value) return <Loading />;
   const configuration = row(value.configuration);
+  const authorization = row(configuration.real_site_authorization);
+  const limits = row(configuration.crawl_limits);
+  const resolution = row(configuration.resolution);
   const rules = rows(value.rules ?? configuration.rules);
   const page: AuditPage<Row> = {
     items: rules.slice(offset, offset + 50),
@@ -868,9 +933,34 @@ export function SettingsSnapshotResult({ auditId }: { auditId: string }) {
         <h3>Scope and crawl</h3>
         <FieldGrid
           values={[
+            ['Operation mode', configuration.operation_mode],
+            ['Normalized seed', configuration.normalized_seed_url],
+            ['Submitter', configuration.submitted_by],
+            ['Real-site authorization', authorization.status],
+            ['Authorizing administrator', authorization.authorized_by],
+            [
+              'Authorization version',
+              authorization.global_settings_version ?? authorization.version,
+            ],
+            ['Settings version', configuration.global_settings_version],
+            ['Settings hash', configuration.global_settings_hash],
+            ['Destination-policy version', configuration.outbound_policy_version],
+            ['User-agent', configuration.crawler_user_agent],
+            ['DNS timeout (seconds)', configuration.dns_timeout_seconds],
             ['Approved hosts', value.approved_hosts_json ?? configuration.approved_hosts],
             ['Scope policy', value.scope_policy_json ?? configuration.scope_policy],
-            ['Crawl limits', value.crawl_limits_json ?? configuration.crawl_limits],
+            ['Maximum URLs', limits.maximum_urls],
+            ['Maximum depth', limits.maximum_depth],
+            ['Maximum duration (seconds)', limits.maximum_duration_seconds],
+            ['Maximum accepted bytes', limits.maximum_accepted_bytes],
+            ['Maximum concurrency', limits.maximum_concurrency],
+            ['Maximum queue size', limits.maximum_queue_size],
+            ['Minimum request delay (seconds)', limits.minimum_request_delay_seconds],
+            ['Maximum redirect hops', limits.maximum_redirect_hops],
+            ['Maximum response bytes', limits.maximum_response_bytes],
+            ['Publication', configuration.publication_enabled ? 'Enabled' : 'Disabled'],
+            ['External AI', configuration.external_ai_enabled ? 'Enabled' : 'Disabled'],
+            ['Summary writing', configuration.summary_writing_enabled ? 'Enabled' : 'Disabled'],
             ['Thresholds', value.thresholds_json ?? configuration.thresholds],
             ['Enabled modules', value.enabled_modules_json ?? configuration.enabled_modules],
           ]}
@@ -894,7 +984,7 @@ export function SettingsSnapshotResult({ auditId }: { auditId: string }) {
               'Disabled inherited rules',
               value.disabled_rules ?? configuration.disabled_inherited_rules,
             ],
-            ['Per-audit overrides', configuration.overrides],
+            ['Per-audit overrides', resolution.crawl_limit_overrides ?? configuration.crawl_limits],
             [
               'Artifact schema versions',
               value.artifact_schema_versions_json ?? configuration.artifact_schema_versions,

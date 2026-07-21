@@ -715,16 +715,28 @@ def test_parser_exception_maps_to_worker_failure() -> None:
     assert result.errors[0].code is CrawlErrorCode.WORKER_FAILURE
 
 
-def test_url_limit_stops_admission_and_marks_pending_urls() -> None:
+def test_url_limit_stops_new_admission_but_finishes_queued_urls() -> None:
+    links = tuple(f'<a href="/{index}">{index}</a>' for index in range(1, 26))
     result, fetcher, _clock = _run(
-        {_SEED: _Page(body=_html('<a href="/one">One</a>', '<a href="/two">Two</a>'))},
-        request=_request(maximum_unique_urls=2),
+        {
+            _SEED: _Page(body=_html(*links)),
+            **{f"https://example.test/{index}": _Page(body=_html()) for index in range(1, 25)},
+        },
+        request=_request(maximum_unique_urls=25),
     )
 
-    assert result.state is CrawlState.LIMIT_REACHED
-    assert fetcher.calls == [_SEED]
+    assert result.state is CrawlState.COMPLETED_WITH_ERRORS
+    assert fetcher.calls == [
+        _SEED,
+        *(f"https://example.test/{index}" for index in range(1, 25)),
+    ]
     assert result.limit_events[0].kind is LimitKind.URLS
-    assert any(record.frontier_state is FrontierState.SKIPPED for record in result.url_records)
+    assert result.counters.unique_urls_discovered == 25
+    assert result.counters.urls_queued == 25
+    assert result.counters.urls_fetched == 25
+    assert result.counters.urls_over_limit == 1
+    assert result.discoveries[24].reason is LinkAdmissionReason.URL_LIMIT_REACHED
+    assert all(record.frontier_state is FrontierState.COMPLETED for record in result.url_records)
 
 
 def test_depth_limit_rejects_children_without_ending_crawl() -> None:

@@ -57,6 +57,22 @@ Before backup, run reconciliation and resolve missing, corrupt, unsafe, bounded,
 
 Preflight performs no DNS or public-network lookup. It probes only configured local files, SQLite, migration scripts, and the frontend build. Its failure exit code is 2. Operational failures are intentionally generic when the underlying exception could contain sensitive context.
 
+## Controlled real-site operations
+
+CSA-07 outbound crawling is documented in
+[`controlled-real-site-operations.md`](controlled-real-site-operations.md). It does not require or
+permit public inbound exposure. The administrator-controlled, versioned global switch defaults to
+suspended. Enabling it authorizes only bounded public destinations that pass the central SSRF and
+DNS-binding policy; it does not authorize a website. A named website and authorization basis still
+require David's explicit human approval before submission.
+
+Every new Site Audit submission owns a distinct run even when its configuration hash matches an
+earlier audit. Retry and recovery retain the attached job/run. Reconciliation must fail closed on
+terminal persistence failure or any job, run, page-evidence, finding, specialist, counter, or
+artifact ownership mismatch; operators must never repair this by copying historical evidence.
+Calendar timestamps come only from database wall-clock fields. `crawl_elapsed_seconds` is a
+duration; legacy monotonic markers must never be interpreted as Unix timestamps.
+
 ## CSA-06 backup and recovery evidence
 
 The final rehearsal interrupted a fixture audit during `crawl_inventory`, restarted web and worker,

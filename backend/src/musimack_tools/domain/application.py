@@ -198,6 +198,7 @@ class RawApplicationCrawlRequest:
     create_summary_directory: bool = False
     summary_dry_run: bool = False
     caller_label: str | None = None
+    execution_identity: str | None = None
     exclusion_rules: tuple[CrawlExclusionRule, ...] = ()
     strip_query_parameters: tuple[str, ...] = ()
 
@@ -412,6 +413,20 @@ class ApplicationResultProjection:
     registry_version: str | None
     downstream_versions: tuple[tuple[str, str], ...]
     application_service_version: str = APPLICATION_SERVICE_VERSION
+    crawl_elapsed_seconds: float | None = None
+    outbound_request_count: int = 0
+    outbound_redirect_count: int = 0
+    rejected_destination_count: int = 0
+    resolved_address_fingerprints: tuple[str, ...] = ()
+    robots_outcome_counts: tuple[tuple[str, int], ...] = ()
+    dns_resolution_count: int = 0
+    robots_request_count: int = 0
+    page_request_count: int = 0
+    accepted_byte_count: int = 0
+    scope_denial_count: int = 0
+    retry_count: int = 0
+    timeout_count: int = 0
+    response_size_rejection_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

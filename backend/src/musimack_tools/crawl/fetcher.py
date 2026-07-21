@@ -16,6 +16,7 @@ from musimack_tools.crawl.redirects import (
     is_redirect_status,
     normalize_redirect_target,
 )
+from musimack_tools.crawl.safety import is_public_address
 from musimack_tools.crawl.scope import evaluate_scope
 from musimack_tools.domain.fetching import (
     DnsEvidence,
@@ -78,6 +79,7 @@ class _FetchState:
     correlation_id: str | None
     redirects: list[RedirectHop] = field(default_factory=list)
     dns: list[DnsEvidence] = field(default_factory=list)
+    attempt_count: int = 0
 
 
 class SafeSingleUrlFetcher:
@@ -128,11 +130,14 @@ class SafeSingleUrlFetcher:
 
         timeout = self._httpx_timeout()
         headers = {
-            "User-Agent": self._settings.crawler_user_agent,
+            "User-Agent": request.user_agent or self._settings.crawler_user_agent,
             "Accept": _ACCEPT_HEADER,
         }
         try:
-            async with asyncio.timeout(self._settings.fetch_total_request_deadline_seconds):
+            deadline = self._settings.fetch_total_request_deadline_seconds
+            if request.maximum_duration_seconds is not None:
+                deadline = min(deadline, request.maximum_duration_seconds)
+            async with asyncio.timeout(deadline):
                 initial_safety = await self._safety.validate(request.url)
                 self._record_dns(state, initial_safety)
                 if not initial_safety.allowed:
@@ -144,6 +149,8 @@ class SafeSingleUrlFetcher:
                     trust_env=self._settings.fetch_trust_environment_proxies,
                     headers=headers,
                     cookies=None,
+                    http2=False,
+                    limits=httpx.Limits(max_keepalive_connections=0),
                 ) as client:
                     return await self._run_redirect_sequence(
                         client,
@@ -222,7 +229,8 @@ class SafeSingleUrlFetcher:
                         explanation=safety.explanation,
                     )
 
-            result = await self._send_once(client, state.current)
+            state.attempt_count += 1
+            result = await self._send_once(client, state.current, safety, request)
             if not isinstance(result, _AttemptFailure):
                 return result
             if (
@@ -245,11 +253,25 @@ class SafeSingleUrlFetcher:
             explanation="The request failed after its bounded retry attempts",
         )
 
-    async def _send_once(
+    async def _send_once(  # noqa: PLR0911 - each transport failure remains explicit.
         self,
         client: httpx.AsyncClient,
         destination: NormalizedUrl,
+        safety: NetworkSafetyDecision,
+        request: FetchRequest,
     ) -> _HttpResponseEvidence | _AttemptFailure:
+        selected_address = safety.selected_address
+        if selected_address is None or not is_public_address(selected_address):
+            return _AttemptFailure(
+                code=FetchFailureCode.UNSAFE_RESOLVED_ADDRESS,
+                explanation="The validated destination did not retain a public connection address",
+            )
+        original_url = httpx.URL(destination.normalized)
+        connection_url = original_url.copy_with(host=selected_address)
+        default_port = 443 if destination.scheme == "https" else 80
+        host_header = destination.hostname
+        if destination.effective_port != default_port:
+            host_header = f"{host_header}:{destination.effective_port}"
         host_semaphore = self._host_semaphores.setdefault(
             destination.hostname,
             asyncio.Semaphore(self._settings.default_per_host_concurrency),
@@ -258,9 +280,16 @@ class SafeSingleUrlFetcher:
             async with (
                 self._global_semaphore,
                 host_semaphore,
-                client.stream("GET", destination.normalized) as response,
+                client.stream(
+                    "GET",
+                    connection_url,
+                    headers={"Host": host_header, "Connection": "close"},
+                    extensions={"sni_hostname": destination.hostname},
+                ) as response,
             ):
-                return await self._read_response(response, destination)
+                return await self._read_response(
+                    response, destination, maximum_response_bytes=request.maximum_response_bytes
+                )
         except httpx.ConnectTimeout as error:
             return self._request_error(FetchFailureCode.CONNECT_TIMEOUT, error)
         except httpx.ReadTimeout as error:
@@ -276,6 +305,8 @@ class SafeSingleUrlFetcher:
         self,
         response: httpx.Response,
         destination: NormalizedUrl,
+        *,
+        maximum_response_bytes: int | None = None,
     ) -> _HttpResponseEvidence | _AttemptFailure:
         headers = _preserve_headers(response.headers)
         header_bytes = sum(len(name) + len(value) + 4 for name, value in response.headers.raw)
@@ -304,7 +335,10 @@ class SafeSingleUrlFetcher:
                 body=None,
             )
 
-        if declared is not None and declared > self._settings.fetch_maximum_response_body_bytes:
+        maximum = self._settings.fetch_maximum_response_body_bytes
+        if maximum_response_bytes is not None:
+            maximum = min(maximum, maximum_response_bytes)
+        if declared is not None and declared > maximum:
             _LOGGER.warning(
                 "size_limit_reached",
                 extra={
@@ -324,7 +358,6 @@ class SafeSingleUrlFetcher:
             )
 
         body = bytearray()
-        maximum = self._settings.fetch_maximum_response_body_bytes
         async for chunk in response.aiter_bytes():
             remaining = maximum - len(body)
             if len(chunk) > remaining:
@@ -405,7 +438,10 @@ class SafeSingleUrlFetcher:
                 status=response,
             )
 
-        if len(state.redirects) >= self._settings.fetch_maximum_redirect_hops:
+        redirect_limit = self._settings.fetch_maximum_redirect_hops
+        if request.maximum_redirect_hops is not None:
+            redirect_limit = min(redirect_limit, request.maximum_redirect_hops)
+        if len(state.redirects) >= redirect_limit:
             explanation = "The redirect chain exceeded the configured hop limit"
             self._append_redirect(
                 state,
@@ -522,6 +558,7 @@ class SafeSingleUrlFetcher:
             failure_code=None,
             failure_explanation=None,
             body=response.body,
+            attempt_count=state.attempt_count,
         )
 
     def _attempt_failure_result(
@@ -601,6 +638,7 @@ class SafeSingleUrlFetcher:
             failure_explanation=explanation,
             body=None,
             internal_exception_type=exception_type,
+            attempt_count=max(1, state.attempt_count),
         )
 
     def _httpx_timeout(self) -> httpx.Timeout:

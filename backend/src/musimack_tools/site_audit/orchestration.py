@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import uuid
 from dataclasses import asdict
@@ -17,6 +18,10 @@ from musimack_tools.domain.application import (
     ScopeProfile,
 )
 from musimack_tools.domain.crawl import CrawlExclusionRule, ExclusionRuleType
+from musimack_tools.domain.fetching import (
+    CRAWLER_USER_AGENT,
+    OUTBOUND_DESTINATION_POLICY_VERSION,
+)
 from musimack_tools.domain.page_evidence import (
     MetadataPresence,
     PageEvidenceFilters,
@@ -58,6 +63,7 @@ from musimack_tools.site_audit.specialists import (
     SiteAuditSpecialistGateway,
     SpecialistEvidence,
     SpecialistRequest,
+    SpecialistSafetyEnvelope,
 )
 
 _PATTERN_CANDIDATE_MINIMUM = 3
@@ -362,6 +368,15 @@ class SiteAuditOrchestrationService:
                     "site_audit_not_ready", "Only a ready Site Audit may be submitted."
                 )
             configuration = self._resolve_configuration(audit)
+            if configuration["operation_mode"] == "real_site":
+                authorization = self._current_real_site_authorization()
+                if not authorization["enabled"]:
+                    raise SiteAuditOrchestrationError(
+                        "site_audit_real_site_operations_suspended",
+                        "Real-site operations are globally suspended.",
+                    )
+                configuration["real_site_authorization"] = authorization
+            configuration["submitted_by"] = actor
             configuration.setdefault("application_version", SITE_AUDIT_ORCHESTRATION_VERSION)
             validate_snapshot_integrity(
                 {"configuration": configuration, "sha256": snapshot_hash(configuration)}
@@ -378,8 +393,15 @@ class SiteAuditOrchestrationService:
             # immutable aggregate so crawl preparation receives its normalized child rules.
             snapshot = self._required_snapshot(audit_id)
             audit = self._required_audit(audit_id)
-        del actor  # Retained only at the authenticated draft boundary.
         validate_snapshot_integrity(snapshot)
+        snapshot_configuration = cast("dict[str, Any]", snapshot["configuration"])
+        if snapshot_configuration.get("operation_mode") == "real_site" and not (
+            self._current_real_site_authorization().get("enabled", False)
+        ):
+            raise SiteAuditOrchestrationError(
+                "site_audit_real_site_operations_suspended",
+                "Real-site operations are globally suspended.",
+            )
         existing = self._orchestration.orchestration(audit_id)
         if existing is not None and existing.get("crawl_job_id"):
             return self.status(audit_id)
@@ -417,6 +439,11 @@ class SiteAuditOrchestrationService:
         if self._settings is None:
             return 0
         return self._settings.current_global_version()
+
+    def _current_real_site_authorization(self) -> dict[str, Any]:
+        if self._settings is None:
+            return {"enabled": False, "status": "suspended"}
+        return self._settings.current_real_site_authorization()
 
     def _resolve_configuration(self, audit: dict[str, Any]) -> dict[str, Any]:
         if self._settings is None:
@@ -470,6 +497,18 @@ class SiteAuditOrchestrationService:
                 "site_audit_crawl_profile_invalid", "Crawl profile is invalid."
             )
         crawl_limits = asdict(selected_profile.limits)
+        operation_mode = _operation_mode(str(draft.get("seed_url", "")))
+        real_site_authorization = cast("dict[str, Any]", effective.get("real_site_operations", {}))
+        if operation_mode == "real_site":
+            if not real_site_authorization.get("enabled", False):
+                raise SiteAuditOrchestrationError(
+                    "site_audit_real_site_operations_suspended",
+                    "Real-site operations are globally suspended.",
+                )
+            crawl_limits = _conservative_real_site_limits(
+                crawl_limits,
+                cast("dict[str, Any]", real_site_authorization.get("default_limits", {})),
+            )
         crawl_limits.update(cast("dict[str, Any]", effective["crawl_limit_overrides"]))
         effective = dict(effective)
         effective.update(
@@ -478,6 +517,16 @@ class SiteAuditOrchestrationService:
                 "scope_policy": draft.get("scope_policy", {"mode": "exact_host"}),
                 "crawl_limits": crawl_limits,
                 "enabled_modules": draft.get("enabled_modules", []),
+                "operation_mode": operation_mode,
+                "outbound_policy_version": OUTBOUND_DESTINATION_POLICY_VERSION,
+                "crawler_user_agent": CRAWLER_USER_AGENT,
+                "real_site_authorization": real_site_authorization,
+                "normalized_seed_url": audit["normalized_seed_url"],
+                "submitted_by": audit["created_by"],
+                "dns_timeout_seconds": 5.0,
+                "publication_enabled": False,
+                "external_ai_enabled": False,
+                "summary_writing_enabled": False,
             }
         )
         configuration = dict(draft)
@@ -494,11 +543,21 @@ class SiteAuditOrchestrationService:
                 "tracking_parameters_accepted": effective["tracking_parameters_accepted"],
                 "tracking_parameter_exceptions": effective["tracking_parameter_exceptions"],
                 "resolution": effective,
+                "operation_mode": operation_mode,
+                "outbound_policy_version": OUTBOUND_DESTINATION_POLICY_VERSION,
+                "crawler_user_agent": CRAWLER_USER_AGENT,
+                "real_site_authorization": real_site_authorization,
+                "normalized_seed_url": audit["normalized_seed_url"],
+                "submitted_by": audit["created_by"],
+                "dns_timeout_seconds": 5.0,
+                "publication_enabled": False,
+                "external_ai_enabled": False,
+                "summary_writing_enabled": False,
             }
         )
         return configuration
 
-    async def reconcile(self, audit_id: str) -> dict[str, Any]:  # noqa: PLR0911
+    async def reconcile(self, audit_id: str) -> dict[str, Any]:  # noqa: C901, PLR0911
         parent = self._required_orchestration(audit_id)
         if parent["state"] in {
             OrchestrationState.COMPLETED.value,
@@ -512,6 +571,14 @@ class SiteAuditOrchestrationService:
         if not isinstance(job_id, str):
             return self.status(audit_id)
         crawl_status = await self._crawl.status(job_id)
+        expected_run_id = str(parent["crawl_run_id"])
+        if crawl_status.job_id != job_id or crawl_status.run_id != expected_run_id:
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_execution_owner_mismatch",
+                explanation="The crawl status owner does not match this Site Audit execution.",
+            )
+            return self.status(audit_id)
         if parent["cancellation_requested"]:
             await self._crawl.cancel(job_id)
             if crawl_status.terminal:
@@ -533,6 +600,15 @@ class SiteAuditOrchestrationService:
             self._orchestration.update_stage(audit_id, SiteAuditStage.CRAWL, StageState.CANCELLED)
             self._finish(audit_id, OrchestrationState.CANCELLED)
             return self.status(audit_id)
+        if crawl_status.state == "failed":
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_terminal_persistence_failed",
+                explanation=(
+                    "The crawl execution failed before its terminal evidence could be retained."
+                ),
+            )
+            return self.status(audit_id)
         result = await self._crawl.result(job_id)
         if result.outcome is not ApplicationOutcomeCode.FOUND or result.run_lifecycle in {
             "failed",
@@ -552,17 +628,32 @@ class SiteAuditOrchestrationService:
                 explanation="The associated crawl failed.",
             )
             return self.status(audit_id)
+        if result.job_id != job_id or result.run_id != expected_run_id:
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_execution_owner_mismatch",
+                explanation="The retained crawl result belongs to another execution.",
+            )
+            return self.status(audit_id)
         self._start_parent_and_crawl(audit_id)
+        crawl_counts = dict(result.crawl_counts)
         self._orchestration.update_stage(
             audit_id,
             SiteAuditStage.CRAWL,
             StageState.PARTIAL
             if result.run_lifecycle in {"partially_completed", "completed_with_warnings"}
             else StageState.COMPLETED,
-            source_count=dict(result.crawl_counts).get("unique_urls_discovered", 0),
-            projected_count=dict(result.crawl_counts).get("urls_fetched", 0),
+            source_count=crawl_counts.get(
+                "urls_discovered", crawl_counts.get("unique_urls_discovered", 0)
+            ),
+            projected_count=crawl_counts.get("urls_fetched", 0),
         )
-        await self._project(audit_id, result.run_id or str(parent["crawl_run_id"]), job_id)
+        await self._project(
+            audit_id,
+            expected_run_id,
+            job_id,
+            result,
+        )
         return self.status(audit_id)
 
     async def reconcile_pending(self, *, maximum_parents: int = 25) -> int:
@@ -629,6 +720,9 @@ class SiteAuditOrchestrationService:
             raise SiteAuditOrchestrationError(
                 "site_audit_projection_unavailable", "The Site Audit summary is unavailable."
             )
+        module_counts = _decoded_json(value.get("module_counts_json"))
+        if isinstance(module_counts, dict):
+            value["operational_accounting"] = module_counts.get("operational_accounting")
         return value
 
     def pages(  # noqa: PLR0913
@@ -655,7 +749,7 @@ class SiteAuditOrchestrationService:
             direction=direction,
         )
         return {
-            "items": items,
+            "items": tuple(self._enrich_url(item) for item in items),
             "offset": offset,
             "page_size": page_size,
             "total": total,
@@ -668,7 +762,7 @@ class SiteAuditOrchestrationService:
             raise SiteAuditOrchestrationError(
                 "site_audit_evidence_unavailable", "The requested URL evidence is unavailable."
             )
-        return value
+        return self._enrich_url(value)
 
     def issues(
         self,
@@ -778,9 +872,13 @@ class SiteAuditOrchestrationService:
         modules = self._repository.module_statuses(audit_id)
         existing = next((item for item in modules if item["module"] == "existing_sitemap"), None)
         documents, document_total = self._repository.sitemap_documents(
-            audit_id, offset=0, page_size=50
+            audit_id, offset=0, page_size=500
         )
         summary = self._repository.summary(audit_id) or {}
+        sitemap_only = sum(
+            item.get("existing_sitemap_state") == "present" and item.get("fetch_state") != "fetched"
+            for item in self._all_urls(audit_id)
+        )
         return {
             "items": selected,
             "offset": offset,
@@ -789,6 +887,16 @@ class SiteAuditOrchestrationService:
             "existing_sitemap_module": existing,
             "document_count": document_total,
             "document_preview": documents,
+            "sitemap_totals": {
+                "index_count": sum(item.get("root_type") == "sitemap_index" for item in documents),
+                "document_count": document_total,
+                "entry_count": sum(int(item.get("entry_count", 0)) for item in documents),
+                "sitemap_only_count": sitemap_only,
+                "fetch_failure_count": sum(
+                    item.get("fetch_state") == "failed" for item in documents
+                ),
+                "definition": "Present in an existing sitemap and not fetched by the parent crawl.",
+            },
             "comparison_totals": {
                 "include": summary.get("recommendation_include", 0),
                 "exclude": summary.get("recommendation_exclude", 0),
@@ -839,6 +947,8 @@ class SiteAuditOrchestrationService:
     def evidence(self, audit_id: str) -> dict[str, Any]:
         status = self.status(audit_id)
         findings = self._repository.findings(audit_id, offset=0, page_size=500)
+        snapshot = self._repository.snapshot(audit_id)
+        summary = self.summary(audit_id)
         return {
             "audit": status["audit"],
             "orchestration": status["orchestration"],
@@ -847,6 +957,8 @@ class SiteAuditOrchestrationService:
             "specialists": status["specialists"],
             "findings": findings,
             "finding_count": len(findings),
+            "snapshot": snapshot,
+            "operational_accounting": summary.get("operational_accounting"),
             "projection_version": SITE_AUDIT_ORCHESTRATION_VERSION,
             "body_content_retained": False,
         }
@@ -869,21 +981,53 @@ class SiteAuditOrchestrationService:
     def rebuild_summary(self, audit_id: str) -> dict[str, Any]:
         return self._repository.rebuild_summary(audit_id)
 
-    async def _project(self, audit_id: str, run_id: str, job_id: str) -> None:
+    async def _project(  # noqa: PLR0911 - each integrity gate fails closed immediately.
+        self,
+        audit_id: str,
+        run_id: str,
+        job_id: str,
+        result: ApplicationResultProjection,
+    ) -> None:
+        evidence_summary = self._page_evidence.get_summary(run_id)
+        if evidence_summary is None:
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_evidence_unavailable",
+                explanation="Durable crawl page evidence is unavailable for this execution.",
+                stage=SiteAuditStage.INGEST,
+            )
+            return
+        if evidence_summary.run_id != run_id or evidence_summary.job_id != job_id:
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_evidence_owner_mismatch",
+                explanation="Durable page evidence belongs to another crawl execution.",
+                stage=SiteAuditStage.INGEST,
+            )
+            return
         pages = self._all_page_evidence(run_id)
         if not pages:
-            self._orchestration.update_stage(
+            self._fail_execution_integrity(
                 audit_id,
-                SiteAuditStage.INGEST,
-                StageState.FAILED,
-                failure_code="site_audit_evidence_unavailable",
-                failure_explanation="Durable crawl page evidence is unavailable.",
+                code="site_audit_evidence_unavailable",
+                explanation="Durable crawl page evidence is unavailable for this execution.",
+                stage=SiteAuditStage.INGEST,
             )
-            self._finish(
+            return
+        if any(page.run_id != run_id or page.job_id != job_id for page in pages):
+            self._fail_execution_integrity(
                 audit_id,
-                OrchestrationState.FAILED,
-                failure_code="site_audit_evidence_unavailable",
-                explanation="Durable crawl page evidence is unavailable.",
+                code="site_audit_evidence_owner_mismatch",
+                explanation="One or more page records belong to another crawl execution.",
+                stage=SiteAuditStage.INGEST,
+            )
+            return
+        if evidence_summary.total_records != len(pages):
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_evidence_count_mismatch",
+                explanation="The retained page-evidence summary does not match its records.",
+                stage=SiteAuditStage.INGEST,
             )
             return
         recommendations = await self._all_recommendations(job_id)
@@ -915,10 +1059,20 @@ class SiteAuditOrchestrationService:
                 "invalid": counts["structured_data_invalid"],
             },
         )
+        if not self._validate_population_integrity(audit_id, result, summary):
+            return
+        if not self._validate_artifact_inputs(audit_id, pages, job_id, run_id):
+            return
+        accounting = _aggregate_operational_accounting(
+            result,
+            specialist_evidence,
+            scope_denials=sum(
+                item.get("failure_code") == "scope_denied" for item in self._all_urls(audit_id)
+            ),
+        )
         self._orchestration.update_stage(
             audit_id, SiteAuditStage.SUMMARY, StageState.COMPLETED, projected_count=1
         )
-        self._generate_artifacts(audit_id, pages, summary, job_id, run_id)
         stages = self._orchestration.stages(audit_id)
         required_failed = any(
             item["required"] and item["state"] in {"failed", "blocked", "unavailable"}
@@ -938,7 +1092,88 @@ class SiteAuditOrchestrationService:
             if optional_problem
             else OrchestrationState.COMPLETED
         )
+        # Final exports are deliberately gated on the retained terminal lifecycle. A crash
+        # during storage is repaired idempotently by the existing purpose association keys.
         self._finish(audit_id, final)
+        summary = self._repository.rebuild_summary(audit_id)
+        summary = self._repository.set_specialist_summaries(
+            audit_id,
+            image_summary={
+                "availability": "base_evidence",
+                "occurrences": counts["image_occurrences"],
+                "missing_alt": counts["images_missing_alt"],
+                "empty_alt": counts["images_empty_alt"],
+            },
+            structured_data_summary={
+                "availability": "base_evidence",
+                "blocks": counts["structured_data_blocks"],
+                "invalid": counts["structured_data_invalid"],
+            },
+        )
+        summary = self._repository.set_operational_accounting(audit_id, accounting)
+        self._generate_artifacts(audit_id, pages, summary, job_id, run_id)
+
+    def _validate_population_integrity(
+        self,
+        audit_id: str,
+        result: ApplicationResultProjection,
+        summary: dict[str, Any],
+    ) -> bool:
+        crawl = dict(result.crawl_counts)
+        admitted = int(crawl.get("urls_admitted", crawl.get("urls_queued", 0)))
+        fetched = int(crawl.get("urls_fetched", 0))
+        parsed = int(crawl.get("urls_parsed", summary.get("html_urls", 0)))
+        metadata = int(summary.get("metadata_scoring_eligible_urls", 0))
+        canonical = int(summary.get("canonical_urls", 0))
+        indexable = int(summary.get("indexable_urls", 0))
+        if fetched > admitted or parsed > fetched or metadata > parsed:
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_population_integrity_failed",
+                explanation="Retained crawl populations violate required subset relationships.",
+                stage=SiteAuditStage.SUMMARY,
+            )
+            return False
+        if metadata > canonical or metadata > indexable:
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_population_integrity_failed",
+                explanation="Metadata eligibility exceeds its canonical or indexable population.",
+                stage=SiteAuditStage.SUMMARY,
+            )
+            return False
+        return True
+
+    def _validate_artifact_inputs(
+        self,
+        audit_id: str,
+        pages: tuple[PageEvidenceListItem, ...],
+        job_id: str,
+        run_id: str,
+    ) -> bool:
+        page_ids = {page.evidence_id for page in pages}
+        if any(
+            item.get("evidence_id") is not None and item.get("evidence_id") not in page_ids
+            for item in self._all_findings(audit_id)
+        ):
+            self._fail_execution_integrity(
+                audit_id,
+                code="site_audit_finding_owner_mismatch",
+                explanation="A retained finding references evidence from another execution.",
+                stage=SiteAuditStage.ARTIFACTS,
+            )
+            return False
+        for association in self._repository.artifact_associations(audit_id):
+            record = self._artifacts.get(str(association["artifact_id"]))
+            if record.job_id != job_id or record.run_id != run_id:
+                self._fail_execution_integrity(
+                    audit_id,
+                    code="site_audit_artifact_owner_mismatch",
+                    explanation="A retained artifact belongs to another execution.",
+                    stage=SiteAuditStage.ARTIFACTS,
+                )
+                return False
+        return True
 
     def _ingest(
         self,
@@ -1229,6 +1464,30 @@ class SiteAuditOrchestrationService:
         }
         audit = self._required_audit(audit_id)
         approved_hosts = tuple(str(item) for item in configuration.get("approved_hosts", ()))
+        limits = cast("dict[str, Any]", configuration.get("crawl_limits", {}))
+        authorization = cast("dict[str, Any]", configuration.get("real_site_authorization", {}))
+        envelope = SpecialistSafetyEnvelope(
+            authorization_enabled=bool(authorization.get("enabled", False)),
+            authorization_version=_optional_int(
+                authorization.get("global_settings_version", authorization.get("version"))
+            ),
+            destination_policy_version=str(
+                configuration.get("outbound_policy_version", OUTBOUND_DESTINATION_POLICY_VERSION)
+            ),
+            user_agent=str(configuration.get("crawler_user_agent", CRAWLER_USER_AGENT)),
+            maximum_urls=int(limits.get("maximum_urls", 100)),
+            maximum_depth=int(limits.get("maximum_depth", 3)),
+            maximum_duration_seconds=float(limits.get("maximum_duration_seconds", 300)),
+            maximum_accepted_bytes=int(limits.get("maximum_accepted_bytes", 50_000_000)),
+            maximum_concurrency=int(limits.get("maximum_concurrency", 1)),
+            maximum_queue_size=int(limits.get("maximum_queue_size", 500)),
+            minimum_request_delay_seconds=float(limits.get("minimum_request_delay_seconds", 1)),
+            maximum_redirect_hops=int(limits.get("maximum_redirect_hops", 5)),
+            maximum_response_bytes=int(limits.get("maximum_response_bytes", 3_000_000)),
+            dns_timeout_seconds=float(configuration.get("dns_timeout_seconds", 5.0)),
+            retry_policy="none",
+            recovery_policy="reuse_immutable_configuration",
+        )
         result: dict[SiteAuditStage, SpecialistEvidence] = {}
         for stage in _SPECIALIST_STAGES:
             result[stage] = await self._specialists.resolve(
@@ -1242,6 +1501,7 @@ class SiteAuditOrchestrationService:
                         str(configured[stage.value]) if configured.get(stage.value) else None
                     ),
                     allow_launch=stage.value in launch,
+                    safety_envelope=envelope,
                 )
             )
         return result
@@ -1500,14 +1760,19 @@ class SiteAuditOrchestrationService:
             )
         return waiting
 
-    def _aggregate_issues(self, audit_id: str, pages: tuple[PageEvidenceListItem, ...]) -> None:
+    def _aggregate_issues(  # noqa: C901 - ordered deterministic aggregation is explicit.
+        self, audit_id: str, pages: tuple[PageEvidenceListItem, ...]
+    ) -> None:
         self._orchestration.update_stage(
             audit_id,
             SiteAuditStage.ISSUE_AGGREGATION,
             StageState.RUNNING,
             lease_owner="reconciler",
         )
-        definitions = _finding_definitions(pages)
+        snapshot = self._required_snapshot(audit_id)
+        thresholds = snapshot["configuration"].get("thresholds", {})
+        title_maximum = int(thresholds.get("title_maximum", 60))
+        definitions = _finding_definitions(pages, title_maximum=title_maximum)
         urls_by_evidence = {
             str(item["evidence_id"]): item
             for item in self._all_urls(audit_id)
@@ -1535,6 +1800,21 @@ class SiteAuditOrchestrationService:
                     },
                 )
             grouped.setdefault(code, []).append((finding_id, page.requested_url))
+        url_findings: dict[str, list[str]] = {}
+        for page, _code, _category, severity, _explanation, _impacts in definitions:
+            url = urls_by_evidence.get(page.evidence_id)
+            if url is not None:
+                url_findings.setdefault(str(url["url_id"]), []).append(severity)
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "information": 4}
+        for url_id, severities in url_findings.items():
+            self._orchestration.update_url(
+                audit_id,
+                url_id,
+                {
+                    "issue_count": len(severities),
+                    "highest_severity": min(severities, key=lambda item: severity_order[item]),
+                },
+            )
         for code, members in sorted(grouped.items()):
             finding = self._repository.finding(audit_id, members[0][0])
             if finding is None:
@@ -1605,7 +1885,7 @@ class SiteAuditOrchestrationService:
         )
         audit = self._required_audit(audit_id)
         snapshot = self._required_snapshot(audit_id)
-        urls = self._all_urls(audit_id)
+        urls = tuple(self._enrich_url(item) for item in self._all_urls(audit_id))
         findings = self._all_findings(audit_id)
         groups = self._all_issue_groups(audit_id)
         matches = self._all_rule_matches(audit_id)
@@ -1652,6 +1932,35 @@ class SiteAuditOrchestrationService:
             source_count=len(generated),
             projected_count=len(self._repository.artifact_associations(audit_id)),
         )
+
+    def _enrich_url(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Join the retained safe page projection without creating a second authority."""
+
+        result = dict(item)
+        evidence_id = result.get("evidence_id")
+        if not isinstance(evidence_id, str):
+            return result
+        evidence = self._page_evidence.get_safe_page_evidence(evidence_id)
+        if evidence is None:
+            return result
+        result.update(
+            {
+                "title": evidence.get("title_value"),
+                "title_length": evidence.get("title_length"),
+                "description": evidence.get("description_value"),
+                "description_length": evidence.get("description_length"),
+                "canonical": evidence.get("canonical_url"),
+                "meta_robots": _decoded_json(evidence.get("meta_robots_json")),
+                "x_robots_tag": _decoded_json(evidence.get("x_robots_json")),
+                "metadata_warning_count": evidence.get("parse_warning_count"),
+                "metadata_evidence_state": evidence.get("evidence_state"),
+            }
+        )
+        page_summary = self._page_evidence.safe_page_summary(evidence_id)
+        result["link_summary"] = {"occurrences": page_summary["links"]}
+        result["image_summary"] = {"occurrences": page_summary["images"]}
+        result["structured_data_summary"] = {"blocks": page_summary["structured_data"]}
+        return result
 
     def _all_page_evidence(self, run_id: str) -> tuple[PageEvidenceListItem, ...]:
         items: list[PageEvidenceListItem] = []
@@ -1776,8 +2085,10 @@ class SiteAuditOrchestrationService:
         )
         audit = self._required_audit(audit_id)
         if audit["lifecycle"] in {
+            AuditLifecycle.QUEUED.value,
             AuditLifecycle.RUNNING.value,
             AuditLifecycle.CANCEL_REQUESTED.value,
+            AuditLifecycle.RECOVERY_REQUIRED.value,
         }:
             self._repository.transition(
                 audit_id,
@@ -1786,6 +2097,29 @@ class SiteAuditOrchestrationService:
                 failure_code=failure_code,
                 failure_explanation=explanation,
             )
+
+    def _fail_execution_integrity(
+        self,
+        audit_id: str,
+        *,
+        code: str,
+        explanation: str,
+        stage: SiteAuditStage = SiteAuditStage.CRAWL,
+    ) -> None:
+        """Fail closed without projecting or exporting evidence from another execution."""
+        self._orchestration.update_stage(
+            audit_id,
+            stage,
+            StageState.FAILED,
+            failure_code=code,
+            failure_explanation=explanation,
+        )
+        self._finish(
+            audit_id,
+            OrchestrationState.FAILED,
+            failure_code=code,
+            explanation=explanation,
+        )
 
     def _required_audit(self, audit_id: str) -> dict[str, Any]:
         value = self._repository.audit(audit_id)
@@ -1823,6 +2157,36 @@ class SiteAuditOrchestrationService:
         ) < len(ArtifactPurpose)
 
 
+def _operation_mode(seed_url: str) -> str:
+    """Classify deterministic local fixtures separately from outbound real-site work."""
+
+    hostname = (urlsplit(seed_url).hostname or "").rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return "fixture"
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return "real_site"
+    return "fixture" if not address.is_global else "real_site"
+
+
+def _conservative_real_site_limits(
+    profile_limits: dict[str, Any], configured_defaults: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply real-site defaults without silently raising a selected profile limit."""
+
+    result = dict(profile_limits)
+    for key, value in configured_defaults.items():
+        current = result.get(key)
+        if current is None:
+            result[key] = value
+        elif key == "minimum_request_delay_seconds":
+            result[key] = max(current, value)
+        else:
+            result[key] = min(current, value)
+    return result
+
+
 def _crawl_request(audit: dict[str, Any], snapshot: dict[str, Any]) -> RawApplicationCrawlRequest:
     configuration = snapshot["configuration"]
     limits = configuration.get("crawl_limits", {})
@@ -1857,6 +2221,7 @@ def _crawl_request(audit: dict[str, Any], snapshot: dict[str, Any]) -> RawApplic
         publication_requested=False,
         summary_writing_requested=False,
         caller_label=f"site-audit:{audit['audit_id']}",
+        execution_identity=f"site-audit:{audit['audit_id']}",
         exclusion_rules=_discovery_exclusion_rules(snapshot),
         strip_query_parameters=_tracking_parameters(snapshot),
     )
@@ -2022,6 +2387,101 @@ def _int_or_none(value: object) -> int | None:
     return int(str(value)) if value not in {None, ""} else None
 
 
+def _aggregate_operational_accounting(
+    parent: ApplicationResultProjection,
+    specialists: dict[SiteAuditStage, SpecialistEvidence],
+    *,
+    scope_denials: int,
+) -> dict[str, Any]:
+    """Combine each durable execution authority exactly once by module identity."""
+
+    specialist_records = {
+        stage.value: evidence.operational_accounting
+        for stage, evidence in specialists.items()
+        if isinstance(evidence.operational_accounting, dict)
+    }
+
+    def specialist_total(name: str) -> int:
+        return sum(int(record.get(name, 0)) for record in specialist_records.values())
+
+    specialist_fingerprints = {
+        str(value)
+        for record in specialist_records.values()
+        for value in record.get("resolved_address_fingerprints", ())
+        if isinstance(value, str)
+    }
+    fingerprints = tuple(
+        sorted({*parent.resolved_address_fingerprints, *specialist_fingerprints})[:256]
+    )
+    robots_outcomes: dict[str, int] = dict(parent.robots_outcome_counts)
+    sitemap_outcomes: dict[str, int] = {}
+    for record in specialist_records.values():
+        raw_robots = record.get("robots_outcomes", {})
+        if isinstance(raw_robots, dict):
+            for key, value in raw_robots.items():
+                robots_outcomes[str(key)] = robots_outcomes.get(str(key), 0) + int(value)
+        raw_sitemap = record.get("sitemap_outcomes", {})
+        if isinstance(raw_sitemap, dict):
+            for key, value in raw_sitemap.items():
+                sitemap_outcomes[str(key)] = sitemap_outcomes.get(str(key), 0) + int(value)
+
+    envelopes = {
+        stage.value: evidence.safety_envelope
+        for stage, evidence in specialists.items()
+        if isinstance(evidence.safety_envelope, dict)
+    }
+    parent_scope_denials = max(parent.scope_denial_count, scope_denials)
+    crawl_counts = dict(parent.crawl_counts)
+    return {
+        "definition": (
+            "Parent crawl and each specialist execution are counted once from their final "
+            "durable projections; reconciliation and artifact retries do not add observations."
+        ),
+        "crawl_elapsed_seconds": parent.crawl_elapsed_seconds,
+        "dns_operation_count": parent.dns_resolution_count
+        + specialist_total("dns_operation_count"),
+        "request_count": parent.outbound_request_count + specialist_total("request_count"),
+        "accepted_byte_count": parent.accepted_byte_count + specialist_total("accepted_byte_count"),
+        "redirect_count": parent.outbound_redirect_count + specialist_total("redirect_count"),
+        "rejected_destination_count": parent.rejected_destination_count
+        + specialist_total("rejected_destination_count"),
+        "scope_denial_count": parent_scope_denials + specialist_total("scope_denial_count"),
+        "robots_request_count": parent.robots_request_count
+        + specialist_total("robots_request_count"),
+        "page_request_count": parent.page_request_count,
+        "sitemap_request_count": specialist_total("sitemap_request_count"),
+        "retry_count": parent.retry_count + specialist_total("retry_count"),
+        "timeout_count": parent.timeout_count + specialist_total("timeout_count"),
+        "response_size_rejection_count": parent.response_size_rejection_count
+        + specialist_total("response_size_rejection_count"),
+        "resolved_address_fingerprints": fingerprints,
+        "robots_outcomes": dict(sorted(robots_outcomes.items())),
+        "sitemap_outcomes": dict(sorted(sitemap_outcomes.items())),
+        "source_attribution": {
+            "parent_crawl": {
+                "request_count": parent.outbound_request_count,
+                "dns_operation_count": parent.dns_resolution_count,
+                "accepted_byte_count": parent.accepted_byte_count,
+                "redirect_count": parent.outbound_redirect_count,
+                "scope_denial_count": parent_scope_denials,
+                "robots_request_count": parent.robots_request_count,
+                "page_request_count": parent.page_request_count,
+            },
+            "specialists": specialist_records,
+        },
+        "specialist_safety_envelopes": envelopes,
+        "url_admission": {
+            "admitted": crawl_counts.get("urls_admitted", 0),
+            "fetched": crawl_counts.get("urls_fetched", 0),
+            "over_limit": crawl_counts.get("urls_over_limit", 0),
+            "definition": (
+                "Over-limit discoveries are retained as rejected admission evidence; "
+                "already-queued URLs continue processing."
+            ),
+        },
+    }
+
+
 def _inventory_url(snapshot: dict[str, Any], url: str) -> str:
     return str(
         normalize_governed_url(url, strip_parameters=set(_tracking_parameters(snapshot)))[
@@ -2110,7 +2570,9 @@ def _url_values(page: PageEvidenceListItem, recommendation: str | None) -> dict[
     return {
         "final_url": page.final_url,
         "enqueued_state": "enqueued",
-        "fetch_state": "fetched" if page.fetch_outcome != "skipped" else "not_fetched",
+        "fetch_state": (
+            "fetched" if page.fetch_outcome in {"success", "failure"} else "not_fetched"
+        ),
         "parse_state": "parsed_html" if page.parsed_as_html else "not_html",
         "http_status": page.http_status,
         "content_type": page.content_type,
@@ -2231,7 +2693,11 @@ def _populations(url: dict[str, Any]) -> tuple[Population, ...]:  # noqa: C901
         values.add(Population.EXCLUDED)
     if url["partial"]:
         values.add(Population.PARTIAL)
-    if url["failure_code"]:
+    if url["failure_code"] and url["failure_code"] not in {
+        "scope_denied",
+        "redirect_scope_denied",
+        "unsafe_destination",
+    }:
         values.add(Population.FAILED)
     if url["indexability_state"] == "indeterminate" or url["canonical_state"] == "indeterminate":
         values.add(Population.INDETERMINATE)
@@ -2240,6 +2706,8 @@ def _populations(url: dict[str, Any]) -> tuple[Population, ...]:  # noqa: C901
 
 def _finding_definitions(
     pages: tuple[PageEvidenceListItem, ...],
+    *,
+    title_maximum: int = 60,
 ) -> tuple[tuple[PageEvidenceListItem, str, str, str, str, dict[str, bool]], ...]:
     result = []
     for page in pages:
@@ -2272,6 +2740,25 @@ def _finding_definitions(
                     "metadata",
                     "medium",
                     "The page has no usable meta description.",
+                    {
+                        "metadata_impact": True,
+                        "sitemap_impact": False,
+                        "indexability_impact": False,
+                    },
+                )
+            )
+        if (
+            page.parsed_as_html
+            and page.title_value is not None
+            and len(page.title_value) > title_maximum
+        ):
+            result.append(
+                (
+                    page,
+                    "long_title",
+                    "metadata",
+                    "medium",
+                    f"The page title exceeds the accepted {title_maximum}-character maximum.",
                     {
                         "metadata_impact": True,
                         "sitemap_impact": False,
@@ -2322,6 +2809,7 @@ def _recommended_action(code: str) -> str:
         "status_error": "Repair the URL or its internal references.",
         "robots_blocked": "Confirm robots policy matches the intended indexability.",
         "canonical_missing": "Add a valid canonical declaration where appropriate.",
+        "long_title": "Shorten the title while preserving a unique, descriptive label.",
     }.get(code, "Review the retained evidence and remediate the underlying cause.")
 
 
@@ -2344,6 +2832,15 @@ def _optional_int(value: object) -> int | None:
 
 def _optional_float(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _decoded_json(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
 
 
 def _specialist_stage_state(evidence: SpecialistEvidence) -> StageState:

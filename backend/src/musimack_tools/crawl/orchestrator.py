@@ -119,6 +119,7 @@ class _MutableCounters:
     total_links_observed: int = 0
     links_admitted: int = 0
     links_rejected: int = 0
+    urls_over_limit: int = 0
     robots_origins_evaluated: int = 0
     robots_fetches: int = 0
     robots_cache_hits: int = 0
@@ -646,14 +647,8 @@ class SingleSiteCrawlOrchestrator:
                 and runtime.frontier.unique_count >= runtime.request.maximum_unique_urls
             ):
                 reason = LinkAdmissionReason.URL_LIMIT_REACHED
-                self._set_limit(
-                    runtime,
-                    LimitKind.URLS,
-                    CrawlErrorCode.URL_LIMIT_REACHED,
-                    runtime.request.maximum_unique_urls,
-                    runtime.frontier.unique_count,
-                    "The maximum unique URL count was reached",
-                )
+                runtime.counters.urls_over_limit += 1
+                self._record_admission_limit(runtime)
             else:
                 admission = runtime.frontier.admit(
                     normalized,
@@ -830,6 +825,35 @@ class SingleSiteCrawlOrchestrator:
                 "observed_value": observed,
             },
         )
+
+    def _record_admission_limit(self, runtime: _Runtime) -> None:
+        """Retain a URL-ceiling warning without stopping already-admitted work."""
+
+        if not any(item.kind is LimitKind.URLS for item in runtime.limit_events):
+            runtime.limit_events.append(
+                LimitEvent(
+                    LimitKind.URLS,
+                    CrawlErrorCode.URL_LIMIT_REACHED,
+                    "The unique URL admission ceiling was reached; admitted work continued",
+                    runtime.request.maximum_unique_urls,
+                    runtime.frontier.unique_count,
+                    self._elapsed(runtime),
+                )
+            )
+            runtime.errors.append(
+                CrawlError(
+                    CrawlErrorCode.URL_LIMIT_REACHED,
+                    "Additional unique discoveries were not admitted after the URL ceiling",
+                )
+            )
+            _LOGGER.warning(
+                "crawl_url_admission_limit_reached",
+                extra={
+                    "correlation_id": runtime.request.correlation_id,
+                    "failure_code": CrawlErrorCode.URL_LIMIT_REACHED.value,
+                    "observed_value": runtime.frontier.unique_count,
+                },
+            )
 
     def _request_cancellation(self, runtime: _Runtime) -> None:
         if runtime.state in {CrawlState.RUNNING, CrawlState.LIMIT_REACHED}:

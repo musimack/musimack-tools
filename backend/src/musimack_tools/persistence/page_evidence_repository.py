@@ -323,8 +323,10 @@ class SQLAlchemyPageEvidenceRepository:
                 "final_url": row.final_url,
                 "title_presence": row.title_presence,
                 "title_value": row.title_value,
+                "title_length": row.title_length,
                 "description_presence": row.description_presence,
                 "description_value": row.description_value,
+                "description_length": row.description_length,
                 "canonical_presence": row.canonical_presence,
                 "canonical_url": row.canonical_url,
                 "canonical_conflicting": row.canonical_conflicting,
@@ -337,6 +339,36 @@ class SQLAlchemyPageEvidenceRepository:
                 "evidence_state": row.evidence_state,
                 "value_truncated": row.value_truncated,
             }
+
+    def safe_page_summary(self, evidence_id: str) -> dict[str, int]:
+        """Return bounded specialist occurrence counts for one retained page."""
+
+        with self._runtime.transaction() as session:
+            links = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlLinkEvidenceModel)
+                    .where(CrawlLinkEvidenceModel.source_evidence_id == evidence_id)
+                )
+                or 0
+            )
+            images = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlImageEvidenceModel)
+                    .where(CrawlImageEvidenceModel.source_evidence_id == evidence_id)
+                )
+                or 0
+            )
+            structured = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(CrawlStructuredDataEvidenceModel)
+                    .where(CrawlStructuredDataEvidenceModel.source_evidence_id == evidence_id)
+                )
+                or 0
+            )
+        return {"links": links, "images": images, "structured_data": structured}
 
     def base_evidence_counts(self, run_id: str) -> dict[str, int]:
         """Return bounded aggregate counts without exposing retained raw evidence."""

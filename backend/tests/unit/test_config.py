@@ -12,7 +12,7 @@ def test_settings_defaults_are_conservative() -> None:
     assert settings.application_name == "Musimack SEO Toolkit"
     assert settings.environment is Environment.DEVELOPMENT
     assert settings.log_level is LogLevel.INFO
-    assert settings.crawler_user_agent == "MusimackSEOToolkit/0.1"
+    assert settings.crawler_user_agent == "Musimack SEO Toolkit/1.0"
     assert settings.default_maximum_urls == 5_000
     assert settings.default_maximum_crawl_depth == 10
     assert settings.default_request_timeout_seconds == 20

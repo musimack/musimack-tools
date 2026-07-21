@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from musimack_tools.domain.urls import NormalizedUrl
 
+OUTBOUND_DESTINATION_POLICY_VERSION = "seo-toolkit-outbound-destination-policy-v1"
+CRAWLER_USER_AGENT = "Musimack SEO Toolkit/1.0"
+
 
 class FetchOutcome(StrEnum):
     """Top-level result of a fetch operation."""
@@ -26,6 +29,7 @@ class FetchFailureCode(StrEnum):
     IP_LITERAL_NOT_ALLOWED = "ip_literal_not_allowed"
     UNSAFE_HOSTNAME = "unsafe_hostname"
     DNS_RESOLUTION_FAILED = "dns_resolution_failed"
+    DNS_RESOLUTION_TIMEOUT = "dns_resolution_timeout"
     DNS_ANSWER_LIMIT_EXCEEDED = "dns_answer_limit_exceeded"
     UNSAFE_RESOLVED_ADDRESS = "unsafe_resolved_address"
     MIXED_SAFE_UNSAFE_DNS_ANSWERS = "mixed_safe_unsafe_dns_answers"
@@ -70,6 +74,7 @@ class NetworkSafetyDecision:
     hostname: str
     effective_port: int
     dns_evidence: DnsEvidence | None = None
+    selected_address: str | None = None
     internal_exception_type: str | None = None
 
 
@@ -79,6 +84,10 @@ class FetchRequest:
 
     url: NormalizedUrl
     correlation_id: str | None = None
+    maximum_response_bytes: int | None = None
+    maximum_redirect_hops: int | None = None
+    maximum_duration_seconds: float | None = None
+    user_agent: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,3 +135,4 @@ class FetchResult:
     failure_explanation: str | None
     body: bytes | None
     internal_exception_type: str | None = None
+    attempt_count: int = 1

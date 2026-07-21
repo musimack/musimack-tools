@@ -91,6 +91,9 @@ def test_prohibited_hostname_classes_are_rejected_without_dns(hostname: str) -> 
         "fc00::1",
         "fec0::1",
         "2001:db8::1",
+        "64:ff9b::1",
+        "100::1",
+        "192.0.0.1",
     ],
 )
 def test_prohibited_resolved_addresses_are_rejected(address: str) -> None:
@@ -171,6 +174,25 @@ def test_public_style_inert_address_is_allowed() -> None:
     assert decision.allowed is True
     assert decision.failure_code is None
     assert is_public_address(_SAFE_ADDRESS) is True
+    assert is_public_address("2001:4860:4860::8888") is True
+    assert decision.selected_address == _SAFE_ADDRESS
+
+
+def test_dns_resolution_timeout_fails_closed() -> None:
+    class SlowResolver:
+        async def resolve(self, hostname: str, *, maximum_answers: int) -> DnsEvidence:
+            del hostname, maximum_answers
+            await asyncio.sleep(1)
+            raise AssertionError("unreachable")
+
+    validator = DestinationSafetyValidator(
+        _settings(fetch_dns_timeout_seconds=0.01), SlowResolver()
+    )
+
+    decision = asyncio.run(validator.validate(normalize_url("https://example.test/")))
+
+    assert decision.allowed is False
+    assert decision.failure_code is FetchFailureCode.DNS_RESOLUTION_TIMEOUT
 
 
 def test_network_boundary_defensively_rejects_credentials() -> None:

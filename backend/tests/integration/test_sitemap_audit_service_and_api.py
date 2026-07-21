@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -76,11 +77,13 @@ class FakeFetcher:
     def __init__(self, responses: dict[str, tuple[int, str, bytes]]) -> None:
         self.responses = responses
         self.requests: list[str] = []
+        self.request_objects: list[FetchRequest] = []
 
     async def fetch(self, request: FetchRequest, scope: CrawlScopePolicy) -> FetchResult:
         del scope
         url = request.url.normalized
         self.requests.append(url)
+        self.request_objects.append(request)
         status, content_type, body = self.responses.get(url, (404, "text/html", b"not found"))
         return FetchResult(
             requested_url=url,
@@ -248,6 +251,58 @@ def test_audit_fetches_explicit_url_and_compares_durable_evidence(tmp_path: Path
         )
         assert filtered
         assert all(item["action"] == first_page[0]["action"] for item in filtered)
+    finally:
+        runtime.dispose()
+
+
+def test_specialist_execution_retains_and_enforces_inherited_network_envelope(
+    tmp_path: Path,
+) -> None:
+    root = "https://example.com/sitemap.xml"
+    xml = f'<urlset xmlns="{_NS}"><url><loc>https://example.com/</loc></url></urlset>'.encode()
+    runtime, service, run_id, fetcher, _ = _service(tmp_path, {root: (200, "application/xml", xml)})
+    inherited = replace(
+        service.configuration,
+        maximum_documents=25,
+        maximum_depth=2,
+        maximum_total_urls=2500,
+        maximum_response_bytes=3_000_000,
+        maximum_duration_seconds=120,
+        maximum_accepted_bytes=40_000_000,
+        minimum_request_delay_seconds=1,
+        maximum_redirect_hops=5,
+        dns_timeout_seconds=5,
+        authorization_enabled=True,
+        authorization_version=4,
+    )
+    try:
+        audit = asyncio.run(
+            service.create_and_run(
+                run_id,
+                DiscoveryOptions(root, discover_robots=False, discover_common_locations=False),
+                configuration=inherited,
+            )
+        )
+        request = fetcher.request_objects[0]
+        assert request.maximum_response_bytes == 3_000_000
+        assert request.maximum_redirect_hops == 5
+        assert request.maximum_duration_seconds is not None
+        assert 0 < request.maximum_duration_seconds <= 120
+        assert request.user_agent == inherited.crawler_user_agent
+        configuration = json.loads(str(audit["configuration_json"]))
+        assert configuration["maximum_documents"] == 25
+        assert configuration["maximum_response_bytes"] == 3_000_000
+        assert configuration["minimum_request_delay_seconds"] == 1
+        assert configuration["authorization_enabled"] is True
+        assert configuration["authorization_version"] == 4
+        assert configuration["retry_policy"] == "none"
+        assert configuration["recovery_policy"] == "reuse_immutable_configuration"
+        accounting = configuration["operational_accounting"]
+        assert accounting["request_count"] == 1
+        assert accounting["sitemap_request_count"] == 1
+        assert accounting["robots_request_count"] == 0
+        assert accounting["accepted_byte_count"] == len(xml)
+        assert accounting["sitemap_outcomes"] == {"success": 1}
     finally:
         runtime.dispose()
 

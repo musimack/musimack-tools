@@ -259,6 +259,7 @@ class CrawlCounters:
     total_links_observed: int = 0
     links_admitted: int = 0
     links_rejected: int = 0
+    urls_over_limit: int = 0
     robots_origins_evaluated: int = 0
     robots_fetches: int = 0
     robots_cache_hits: int = 0

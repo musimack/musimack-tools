@@ -1226,6 +1226,24 @@ class SQLAlchemySiteAuditRepository:
             session.flush()
             return _model_dict(row)
 
+    def set_operational_accounting(
+        self, audit_id: str, accounting: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Attach one bounded deterministic operational projection to the summary JSON."""
+
+        with self._runtime.transaction() as session:
+            row = session.get(SiteAuditSummaryModel, audit_id)
+            if row is None:
+                raise SiteAuditPersistenceError(
+                    "site_audit_projection_unavailable", "The Site Audit summary is unavailable."
+                )
+            module_counts = json.loads(row.module_counts_json)
+            module_counts["operational_accounting"] = accounting
+            row.module_counts_json = canonical_json(module_counts)
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return _model_dict(row)
+
     def associate_artifact(  # noqa: PLR0913
         self,
         audit_id: str,

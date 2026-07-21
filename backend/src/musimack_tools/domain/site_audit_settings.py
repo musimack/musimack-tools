@@ -28,6 +28,17 @@ SITE_AUDIT_PRESET_VERSION = "seo-toolkit-site-audit-preset-v1"
 SITE_AUDIT_PROFILE_VERSION = "seo-toolkit-site-audit-profile-v1"
 SITE_AUDIT_NORMALIZATION_VERSION = "seo-toolkit-site-audit-normalization-v1"
 SITE_AUDIT_PRECEDENCE_VERSION = "seo-toolkit-site-audit-precedence-v1"
+REAL_SITE_DEFAULT_LIMITS: dict[str, int | float] = {
+    "maximum_urls": 100,
+    "maximum_depth": 3,
+    "maximum_duration_seconds": 300,
+    "maximum_accepted_bytes": 50_000_000,
+    "maximum_concurrency": 1,
+    "maximum_queue_size": 500,
+    "minimum_request_delay_seconds": 1.0,
+    "maximum_redirect_hops": 5,
+    "maximum_response_bytes": 3_000_000,
+}
 
 MAXIMUM_RULES_PER_SOURCE = 500
 MAXIMUM_RULE_NAME_LENGTH = 128
@@ -296,6 +307,10 @@ class GlobalSiteAuditSettings:
     structured_data_summary_enabled: bool = True
     maximum_retained_urls: int = MAXIMUM_RETAINED_URLS
     maximum_export_rows: int = MAXIMUM_EXPORT_ROWS
+    real_site_operations_enabled: bool = False
+    real_site_default_limits: tuple[tuple[str, int | float], ...] = tuple(
+        REAL_SITE_DEFAULT_LIMITS.items()
+    )
 
     def __post_init__(self) -> None:
         if profile_for(self.default_crawl_profile) is None:
@@ -327,6 +342,7 @@ class GlobalSiteAuditSettings:
                 "site_audit_protected_limit_invalid", "Protected audit limits cannot be changed."
             )
         _validate_parameter_names(self.default_tracking_parameters)
+        _validate_crawl_overrides(dict(self.real_site_default_limits))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -350,6 +366,10 @@ class GlobalSiteAuditSettings:
             },
             "maximum_retained_urls": self.maximum_retained_urls,
             "maximum_export_rows": self.maximum_export_rows,
+            "real_site_operations": {
+                "enabled": self.real_site_operations_enabled,
+                "default_limits": dict(self.real_site_default_limits),
+            },
             "settings_version": SITE_AUDIT_SETTINGS_VERSION,
         }
 
@@ -597,6 +617,7 @@ def global_settings_from_mapping(
     thresholds = _mapping(value.get("metadata_thresholds", {}))
     sitemap = _mapping(value.get("sitemap_policy", {}))
     summaries = _mapping(value.get("specialist_summaries", {}))
+    real_site = _mapping(value.get("real_site_operations", {}))
     raw_tracking = value.get("default_tracking_parameters", TRACKING_PARAMETERS)
     if not isinstance(raw_tracking, (list, tuple)):
         raise SiteAuditSettingsError(
@@ -619,6 +640,12 @@ def global_settings_from_mapping(
             bool(summaries.get("structured_data", True)),
             int(value.get("maximum_retained_urls", MAXIMUM_RETAINED_URLS)),
             int(value.get("maximum_export_rows", MAXIMUM_EXPORT_ROWS)),
+            bool(real_site.get("enabled", False)),
+            tuple(
+                validate_crawl_limit_overrides(
+                    real_site.get("default_limits", REAL_SITE_DEFAULT_LIMITS)
+                ).items()
+            ),
         )
     except (TypeError, ValueError) as error:
         if isinstance(error, SiteAuditSettingsError):

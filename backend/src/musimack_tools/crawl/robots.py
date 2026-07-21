@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -667,6 +668,18 @@ def _origin_record(  # noqa: PLR0913 - mirrors immutable origin evidence.
         temporary_unavailability=temporary,
         warnings=warnings,
         fetch_failure_code=(fetch.failure_code.value if fetch.failure_code is not None else None),
+        request_attempt_count=fetch.attempt_count,
+        dns_resolution_count=len(fetch.dns_evidence),
+        redirect_count=len(fetch.redirect_chain),
+        address_fingerprints=tuple(
+            sorted(
+                {
+                    hashlib.sha256(address.encode("ascii")).hexdigest()
+                    for evidence in fetch.dns_evidence
+                    for address in evidence.addresses
+                }
+            )[:256]
+        ),
     )
 
 

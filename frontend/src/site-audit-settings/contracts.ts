@@ -67,6 +67,10 @@ export type GlobalConfiguration = {
   specialist_summaries: Record<string, boolean>;
   maximum_retained_urls: number;
   maximum_export_rows: number;
+  real_site_operations: {
+    enabled: boolean;
+    default_limits: Record<string, number>;
+  };
 };
 
 export type GlobalSettings = {

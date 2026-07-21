@@ -8,7 +8,7 @@ import asyncio
 import logging
 import signal
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -81,6 +81,7 @@ from musimack_tools.site_audit.orchestration import (
 )
 from musimack_tools.site_audit.specialists import (
     SpecialistAuthority,
+    SpecialistRequest,
     SQLAlchemySiteAuditSpecialistGateway,
 )
 from musimack_tools.site_audit_settings.service import (
@@ -643,14 +644,49 @@ def _specialist_gateway(  # noqa: C901, PLR0913 - accepted authorities are expli
 ) -> SQLAlchemySiteAuditSpecialistGateway:
     authorities: dict[SiteAuditStage, SpecialistAuthority] = {}
     if metadata_audits is not None:
+
+        async def launch_metadata(request: SpecialistRequest) -> dict[str, object]:
+            return cast("dict[str, object]", metadata_audits.create_and_run_audit(request.run_id))
+
         authorities[SiteAuditStage.METADATA] = SpecialistAuthority(
             SQLAlchemyMetadataAuditRepository(runtime),
-            launch=(metadata_audits.create_and_run_audit if launch_enabled else None),
+            launch=launch_metadata if launch_enabled else None,
         )
     if sitemap_audits is not None:
 
-        async def launch_sitemap(run_id: str) -> dict[str, object]:
-            return await sitemap_audits.create_and_run(run_id, DiscoveryOptions())
+        async def launch_sitemap(request: SpecialistRequest) -> dict[str, object]:
+            envelope = request.safety_envelope
+            configuration = replace(
+                sitemap_audits.configuration,
+                maximum_response_bytes=min(
+                    sitemap_audits.configuration.maximum_response_bytes,
+                    envelope.maximum_response_bytes,
+                ),
+                maximum_documents=min(
+                    sitemap_audits.configuration.maximum_documents, envelope.maximum_urls
+                ),
+                maximum_depth=min(
+                    sitemap_audits.configuration.maximum_depth, envelope.maximum_depth
+                ),
+                maximum_total_urls=min(
+                    sitemap_audits.configuration.maximum_total_urls,
+                    envelope.maximum_urls * envelope.maximum_queue_size,
+                ),
+                maximum_duration_seconds=envelope.maximum_duration_seconds,
+                maximum_accepted_bytes=envelope.maximum_accepted_bytes,
+                minimum_request_delay_seconds=envelope.minimum_request_delay_seconds,
+                maximum_redirect_hops=envelope.maximum_redirect_hops,
+                dns_timeout_seconds=envelope.dns_timeout_seconds,
+                destination_policy_version=envelope.destination_policy_version,
+                crawler_user_agent=envelope.user_agent,
+                authorization_enabled=envelope.authorization_enabled,
+                authorization_version=envelope.authorization_version,
+                retry_policy=envelope.retry_policy,
+                recovery_policy=envelope.recovery_policy,
+            )
+            return await sitemap_audits.create_and_run(
+                request.run_id, DiscoveryOptions(), configuration=configuration
+            )
 
         authorities[SiteAuditStage.EXISTING_SITEMAP] = SpecialistAuthority(
             SQLAlchemySitemapAuditRepository(runtime),
@@ -660,8 +696,8 @@ def _specialist_gateway(  # noqa: C901, PLR0913 - accepted authorities are expli
         )
     if link_audits is not None:
 
-        async def launch_link(run_id: str) -> dict[str, object]:
-            created = link_audits.create_audit(run_id)
+        async def launch_link(request: SpecialistRequest) -> dict[str, object]:
+            created = link_audits.create_audit(request.run_id)
             return await link_audits.execute_audit(str(created["audit_id"]))
 
         authorities[SiteAuditStage.BROKEN_LINKS] = SpecialistAuthority(
@@ -670,8 +706,8 @@ def _specialist_gateway(  # noqa: C901, PLR0913 - accepted authorities are expli
         )
     if internal_link_audits is not None:
 
-        async def launch_internal_link(run_id: str) -> dict[str, object]:
-            created = internal_link_audits.create_audit(run_id)
+        async def launch_internal_link(request: SpecialistRequest) -> dict[str, object]:
+            created = internal_link_audits.create_audit(request.run_id)
             return await internal_link_audits.execute_audit(str(created["audit_id"]))
 
         authorities[SiteAuditStage.INTERNAL_LINKS] = SpecialistAuthority(
@@ -680,8 +716,8 @@ def _specialist_gateway(  # noqa: C901, PLR0913 - accepted authorities are expli
         )
     if image_audits is not None:
 
-        async def launch_image(run_id: str) -> dict[str, object]:
-            created = image_audits.create_audit(run_id)
+        async def launch_image(request: SpecialistRequest) -> dict[str, object]:
+            created = image_audits.create_audit(request.run_id)
             return await image_audits.execute_audit(str(created["audit_id"]))
 
         authorities[SiteAuditStage.IMAGES] = SpecialistAuthority(
@@ -691,8 +727,8 @@ def _specialist_gateway(  # noqa: C901, PLR0913 - accepted authorities are expli
         )
     if structured_data_audits is not None:
 
-        async def launch_structured(run_id: str) -> dict[str, object]:
-            created = structured_data_audits.create_audit(run_id)
+        async def launch_structured(request: SpecialistRequest) -> dict[str, object]:
+            created = structured_data_audits.create_audit(request.run_id)
             return await structured_data_audits.execute_audit(str(created["audit_id"]))
 
         authorities[SiteAuditStage.STRUCTURED_DATA] = SpecialistAuthority(

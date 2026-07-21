@@ -238,6 +238,9 @@ class ApplicationRequestPreparer:
                 publication_configuration=publication,
                 summary_configuration=summary_configuration,
                 caller_label=raw.caller_label.strip() if raw.caller_label is not None else None,
+                execution_identity=(
+                    raw.execution_identity.strip() if raw.execution_identity is not None else None
+                ),
             )
             run_id, _digest = run_identity(run_request)
             prepared = PreparedApplicationRequest(

@@ -176,6 +176,10 @@ class RobotsOriginRecord:
     temporary_unavailability: bool
     warnings: tuple[RobotsWarning, ...]
     fetch_failure_code: str | None = None
+    request_attempt_count: int = 0
+    dns_resolution_count: int = 0
+    redirect_count: int = 0
+    address_fingerprints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

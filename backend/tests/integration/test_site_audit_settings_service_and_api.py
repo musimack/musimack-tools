@@ -165,6 +165,42 @@ def test_global_versions_profiles_constraints_history_and_cascade_are_durable(
         runtime.dispose()
 
 
+def test_real_site_authorization_defaults_suspended_and_is_versioned(tmp_path: Path) -> None:
+    runtime, service = _runtime(tmp_path)
+    try:
+        initial = service.current_real_site_authorization()
+        assert initial == {
+            "enabled": False,
+            "status": "suspended",
+            "authorized_by": None,
+            "global_settings_version": 0,
+            "global_settings_hash": None,
+            "default_limits": {
+                "maximum_urls": 100,
+                "maximum_depth": 3,
+                "maximum_duration_seconds": 300,
+                "maximum_accepted_bytes": 50_000_000,
+                "maximum_concurrency": 1,
+                "maximum_queue_size": 500,
+                "minimum_request_delay_seconds": 1.0,
+                "maximum_redirect_hops": 5,
+                "maximum_response_bytes": 3_000_000,
+            },
+        }
+        configuration = dict(cast("dict[str, object]", service.settings()["configuration"]))
+        operations = dict(cast("dict[str, object]", configuration["real_site_operations"]))
+        operations["enabled"] = True
+        configuration["real_site_operations"] = operations
+
+        saved = service.update_settings(configuration, expected_version=0, actor="admin-1")
+
+        assert saved["version"] == 1
+        assert service.current_real_site_authorization()["authorized_by"] == "admin-1"
+        assert service.current_real_site_authorization()["status"] == "enabled"
+    finally:
+        runtime.dispose()
+
+
 def test_effective_settings_and_sample_test_are_stateless_bounded_and_reproducible(
     tmp_path: Path,
 ) -> None:

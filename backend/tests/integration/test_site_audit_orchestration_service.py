@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -33,7 +35,12 @@ from musimack_tools.domain.job_registry import (
     JobRegistrySnapshot,
     RegistryState,
 )
-from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
+from musimack_tools.domain.page_evidence import (
+    PageEvidenceConfiguration,
+    PageEvidenceListItem,
+    PageEvidenceSummary,
+    project_crawl_result,
+)
 from musimack_tools.domain.persistence import PersistenceConfiguration
 from musimack_tools.domain.site_audit_orchestration import (
     OrchestrationState,
@@ -41,6 +48,7 @@ from musimack_tools.domain.site_audit_orchestration import (
     SiteAuditStage,
 )
 from musimack_tools.domain.site_audit_persistence import AuditLifecycle
+from musimack_tools.domain.site_audit_settings import default_global_settings
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.migrations import upgrade_to_head
 from musimack_tools.persistence.page_evidence_repository import SQLAlchemyPageEvidenceRepository
@@ -53,7 +61,7 @@ from musimack_tools.persistence.site_audit_repository import SQLAlchemySiteAudit
 from musimack_tools.persistence.site_audit_settings_repository import (
     SQLAlchemySiteAuditSettingsRepository,
 )
-from musimack_tools.site_audit.orchestration import SiteAuditOrchestrationService
+from musimack_tools.site_audit.orchestration import SiteAuditOrchestrationService, _url_values
 from musimack_tools.site_audit.specialists import SpecialistEvidence, SpecialistRequest
 from musimack_tools.site_audit_settings.service import (
     SiteAuditSettingsConfiguration,
@@ -70,10 +78,45 @@ if TYPE_CHECKING:
     from musimack_tools.persistence.engine import PersistenceRuntime
 
 
+def test_only_executed_fetches_project_into_the_fetched_population() -> None:
+    page = cast(
+        "PageEvidenceListItem",
+        project_crawl_result(
+            "job-fetch-state",
+            "run-fetch-state",
+            crawl_result((page_record(),)),
+            PageEvidenceConfiguration(enabled=True),
+        ).pages[0],
+    )
+
+    assert _url_values(page, None)["fetch_state"] == "fetched"
+    assert _url_values(replace(page, fetch_outcome="failure"), None)["fetch_state"] == "fetched"
+    assert (
+        _url_values(
+            replace(page, fetch_outcome="robots_denied", http_status=None),
+            None,
+        )["fetch_state"]
+        == "not_fetched"
+    )
+    assert (
+        _url_values(replace(page, fetch_outcome="skipped", http_status=None), None)["fetch_state"]
+        == "not_fetched"
+    )
+
+
 class _Gateway:
     def __init__(self, job_id: str, run_id: str) -> None:
         self.job_id = job_id
         self.run_id = run_id
+        self.result_job_id = job_id
+        self.result_run_id = run_id
+        self.state = "completed"
+        self.crawl_counts = (
+            ("unique_urls_discovered", 2),
+            ("urls_admitted", 2),
+            ("urls_over_limit", 1),
+            ("urls_fetched", 2),
+        )
         self.submissions = 0
         self.cancellations = 0
         self.requests: list[RawApplicationCrawlRequest] = []
@@ -143,13 +186,13 @@ class _Gateway:
         assert job_id == self.job_id
         return ApplicationResultProjection(
             ApplicationOutcomeCode.FOUND,
-            self.job_id,
-            self.run_id,
+            self.result_job_id,
+            self.result_run_id,
             1,
             "completed",
             "completed",
             (("crawl", "completed"),),
-            (("unique_urls_discovered", 2), ("urls_fetched", 2)),
+            self.crawl_counts,
             (),
             (("include", 1), ("exclude", 1)),
             1,
@@ -165,6 +208,17 @@ class _Gateway:
             True,
             "test",
             (),
+            crawl_elapsed_seconds=10,
+            outbound_request_count=4,
+            outbound_redirect_count=1,
+            rejected_destination_count=1,
+            resolved_address_fingerprints=("parent-fingerprint",),
+            robots_outcome_counts=(("success", 1),),
+            dns_resolution_count=3,
+            robots_request_count=1,
+            page_request_count=3,
+            accepted_byte_count=1000,
+            scope_denial_count=1,
         )
 
     async def cancel(self, job_id: str) -> ApplicationCancellationResult:
@@ -250,10 +304,10 @@ class _Gateway:
             self.job_id,
             self.run_id,
             1,
-            "completed",
+            self.state,
             None,
             None,
-            "completed",
+            "completed" if self.state == "completed" else "failed",
             2,
             2,
             (1, 1, 0, 0),
@@ -282,6 +336,23 @@ class _Specialists:
                 lifecycle_state="completed",
                 partial=False,
                 evidence_count=0,
+                safety_envelope=asdict(request.safety_envelope),
+                operational_accounting={
+                    "request_count": 8,
+                    "dns_operation_count": 2,
+                    "accepted_byte_count": 500,
+                    "redirect_count": 1,
+                    "rejected_destination_count": 0,
+                    "scope_denial_count": 1,
+                    "robots_request_count": 1,
+                    "sitemap_request_count": 7,
+                    "retry_count": 0,
+                    "timeout_count": 0,
+                    "response_size_rejection_count": 0,
+                    "resolved_address_fingerprints": ["specialist-fingerprint"],
+                    "robots_outcomes": {"success": 1},
+                    "sitemap_outcomes": {"success": 7},
+                },
             )
         return SpecialistEvidence(
             module=request.module,
@@ -330,6 +401,17 @@ class _SitemapSpecialists(_Specialists):
                     "duplicate": False,
                     "is_child_reference": False,
                 },
+                {
+                    "entry_id": "sitemap-external-entry",
+                    "document_id": "sitemap-root",
+                    "raw_location": "https://external.example/sitemap-only",
+                    "normalized_identity": "https://external.example/sitemap-only",
+                    "entry_sequence": 1,
+                    "in_scope": False,
+                    "validation_state": "out_of_scope",
+                    "duplicate": False,
+                    "is_child_reference": False,
+                },
             ),
         )
 
@@ -369,7 +451,17 @@ def service(
         durable_snapshot.run_id,
         crawl_result(
             (
-                page_record("https://example.com/", PageRecordOptions(x_robots=())),
+                page_record(
+                    "https://example.com/",
+                    PageRecordOptions(
+                        body=(
+                            f"<title>{'A' * 80}</title>"
+                            "<meta name='description' content='Stored description'>"
+                            "<link rel='canonical' href='/'>"
+                        ),
+                        x_robots=(),
+                    ),
+                ),
                 page_record(
                     "https://example.com/missing-title",
                     PageRecordOptions(
@@ -399,6 +491,12 @@ def service(
             SiteAuditSettingsConfiguration(enabled=True),
             SQLAlchemySiteAuditSettingsRepository(runtime),
         )
+        enabled_settings = default_global_settings().to_dict()
+        enabled_settings["real_site_operations"] = {
+            **enabled_settings["real_site_operations"],
+            "enabled": True,
+        }
+        settings.update_settings(enabled_settings, expected_version=0, actor="administrator")
         yield (
             SiteAuditOrchestrationService(
                 site,
@@ -550,6 +648,15 @@ async def test_wordpress_rules_resolve_before_validation_preflight_and_submissio
     assert snapshot is not None
     assert snapshot["configuration"]["resolution"]["effective_rules"] == validation_rules
     assert len(snapshot["rules"]) == 19
+    assert snapshot["configuration"]["operation_mode"] == "real_site"
+    assert snapshot["configuration"]["submitted_by"] == "operator"
+    assert snapshot["configuration"]["real_site_authorization"]["authorized_by"] == (
+        "administrator"
+    )
+    assert snapshot["configuration"]["outbound_policy_version"] == (
+        "seo-toolkit-outbound-destination-policy-v1"
+    )
+    assert snapshot["configuration"]["crawl_limits"]["maximum_urls"] == 100
     cdn = next(item for item in snapshot["rules"] if item["stable_rule_id"] == "wordpress.cdn_cgi")
     assert cdn["rule_source"] == "preset"
     assert cdn["source_id"] == "wordpress"
@@ -590,6 +697,75 @@ def test_invalid_version_fails_before_validation_transition_or_snapshot(
     assert retained["lifecycle"] == AuditLifecycle.DRAFT.value
     assert repository.snapshot(str(audit["audit_id"])) is None
     assert gateway.requests == []
+
+
+def test_global_suspension_blocks_new_real_site_validation_but_not_fixture_validation(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, _repository, _gateway, _runtime = service
+    settings = orchestration._settings  # noqa: SLF001 - verifies the composed authority boundary.
+    assert settings is not None
+    current = settings.settings()
+    configuration = dict(cast("dict[str, object]", current["configuration"]))
+    operations = dict(cast("dict[str, object]", configuration["real_site_operations"]))
+    operations["enabled"] = False
+    configuration["real_site_operations"] = operations
+    settings.update_settings(
+        configuration, expected_version=cast("int", current["version"]), actor="administrator"
+    )
+    real_audit = orchestration.create_draft(
+        {"audit_name": "Suspended", "seed_url": "https://example.com/"}, actor="operator"
+    )
+
+    with pytest.raises(SiteAuditOrchestrationError, match="globally suspended"):
+        orchestration.validate_draft(
+            str(real_audit["audit_id"]), expected_revision=cast("int", real_audit["revision"])
+        )
+
+    fixture_audit = orchestration.create_draft(
+        {"audit_name": "Fixture", "seed_url": "http://127.0.0.1:13765/"},
+        actor="operator",
+    )
+    result = orchestration.validate_draft(
+        str(fixture_audit["audit_id"]),
+        expected_revision=cast("int", fixture_audit["revision"]),
+    )
+    assert result["audit"]["lifecycle"] == "validated"
+
+
+def test_real_site_defaults_never_raise_a_smaller_selected_profile(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, _repository, _gateway, _runtime = service
+    audit = orchestration.create_draft(
+        {
+            "audit_name": "Quick bounded real site",
+            "seed_url": "https://example.com/",
+            "crawl_profile": "quick_audit",
+        },
+        actor="operator",
+    )
+
+    result = orchestration.validate_draft(
+        str(audit["audit_id"]), expected_revision=cast("int", audit["revision"])
+    )
+    limits = result["effective_settings"]["crawl_limits"]
+
+    assert limits["maximum_urls"] == 100
+    assert limits["maximum_duration_seconds"] == 60
+    assert limits["maximum_accepted_bytes"] == 25_000_000
+    assert limits["maximum_concurrency"] == 1
+    assert limits["minimum_request_delay_seconds"] == 1.0
 
 
 @pytest.mark.anyio
@@ -653,9 +829,70 @@ async def test_submission_projection_restart_and_artifacts_are_idempotent(
         "partially_completed",
     }
     assert orchestration.summary("audit-service")["urls_discovered"] == 2
+    accounting = orchestration.summary("audit-service")["operational_accounting"]
+    assert accounting["request_count"] == 12
+    assert accounting["accepted_byte_count"] == 1500
+    assert accounting["redirect_count"] == 2
+    assert accounting["scope_denial_count"] == 2
+    assert accounting["robots_request_count"] == 2
+    assert accounting["sitemap_request_count"] == 7
+    assert accounting["resolved_address_fingerprints"] == [
+        "parent-fingerprint",
+        "specialist-fingerprint",
+    ]
+    assert accounting["url_admission"] == {
+        "admitted": 2,
+        "definition": (
+            "Over-limit discoveries are retained as rejected admission evidence; "
+            "already-queued URLs continue processing."
+        ),
+        "fetched": 2,
+        "over_limit": 1,
+    }
     assert orchestration.pages("audit-service")["total"] == 2
+    homepage = orchestration.page_detail("audit-service", 0)
+    assert homepage["title"] == "A" * 80
+    assert homepage["title_length"] == 80
+    assert homepage["description"] == "Stored description"
+    assert homepage["description_length"] == 18
+    assert homepage["canonical"] == "https://example.com/"
     assert orchestration.issues("audit-service")["items"]
+    long_title = next(
+        item
+        for item in orchestration.issues("audit-service")["items"]
+        if item["code"] == "long_title"
+    )
+    assert long_title["affected_url_count"] == 1
     assert len(orchestration.artifact_associations("audit-service")) == 10
+    artifacts = {
+        item["purpose"]: item for item in orchestration.artifact_associations("audit-service")
+    }
+    executive = b"".join(
+        orchestration._artifacts.prepare_download(  # noqa: SLF001
+            str(artifacts["executive_markdown"]["artifact_id"])
+        ).iterator_factory()
+    ).decode()
+    assert f"Lifecycle: {completed['audit']['lifecycle']}" in executive
+    assert "1 additional unique discoveries were not admitted" in executive
+    configuration = json.loads(
+        b"".join(
+            orchestration._artifacts.prepare_download(  # noqa: SLF001
+                str(artifacts["configuration_snapshot_json"]["artifact_id"])
+            ).iterator_factory()
+        )
+    )
+    evidence = json.loads(
+        b"".join(
+            orchestration._artifacts.prepare_download(  # noqa: SLF001
+                str(artifacts["full_evidence_json"]["artifact_id"])
+            ).iterator_factory()
+        )
+    )
+    assert configuration["operational_accounting"] == accounting
+    assert evidence["operational_accounting"] == accounting
+    assert accounting["crawl_elapsed_seconds"] == 10
+    assert "crawl_started_at_seconds" not in accounting
+    assert "crawl_completed_at_seconds" not in accounting
     restarted = SiteAuditOrchestrationService(
         SQLAlchemySiteAuditRepository(runtime),
         SQLAlchemySiteAuditOrchestrationRepository(runtime),
@@ -668,6 +905,130 @@ async def test_submission_projection_restart_and_artifacts_are_idempotent(
     again = await restarted.reconcile("audit-service")
     assert again["orchestration"]["state"] == completed["orchestration"]["state"]
     assert len(restarted.artifact_associations("audit-service")) == 10
+    assert restarted.summary("audit-service")["operational_accounting"] == accounting
+
+
+@pytest.mark.anyio
+async def test_site_audit_submission_carries_unique_execution_identity(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, site, gateway, _runtime = service
+    _ready_snapshot(site)
+
+    await orchestration.submit("audit-service", actor="operator")
+
+    submitted = gateway.requests[-1]
+    assert submitted.execution_identity == "site-audit:audit-service"
+    assert submitted.caller_label == "site-audit:audit-service"
+
+
+@pytest.mark.anyio
+async def test_terminal_persistence_failure_never_projects_historical_evidence(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, site, gateway, _runtime = service
+    _ready_snapshot(site)
+    await orchestration.submit("audit-service", actor="operator")
+    gateway.state = "failed"
+
+    failed = await orchestration.reconcile("audit-service")
+
+    assert failed["orchestration"]["state"] == "failed"
+    assert failed["orchestration"]["failure_code"] == "site_audit_terminal_persistence_failed"
+    assert failed["audit"]["lifecycle"] == "failed"
+    assert orchestration.pages("audit-service")["total"] == 0
+    assert orchestration.artifact_associations("audit-service") == ()
+
+
+@pytest.mark.anyio
+async def test_result_owner_mismatch_fails_closed_and_retry_preserves_execution(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, site, gateway, _runtime = service
+    _ready_snapshot(site)
+    submitted = await orchestration.submit("audit-service", actor="operator")
+    run_id = submitted["orchestration"]["crawl_run_id"]
+    gateway.result_run_id = "run-historical"
+
+    failed = await orchestration.reconcile("audit-service")
+
+    assert failed["orchestration"]["failure_code"] == "site_audit_execution_owner_mismatch"
+    assert orchestration.artifact_associations("audit-service") == ()
+    gateway.result_run_id = gateway.run_id
+    recovered = await orchestration.retry("audit-service")
+    assert recovered["orchestration"]["crawl_run_id"] == run_id
+    assert recovered["orchestration"]["retry_count"] == 1
+    assert len(orchestration.artifact_associations("audit-service")) == 10
+
+
+@pytest.mark.anyio
+async def test_page_evidence_owner_mismatch_fails_closed(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    orchestration, site, _gateway, _runtime = service
+    _ready_snapshot(site)
+    await orchestration.submit("audit-service", actor="operator")
+    repository = orchestration._page_evidence  # noqa: SLF001
+    original = repository.get_summary
+
+    def mismatched(run_id: str) -> PageEvidenceSummary | None:
+        summary = original(run_id)
+        assert summary is not None
+        return replace(summary, job_id="job-historical-0001")
+
+    monkeypatch.setattr(repository, "get_summary", mismatched)
+
+    failed = await orchestration.reconcile("audit-service")
+
+    assert failed["orchestration"]["failure_code"] == "site_audit_evidence_owner_mismatch"
+    assert orchestration.pages("audit-service")["total"] == 0
+    assert orchestration.artifact_associations("audit-service") == ()
+
+
+@pytest.mark.anyio
+async def test_impossible_population_relationship_fails_before_artifacts(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, site, gateway, _runtime = service
+    _ready_snapshot(site)
+    await orchestration.submit("audit-service", actor="operator")
+    gateway.crawl_counts = (
+        ("unique_urls_discovered", 3),
+        ("urls_admitted", 1),
+        ("urls_fetched", 2),
+        ("urls_parsed", 2),
+    )
+
+    failed = await orchestration.reconcile("audit-service")
+
+    assert failed["orchestration"]["failure_code"] == "site_audit_population_integrity_failed"
+    assert orchestration.artifact_associations("audit-service") == ()
 
 
 @pytest.mark.anyio
@@ -712,10 +1073,16 @@ async def test_authoritative_sitemap_entries_project_sitemap_only_inventory(
     sitemap_only = next(
         item for item in pages["items"] if item["normalized_url"].endswith("sitemap-only")
     )
-    assert pages["total"] == 3
+    assert pages["total"] == 4
     assert sitemap_only["existing_sitemap_state"] == "present"
     assert sitemap_only["fetch_state"] == "not_fetched"
     assert sitemap_only["enqueued_state"] == "not_enqueued"
+    external = next(
+        item for item in pages["items"] if item["normalized_url"].startswith("https://external")
+    )
+    assert external["failure_code"] == "scope_denied"
+    assert orchestration.summary("audit-service")["failed_urls"] == 0
+    assert orchestration.summary("audit-service")["urls_excluded"] == 1
     sitemap = orchestration.sitemap_comparison("audit-service", page_size=50)
     assert sitemap["document_count"] == 0
     assert sitemap["document_preview"] == ()

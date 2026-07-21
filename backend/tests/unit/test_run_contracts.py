@@ -56,6 +56,7 @@ def _request(  # noqa: PLR0913 - explicit knobs exercise identity inputs.
     publication_root: Path | None = None,
     summary_root: Path | None = None,
     caller_label: str | None = None,
+    execution_identity: str | None = None,
     maximum_urls: int = 50,
 ) -> CrawlRunRequest:
     normalized = normalize_url(seed)
@@ -75,6 +76,7 @@ def _request(  # noqa: PLR0913 - explicit knobs exercise identity inputs.
             RunSummaryConfiguration(summary_root) if summary_root is not None else None
         ),
         caller_label=caller_label,
+        execution_identity=execution_identity,
     )
 
 
@@ -188,6 +190,22 @@ def test_same_request_has_same_lowercase_sha256_identity() -> None:
     assert re.fullmatch(r"run-[0-9a-f]{12}", first[0])
     assert re.fullmatch(r"[0-9a-f]{64}", first[1])
     assert first[1] == hashlib.sha256(canonical_identity_bytes(_request())).hexdigest()
+
+
+def test_execution_identity_separates_runs_without_changing_configuration() -> None:
+    first = _request(execution_identity="site-audit:first")
+    second = _request(execution_identity="site-audit:second")
+
+    assert run_identity(first) != run_identity(second)
+    assert canonical_identity_bytes(first) == canonical_identity_bytes(second)
+    assert configuration_snapshot(first) == configuration_snapshot(second)
+
+
+def test_execution_identity_is_bounded_and_non_blank() -> None:
+    with pytest.raises(ValueError, match="execution identity"):
+        _request(execution_identity=" ")
+    with pytest.raises(ValueError, match="execution identity"):
+        _request(execution_identity="x" * 257)
 
 
 @pytest.mark.parametrize(

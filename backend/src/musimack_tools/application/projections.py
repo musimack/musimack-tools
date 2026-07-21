@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import hashlib
+from typing import TYPE_CHECKING, TypedDict
 
 from musimack_tools.domain.application import (
     ApplicationJobStatus,
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from musimack_tools.domain.job import JobLookupResult, JobResultView, JobSnapshot
+
+
+class _OperationalProjection(TypedDict):
+    crawl_elapsed_seconds: float | None
+    outbound_request_count: int
+    outbound_redirect_count: int
+    rejected_destination_count: int
+    resolved_address_fingerprints: tuple[str, ...]
+    robots_outcome_counts: tuple[tuple[str, int], ...]
+    dns_resolution_count: int
+    robots_request_count: int
+    page_request_count: int
+    accepted_byte_count: int
+    scope_denial_count: int
+    retry_count: int
+    timeout_count: int
+    response_size_rejection_count: int
 
 
 def project_status(result: JobLookupResult) -> ApplicationJobStatus:
@@ -103,6 +121,20 @@ def project_result(
                 False,  # noqa: FBT003 - summary bodies are not retained here.
                 snapshot.registry_version,
                 (("job_registry", snapshot.registry_version), *durable.downstream_versions),
+                crawl_elapsed_seconds=durable.crawl_elapsed_seconds,
+                outbound_request_count=durable.outbound_request_count,
+                outbound_redirect_count=durable.outbound_redirect_count,
+                rejected_destination_count=durable.rejected_destination_count,
+                resolved_address_fingerprints=durable.resolved_address_fingerprints,
+                robots_outcome_counts=durable.robots_outcome_counts,
+                dns_resolution_count=durable.dns_resolution_count,
+                robots_request_count=durable.robots_request_count,
+                page_request_count=durable.page_request_count,
+                accepted_byte_count=durable.accepted_byte_count,
+                scope_denial_count=durable.scope_denial_count,
+                retry_count=durable.retry_count,
+                timeout_count=durable.timeout_count,
+                response_size_rejection_count=durable.response_size_rejection_count,
             )
         return ApplicationResultProjection(
             ApplicationOutcomeCode.RESULT_UNAVAILABLE,
@@ -179,6 +211,8 @@ def project_result(
             if crawl is None
             else (
                 ("urls_discovered", crawl.counters.unique_urls_discovered),
+                ("urls_admitted", crawl.counters.urls_queued),
+                ("urls_over_limit", crawl.counters.urls_over_limit),
                 ("urls_fetched", crawl.counters.urls_fetched),
                 ("urls_parsed", crawl.counters.html_pages_parsed),
                 ("accepted_bytes", crawl.total_accepted_bytes),
@@ -220,6 +254,7 @@ def project_result(
         bool(view.summaries),
         snapshot.registry_version,
         versions,
+        **_operational(crawl),
     )
 
 
@@ -244,6 +279,110 @@ def normalize_warnings(
             ApplicationWarning(code, source, source_code, ValidationSeverity.WARNING, message, url)
         )
     return tuple(found)
+
+
+def _operational(crawl: object | None) -> _OperationalProjection:
+    if crawl is None:
+        return {
+            "crawl_elapsed_seconds": None,
+            "outbound_request_count": 0,
+            "outbound_redirect_count": 0,
+            "rejected_destination_count": 0,
+            "resolved_address_fingerprints": (),
+            "robots_outcome_counts": (),
+            "dns_resolution_count": 0,
+            "robots_request_count": 0,
+            "page_request_count": 0,
+            "accepted_byte_count": 0,
+            "scope_denial_count": 0,
+            "retry_count": 0,
+            "timeout_count": 0,
+            "response_size_rejection_count": 0,
+        }
+    records = tuple(getattr(crawl, "url_records", ()))
+    fetches = tuple(
+        fetch for record in records if (fetch := getattr(record, "fetch_result", None)) is not None
+    )
+    robots = tuple(getattr(crawl, "robots_origins", ()))
+    codes = tuple(getattr(getattr(fetch, "failure_code", None), "value", None) for fetch in fetches)
+    all_codes = (*codes, *(record.fetch_failure_code for record in robots))
+    return {
+        "crawl_elapsed_seconds": _elapsed_seconds(
+            getattr(crawl, "started_at_seconds", None),
+            getattr(crawl, "ended_at_seconds", None),
+        ),
+        "outbound_request_count": sum(fetch.attempt_count for fetch in fetches)
+        + sum(record.request_attempt_count for record in robots),
+        "outbound_redirect_count": sum(len(fetch.redirect_chain) for fetch in fetches)
+        + sum(record.redirect_count for record in robots),
+        "rejected_destination_count": sum(
+            code
+            in {
+                "unsupported_scheme",
+                "credentials_not_allowed",
+                "invalid_hostname",
+                "ip_literal_not_allowed",
+                "unsafe_hostname",
+                "unsafe_resolved_address",
+                "mixed_safe_unsafe_dns_answers",
+                "port_not_allowed",
+                "redirect_scope_denied",
+                "redirect_unsafe_destination",
+            }
+            for code in all_codes
+        ),
+        "resolved_address_fingerprints": tuple(
+            sorted(
+                {
+                    hashlib.sha256(address.encode("ascii")).hexdigest()
+                    for fetch in fetches
+                    for evidence in fetch.dns_evidence
+                    for address in evidence.addresses
+                }
+                | {fingerprint for record in robots for fingerprint in record.address_fingerprints}
+            )[:256]
+        ),
+        "robots_outcome_counts": tuple(
+            sorted(
+                {
+                    outcome: sum(record.fetch_outcome.value == outcome for record in robots)
+                    for outcome in {record.fetch_outcome.value for record in robots}
+                }.items()
+            )
+        ),
+        "dns_resolution_count": sum(len(fetch.dns_evidence) for fetch in fetches)
+        + sum(record.dns_resolution_count for record in robots),
+        "robots_request_count": sum(record.request_attempt_count for record in robots),
+        "page_request_count": sum(fetch.attempt_count for fetch in fetches),
+        "accepted_byte_count": int(getattr(crawl, "total_accepted_bytes", 0)),
+        "scope_denial_count": sum(
+            code in {"scope_denied", "redirect_scope_denied"} for code in all_codes
+        ),
+        "retry_count": sum(max(0, fetch.attempt_count - 1) for fetch in fetches)
+        + sum(max(0, record.request_attempt_count - 1) for record in robots),
+        "timeout_count": sum(
+            code
+            in {
+                "connect_timeout",
+                "read_timeout",
+                "write_timeout",
+                "pool_timeout",
+                "request_deadline_exceeded",
+                "dns_resolution_timeout",
+            }
+            for code in all_codes
+        ),
+        "response_size_rejection_count": sum(code == "response_too_large" for code in all_codes),
+    }
+
+
+def _elapsed_seconds(started: object, ended: object) -> float | None:
+    """Convert monotonic crawl markers to a duration without exposing them as instants."""
+    if not isinstance(started, (int, float)) or isinstance(started, bool):
+        return None
+    if not isinstance(ended, (int, float)) or isinstance(ended, bool) or ended < started:
+        return None
+    return float(ended - started)
 
 
 def _bounded_unique(values: Iterable[str], maximum: int) -> tuple[str, ...]:

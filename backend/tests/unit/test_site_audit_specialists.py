@@ -10,6 +10,7 @@ from musimack_tools.domain.site_audit_orchestration import SiteAuditStage
 from musimack_tools.site_audit.specialists import (
     SpecialistAuthority,
     SpecialistRequest,
+    SpecialistSafetyEnvelope,
     SQLAlchemySiteAuditSpecialistGateway,
 )
 
@@ -80,6 +81,24 @@ def _request(
         associated,
         configured,
         launch,
+        SpecialistSafetyEnvelope(
+            authorization_enabled=False,
+            authorization_version=None,
+            destination_policy_version="outbound-destination-policy-v1",
+            user_agent="MusimackSeoToolkit/1.0",
+            maximum_urls=25,
+            maximum_depth=2,
+            maximum_duration_seconds=120,
+            maximum_accepted_bytes=40_000_000,
+            maximum_concurrency=1,
+            maximum_queue_size=100,
+            minimum_request_delay_seconds=1,
+            maximum_redirect_hops=5,
+            maximum_response_bytes=3_000_000,
+            dns_timeout_seconds=5,
+            retry_policy="none",
+            recovery_policy="reuse_immutable_configuration",
+        ),
     )
 
 
@@ -144,8 +163,9 @@ def test_stale_partial_and_failed_lifecycle_states_remain_truthful() -> None:
 def test_launch_occurs_once_only_when_no_persisted_association_or_prior_exists() -> None:
     launches: list[str] = []
 
-    def launch(run_id: str) -> dict[str, Any]:
-        launches.append(run_id)
+    def launch(request: SpecialistRequest) -> dict[str, Any]:
+        launches.append(request.run_id)
+        assert request.safety_envelope.maximum_urls == 25
         return _audit("launched")
 
     repository = _Repository((_audit("retained"),))

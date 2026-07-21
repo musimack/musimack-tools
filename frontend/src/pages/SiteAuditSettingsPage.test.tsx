@@ -123,6 +123,20 @@ const settings: GlobalSettings = {
     specialist_summaries: { images: true, structured_data: true },
     maximum_retained_urls: 100000,
     maximum_export_rows: 100000,
+    real_site_operations: {
+      enabled: false,
+      default_limits: {
+        maximum_urls: 100,
+        maximum_depth: 3,
+        maximum_duration_seconds: 300,
+        maximum_accepted_bytes: 50000000,
+        maximum_concurrency: 1,
+        maximum_queue_size: 500,
+        minimum_request_delay_seconds: 1,
+        maximum_redirect_hops: 5,
+        maximum_response_bytes: 3000000,
+      },
+    },
   },
   configuration_hash: 'a'.repeat(64),
   created_by: 'administrator-1',
@@ -253,15 +267,21 @@ test('administrator can edit versioned global settings and receives an unsaved w
   renderPage();
   expect(await screen.findByRole('heading', { name: 'Global defaults' })).toBeInTheDocument();
   expect(api.profiles).toHaveBeenCalledWith(true);
+  const realSiteToggle = screen.getByRole('checkbox', {
+    name: 'Enable controlled outbound crawling for new real-site audits',
+  });
+  expect(realSiteToggle).not.toBeChecked();
+  await user.click(realSiteToggle);
   await user.selectOptions(screen.getByLabelText('Default report page size'), '100');
   expect(screen.getByText('You have unsaved administrator changes.')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Save global defaults' }));
   await waitFor(() => {
-    expect(api.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ default_report_page_size: 100 }),
-      1,
-    );
+    expect(api.updateSettings).toHaveBeenCalledOnce();
   });
+  const submitted = api.updateSettings.mock.calls[0]?.[0];
+  expect(submitted?.default_report_page_size).toBe(100);
+  expect(submitted?.real_site_operations.enabled).toBe(true);
+  expect(api.updateSettings.mock.calls[0]?.[1]).toBe(1);
 });
 
 test('administrator sees human labels before technical profile IDs and keyboard actions', async () => {

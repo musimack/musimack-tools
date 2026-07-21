@@ -158,6 +158,7 @@ class ApiErrorCode(StrEnum):
     SITE_AUDIT_RETRY_NOT_ALLOWED = "site_audit_retry_not_allowed"
     SITE_AUDIT_CANCELLATION_NOT_ALLOWED = "site_audit_cancellation_not_allowed"
     SITE_AUDIT_ORCHESTRATION_FAILED = "site_audit_orchestration_failed"
+    SITE_AUDIT_REAL_SITE_OPERATIONS_SUSPENDED = "site_audit_real_site_operations_suspended"
     LINK_AUDIT_DISABLED = "link_audit_disabled"
     LINK_AUDIT_VERSION_UNSUPPORTED = "link_audit_version_unsupported"
     LINK_AUDIT_RUN_NOT_FOUND = "link_audit_run_not_found"

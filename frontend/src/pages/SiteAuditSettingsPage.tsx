@@ -82,6 +82,17 @@ const thresholdFields = [
   ['description_minimum', 'Description minimum'],
   ['description_maximum', 'Description maximum'],
 ] as const;
+const realSiteLimitFields = [
+  ['maximum_urls', 'Maximum URLs', 1],
+  ['maximum_depth', 'Maximum depth', 0],
+  ['maximum_duration_seconds', 'Maximum duration (seconds)', 1],
+  ['maximum_accepted_bytes', 'Maximum accepted bytes', 1],
+  ['maximum_concurrency', 'Maximum concurrency', 1],
+  ['maximum_queue_size', 'Maximum queue size', 1],
+  ['minimum_request_delay_seconds', 'Minimum request delay (seconds)', 0.1],
+  ['maximum_redirect_hops', 'Maximum redirect hops', 0],
+  ['maximum_response_bytes', 'Maximum response bytes', 1],
+] as const;
 
 function governanceRequest(
   profileId: string,
@@ -436,6 +447,61 @@ export function SiteAuditSettingsPage() {
                 </select>
               </label>
             </div>
+            <fieldset>
+              <legend>Controlled real-site operations</legend>
+              <Alert tone={globalDraft.real_site_operations.enabled ? 'warning' : 'neutral'}>
+                {globalDraft.real_site_operations.enabled
+                  ? 'Enabled. New audits may contact external public websites after preflight.'
+                  : 'Suspended. New outbound real-site validation, preflight, and submission are blocked.'}
+              </Alert>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={globalDraft.real_site_operations.enabled}
+                  onChange={(event) => {
+                    setGlobalDraft({
+                      ...globalDraft,
+                      real_site_operations: {
+                        ...globalDraft.real_site_operations,
+                        enabled: event.target.checked,
+                      },
+                    });
+                    setDirty(true);
+                  }}
+                />
+                Enable controlled outbound crawling for new real-site audits
+              </label>
+              <div className="override-grid">
+                {realSiteLimitFields.map(([key, label, minimum]) => (
+                  <label key={key}>
+                    {label}
+                    <input
+                      type="number"
+                      min={minimum}
+                      step={key === 'minimum_request_delay_seconds' ? '0.1' : '1'}
+                      value={globalDraft.real_site_operations.default_limits[key] ?? ''}
+                      onChange={(event) => {
+                        setGlobalDraft({
+                          ...globalDraft,
+                          real_site_operations: {
+                            ...globalDraft.real_site_operations,
+                            default_limits: {
+                              ...globalDraft.real_site_operations.default_limits,
+                              [key]: Number(event.target.value),
+                            },
+                          },
+                        });
+                        setDirty(true);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <small>
+                Suspension blocks new outbound work. Already-running immutable jobs continue within
+                their retained limits and remain cancellable.
+              </small>
+            </fieldset>
             <fieldset>
               <legend>Default metadata thresholds</legend>
               <div className="override-grid">

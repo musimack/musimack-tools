@@ -16,6 +16,10 @@ from lxml import etree  # type: ignore[import-untyped]  # lxml has no inline typ
 
 from musimack_tools.crawl.normalization import normalize_url
 from musimack_tools.crawl.scope import evaluate_scope
+from musimack_tools.domain.fetching import (
+    CRAWLER_USER_AGENT,
+    OUTBOUND_DESTINATION_POLICY_VERSION,
+)
 from musimack_tools.domain.page_evidence import (
     ContentTypeCategory,
     IndexabilityEvidenceState,
@@ -181,6 +185,17 @@ class SitemapAuditConfiguration:
     maximum_documents: int = 100
     maximum_depth: int = 3
     maximum_total_urls: int = 250_000
+    maximum_duration_seconds: float = 300.0
+    maximum_accepted_bytes: int = 50_000_000
+    minimum_request_delay_seconds: float = 0.0
+    maximum_redirect_hops: int = 5
+    dns_timeout_seconds: float = 5.0
+    destination_policy_version: str = OUTBOUND_DESTINATION_POLICY_VERSION
+    crawler_user_agent: str = CRAWLER_USER_AGENT
+    authorization_enabled: bool = False
+    authorization_version: int | None = None
+    retry_policy: str = "none"
+    recovery_policy: str = "reuse_immutable_configuration"
     default_page_size: int = 50
     maximum_page_size: int = 200
     maximum_export_rows: int = 100_000
@@ -215,6 +230,11 @@ class SitemapAuditConfiguration:
             (self.maximum_documents, 1, 1_000),
             (self.maximum_depth, 0, 10),
             (self.maximum_total_urls, 1, 1_000_000),
+            (self.maximum_duration_seconds, 1, 86_400),
+            (self.maximum_accepted_bytes, 1, 1_000_000_000),
+            (self.minimum_request_delay_seconds, 0, 60),
+            (self.maximum_redirect_hops, 0, 20),
+            (self.dns_timeout_seconds, 0.1, 60),
             (self.default_page_size, 1, 1_000),
             (self.maximum_page_size, 1, 1_000),
             (self.maximum_export_rows, 1, 1_000_000),
@@ -223,6 +243,12 @@ class SitemapAuditConfiguration:
         if any(not low <= value <= high for value, low, high in bounds):
             raise ValueError("sitemap_audit_configuration_invalid")
         if self.default_page_size > self.maximum_page_size:
+            raise ValueError("sitemap_audit_configuration_invalid")
+        if self.destination_policy_version != OUTBOUND_DESTINATION_POLICY_VERSION:
+            raise ValueError("sitemap_audit_configuration_invalid")
+        if self.crawler_user_agent != CRAWLER_USER_AGENT:
+            raise ValueError("sitemap_audit_configuration_invalid")
+        if self.retry_policy != "none" or self.recovery_policy != "reuse_immutable_configuration":
             raise ValueError("sitemap_audit_configuration_invalid")
 
     def snapshot(self) -> dict[str, Any]:

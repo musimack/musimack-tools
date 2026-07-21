@@ -181,6 +181,15 @@ class SQLAlchemySitemapAuditRepository:
             )
             session.add(_event(audit_id, sequence, state.value, failure_code))
 
+    def persist_operational_accounting(self, audit_id: str, accounting: dict[str, Any]) -> None:
+        """Retain one bounded idempotent execution projection in existing JSON storage."""
+
+        with self._runtime.transaction() as session:
+            row = _required(session.get(SitemapAuditModel, audit_id))
+            configuration = json.loads(row.configuration_json)
+            configuration["operational_accounting"] = accounting
+            row.configuration_json = _json(configuration)
+
     def claim_execution(self, audit_id: str) -> bool:
         """Atomically admit exactly one executor for an accepted audit."""
         now = datetime.now(UTC)

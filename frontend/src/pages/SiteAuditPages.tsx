@@ -910,15 +910,24 @@ function WizardStep({
         <small>Blank thresholds inherit the effective global and site-profile settings.</small>
       </>
     );
+  const resolvedLimits =
+    typeof effective?.crawl_limits === 'object' &&
+    effective.crawl_limits !== null &&
+    !Array.isArray(effective.crawl_limits)
+      ? (effective.crawl_limits as Record<string, unknown>)
+      : draft.crawl_limits;
+  const limit = (key: string) => resolvedLimits[key] ?? 'Validate to confirm';
   return (
     <>
       <h2>Review and Submit</h2>
       <Alert tone="warning">
-        Submission creates an immutable snapshot. Review the target, scope, limits, modules, and
-        governance before continuing.
+        Submission creates an immutable snapshot. A real-site audit contacts an external website.
+        Review the target, scope, limits, modules, and governance before continuing.
       </Alert>
       <dl className="settings-breakdown">
         <Review label="Audit" value={draft.audit_name} />
+        <Review label="Normalized seed" value={effective?.normalized_seed_url ?? draft.seed_url} />
+        <Review label="Submitter" value={effective?.submitted_by ?? 'Recorded at submission'} />
         <Review label="Seed URL" value={draft.seed_url} />
         <Review label="Scope" value={draft.scope_policy.mode} />
         <Review label="Preset" value={draft.platform_preset_id ?? 'None'} />
@@ -932,11 +941,51 @@ function WizardStep({
           label="Crawl limits"
           value={Object.keys(draft.crawl_limits).length ? draft.crawl_limits : 'Profile defaults'}
         />
+        <Review label="Maximum URLs" value={limit('maximum_urls')} />
+        <Review label="Maximum depth" value={limit('maximum_depth')} />
+        <Review label="Duration limit (seconds)" value={limit('maximum_duration_seconds')} />
+        <Review
+          label="Minimum request delay (seconds)"
+          value={limit('minimum_request_delay_seconds')}
+        />
+        <Review label="Maximum concurrency" value={limit('maximum_concurrency')} />
+        <Review label="Queue limit" value={limit('maximum_queue_size')} />
+        <Review label="Maximum accepted bytes" value={limit('maximum_accepted_bytes')} />
+        <Review label="Maximum redirect hops" value={limit('maximum_redirect_hops')} />
+        <Review label="Response-size limit" value={limit('maximum_response_bytes')} />
+        <Review label="User-agent" value={effective?.crawler_user_agent ?? 'Validate to confirm'} />
+        <Review
+          label="DNS timeout (seconds)"
+          value={effective?.dns_timeout_seconds ?? 'Validate to confirm'}
+        />
         <Review
           label="Thresholds"
           value={Object.keys(draft.thresholds).length ? draft.thresholds : 'Inherited defaults'}
         />
         <Review label="Publication" value="Disabled" />
+        <Review
+          label="External AI"
+          value={effective?.external_ai_enabled ? 'Enabled' : 'Disabled'}
+        />
+        <Review
+          label="Summary writing"
+          value={effective?.summary_writing_enabled ? 'Enabled' : 'Disabled'}
+        />
+        <Review
+          label="Real-site authorization"
+          value={
+            typeof effective?.real_site_operations === 'object' &&
+            effective.real_site_operations !== null
+              ? (effective.real_site_operations as Record<string, unknown>).status
+              : effective?.resolution_error
+                ? 'Suspended or unavailable'
+                : 'Validate to confirm'
+          }
+        />
+        <Review
+          label="Outbound policy"
+          value={effective?.outbound_policy_version ?? 'Validate to confirm'}
+        />
       </dl>
       <EffectiveRuleReview value={effective} />
     </>
@@ -1214,6 +1263,14 @@ function SummaryResult({ auditId }: { auditId: string }) {
   }, [auditId]);
   if (error) return <LoadFailure error={error} />;
   if (value === null) return <LoadingAudit />;
+  const operational =
+    typeof value.operational_accounting === 'object' && value.operational_accounting !== null
+      ? (value.operational_accounting as Record<string, unknown>)
+      : {};
+  const admission =
+    typeof operational.url_admission === 'object' && operational.url_admission !== null
+      ? (operational.url_admission as Record<string, unknown>)
+      : {};
   return (
     <div className="result-stack">
       <Card>
@@ -1238,6 +1295,10 @@ function SummaryResult({ auditId }: { auditId: string }) {
             <small>{display(value.indeterminate_urls)} indeterminate</small>
           </Card>
         </div>
+        <Alert tone={Number(admission.over_limit ?? 0) > 0 ? 'warning' : 'neutral'}>
+          {display(admission.definition)} Admitted: {display(admission.admitted)}. Fetched:{' '}
+          {display(admission.fetched)}. Over-limit discoveries: {display(admission.over_limit)}.
+        </Alert>
       </Card>
       <Card>
         <h3>Recommendations and issue groups</h3>
@@ -1252,7 +1313,11 @@ function SummaryResult({ auditId }: { auditId: string }) {
           <Review label="Low issue groups" value={value.low_issue_groups} />
           <Review label="Image summary" value={value.image_summary_json} />
           <Review label="Structured-data summary" value={value.structured_data_summary_json} />
-          <Review label="Module completeness" value={value.module_counts_json} />
+          <Review label="Aggregate requests" value={operational.request_count} />
+          <Review label="Aggregate accepted bytes" value={operational.accepted_byte_count} />
+          <Review label="Aggregate redirects" value={operational.redirect_count} />
+          <Review label="Rejected destinations" value={operational.rejected_destination_count} />
+          <Review label="Scope denials" value={operational.scope_denial_count} />
           <Review label="Projection version" value={value.projection_version} />
         </dl>
       </Card>
@@ -2045,7 +2110,10 @@ export function SiteAuditPageDetailPage() {
           <DetailFields
             values={[
               ['Title', value.title],
+              ['Title length', value.title_length],
               ['Meta description', value.description],
+              ['Description length', value.description_length],
+              ['Canonical URL', value.canonical],
               ['Meta robots', value.meta_robots],
               ['X-Robots-Tag', value.x_robots_tag],
               ['Link summary', value.link_summary],

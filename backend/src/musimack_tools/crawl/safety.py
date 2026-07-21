@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -31,12 +32,15 @@ _SUPPLEMENTAL_UNSAFE_NETWORKS = tuple(
     ipaddress.ip_network(network)
     for network in (
         "100.64.0.0/10",
+        "192.0.0.0/24",
         "169.254.0.0/16",
         "192.0.2.0/24",
         "198.18.0.0/15",
         "198.51.100.0/24",
         "203.0.113.0/24",
         "2001:db8::/32",
+        "64:ff9b::/96",
+        "100::/64",
         "fc00::/7",
         "fe80::/10",
         "fec0::/10",
@@ -76,9 +80,17 @@ class DestinationSafetyValidator:
             )
 
         try:
-            evidence = await self._resolver.resolve(
-                destination.hostname,
-                maximum_answers=self._settings.fetch_maximum_dns_answers,
+            async with asyncio.timeout(self._settings.fetch_dns_timeout_seconds):
+                evidence = await self._resolver.resolve(
+                    destination.hostname,
+                    maximum_answers=self._settings.fetch_maximum_dns_answers,
+                )
+        except TimeoutError:
+            return self._denied(
+                destination,
+                FetchFailureCode.DNS_RESOLUTION_TIMEOUT,
+                "DNS resolution exceeded the configured timeout",
+                internal_exception_type="TimeoutError",
             )
         except DnsResolutionError as error:
             return self._denied(
@@ -117,6 +129,7 @@ class DestinationSafetyValidator:
             hostname=destination.hostname,
             effective_port=destination.effective_port,
             dns_evidence=evidence,
+            selected_address=evidence.addresses[0],
         )
 
     def _validate_url_boundary(

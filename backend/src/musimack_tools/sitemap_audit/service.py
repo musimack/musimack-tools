@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
+import time
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -69,8 +71,14 @@ class SitemapAuditService:
         self._repository.reconcile_interrupted()
 
     async def discover(
-        self, run_id: str, options: DiscoveryOptions
+        self,
+        run_id: str,
+        options: DiscoveryOptions,
+        *,
+        configuration: SitemapAuditConfiguration | None = None,
+        operation_sink: list[tuple[str, FetchResult]] | None = None,
     ) -> tuple[tuple[SitemapCandidate, ...], tuple[SitemapFinding, ...]]:
+        selected = configuration or self.configuration
         context = self._context(run_id)
         _, seed, _, _ = context
         normalized_seed = normalize_url(seed)
@@ -90,8 +98,11 @@ class SitemapAuditService:
         if options.discover_robots:
             robots_url = normalize_url(f"{normalized_seed.origin}/robots.txt")
             result = await self._fetcher.fetch(
-                FetchRequest(robots_url, correlation_id=f"sitemap-discovery-{run_id}"), scope
+                _bounded_fetch_request(robots_url, f"sitemap-discovery-{run_id}", selected),
+                scope,
             )
+            if operation_sink is not None:
+                operation_sink.append(("robots", result))
             if result.outcome is FetchOutcome.SUCCESS and result.body is not None:
                 parsed = RobotsTxtParser().parse(result.body)
                 for directive in parsed.sitemap_directives:
@@ -119,8 +130,15 @@ class SitemapAuditService:
             )
         return _deduplicate(candidates, scope, findings), tuple(findings)
 
-    async def create_and_run(self, run_id: str, options: DiscoveryOptions) -> dict[str, Any]:
-        if not self.configuration.enabled:
+    async def create_and_run(
+        self,
+        run_id: str,
+        options: DiscoveryOptions,
+        *,
+        configuration: SitemapAuditConfiguration | None = None,
+    ) -> dict[str, Any]:
+        selected = configuration or self.configuration
+        if not selected.enabled:
             raise ValueError("sitemap_audit_disabled")
         job_id, seed, _terminal, _page_count = self._context(run_id)
         if options.explicit_url:
@@ -130,7 +148,7 @@ class SitemapAuditService:
                 raise ValueError("sitemap_audit_invalid_filter") from None
             if not evaluate_scope(self._scope(run_id, seed), explicit).allowed:
                 raise ValueError("sitemap_audit_invalid_filter")
-        audit_id = audit_identity(run_id, options, self.configuration)
+        audit_id = audit_identity(run_id, options, selected)
         existing = self._repository.get(audit_id)
         if existing and existing["state"] not in {
             AuditLifecycle.ACCEPTED.value,
@@ -140,10 +158,14 @@ class SitemapAuditService:
             AuditLifecycle.COMPARING.value,
         }:
             return existing
-        self._repository.create(audit_id, job_id, run_id, seed, options, self.configuration)
+        self._repository.create(audit_id, job_id, run_id, seed, options, selected)
         if not self._repository.claim_execution(audit_id):
             raise ValueError("sitemap_audit_already_exists")
-        candidates, discovery_findings = await self.discover(run_id, options)
+        operations: list[tuple[str, FetchResult]] = []
+        started_at = time.monotonic()
+        candidates, discovery_findings = await self.discover(
+            run_id, options, configuration=selected, operation_sink=operations
+        )
         for finding in discovery_findings:
             self._repository.persist_finding(audit_id, finding)
         scope = self._scope(run_id, seed)
@@ -161,7 +183,7 @@ class SitemapAuditService:
             candidate, parent_document_id, depth = queue.pop(0)
             if candidate.normalized_url in fetched:
                 continue
-            if len(fetched) >= self.configuration.maximum_documents:
+            if len(fetched) >= selected.maximum_documents:
                 self._repository.persist_finding(
                     audit_id,
                     _finding(
@@ -172,7 +194,7 @@ class SitemapAuditService:
                 )
                 partial = True
                 break
-            if depth > self.configuration.maximum_depth:
+            if depth > selected.maximum_depth:
                 self._repository.persist_finding(
                     audit_id,
                     _finding(
@@ -183,9 +205,48 @@ class SitemapAuditService:
                 )
                 partial = True
                 continue
-            fetched.add(candidate.normalized_url)
             target = normalize_url(candidate.normalized_url)
-            result = await self._fetcher.fetch(FetchRequest(target, correlation_id=audit_id), scope)
+            if operations and selected.minimum_request_delay_seconds:
+                await asyncio.sleep(selected.minimum_request_delay_seconds)
+            elapsed = time.monotonic() - started_at
+            if elapsed >= selected.maximum_duration_seconds:
+                self._repository.persist_finding(
+                    audit_id,
+                    _finding(
+                        ValidationCode.FETCH_FAILED,
+                        "The inherited specialist duration limit was reached",
+                    ),
+                    parent_document_id,
+                )
+                partial = True
+                break
+            accepted_bytes = sum(item.actual_bytes_read for _kind, item in operations)
+            remaining_bytes = selected.maximum_accepted_bytes - accepted_bytes
+            if remaining_bytes <= 0:
+                self._repository.persist_finding(
+                    audit_id,
+                    _finding(
+                        ValidationCode.RESPONSE_TOO_LARGE,
+                        "The inherited specialist accepted-byte limit was reached",
+                    ),
+                    parent_document_id,
+                )
+                partial = True
+                break
+            fetched.add(candidate.normalized_url)
+            result = await self._fetcher.fetch(
+                _bounded_fetch_request(
+                    target,
+                    audit_id,
+                    selected,
+                    maximum_duration_seconds=max(
+                        0.001, selected.maximum_duration_seconds - elapsed
+                    ),
+                    maximum_response_bytes=remaining_bytes,
+                ),
+                scope,
+            )
+            operations.append(("sitemap", result))
             payload = result.body or b""
             final_url = None
             with suppress(UrlNormalizationError):
@@ -227,7 +288,7 @@ class SitemapAuditService:
                     content_type=result.content_type,
                     document_url=final_url or candidate.normalized_url,
                     scope=scope,
-                    configuration=self.configuration,
+                    configuration=selected,
                 )
                 fetch_state = FetchState.FETCHED.value
             else:
@@ -252,13 +313,27 @@ class SitemapAuditService:
                 redirects=result.redirect_chain,
                 parsed=parsed,
             )
+            if (
+                sum(item.actual_bytes_read for _kind, item in operations)
+                >= selected.maximum_accepted_bytes
+            ):
+                self._repository.persist_finding(
+                    audit_id,
+                    _finding(
+                        ValidationCode.RESPONSE_TOO_LARGE,
+                        "The inherited specialist accepted-byte limit was reached",
+                    ),
+                    doc_id,
+                )
+                partial = True
+                break
             if parent_document_id is None and parsed.parse_state in {
                 ParseState.PARSED,
                 ParseState.PARSED_WITH_WARNINGS,
             }:
                 valid_root = True
             total_urls += sum(1 for entry in parsed.entries if entry.valid and not entry.duplicate)
-            if total_urls > self.configuration.maximum_total_urls:
+            if total_urls > selected.maximum_total_urls:
                 self._repository.persist_finding(
                     audit_id,
                     _finding(
@@ -297,6 +372,9 @@ class SitemapAuditService:
                 )
                 sequence += 1
             self._repository.transition(audit_id, AuditLifecycle.FETCHING)
+        self._repository.persist_operational_accounting(
+            audit_id, _operational_accounting(operations)
+        )
         if not valid_root:
             self._repository.transition(
                 audit_id, AuditLifecycle.FAILED, "sitemap_audit_no_valid_root"
@@ -531,6 +609,96 @@ def _deduplicate(
 
 def _finding(code: ValidationCode, message: str) -> SitemapFinding:
     return SitemapFinding(code, ValidationSeverity.WARNING, message, 0)
+
+
+def _bounded_fetch_request(
+    url: Any,
+    correlation_id: str,
+    configuration: SitemapAuditConfiguration,
+    *,
+    maximum_duration_seconds: float | None = None,
+    maximum_response_bytes: int | None = None,
+) -> FetchRequest:
+    return FetchRequest(
+        url,
+        correlation_id=correlation_id,
+        maximum_response_bytes=min(
+            configuration.maximum_response_bytes,
+            configuration.maximum_accepted_bytes,
+            maximum_response_bytes
+            if maximum_response_bytes is not None
+            else configuration.maximum_accepted_bytes,
+        ),
+        maximum_redirect_hops=configuration.maximum_redirect_hops,
+        maximum_duration_seconds=(
+            configuration.maximum_duration_seconds
+            if maximum_duration_seconds is None
+            else maximum_duration_seconds
+        ),
+        user_agent=configuration.crawler_user_agent,
+    )
+
+
+def _operational_accounting(operations: list[tuple[str, FetchResult]]) -> dict[str, Any]:
+    timeout_codes = {
+        "connect_timeout",
+        "read_timeout",
+        "write_timeout",
+        "pool_timeout",
+        "request_deadline_exceeded",
+        "dns_resolution_timeout",
+    }
+    rejection_codes = {
+        "unsupported_scheme",
+        "credentials_not_allowed",
+        "invalid_hostname",
+        "ip_literal_not_allowed",
+        "unsafe_hostname",
+        "unsafe_resolved_address",
+        "mixed_safe_unsafe_dns_answers",
+        "port_not_allowed",
+        "redirect_scope_denied",
+        "redirect_unsafe_destination",
+    }
+    fetches = tuple(item for _kind, item in operations)
+    robots = tuple(item for kind, item in operations if kind == "robots")
+    sitemaps = tuple(item for kind, item in operations if kind == "sitemap")
+    codes = [item.failure_code.value if item.failure_code is not None else None for item in fetches]
+    fingerprints = sorted(
+        {
+            hashlib.sha256(address.encode("ascii")).hexdigest()
+            for item in fetches
+            for evidence in item.dns_evidence
+            for address in evidence.addresses
+        }
+    )[:256]
+    return {
+        "source": "existing_sitemap",
+        "request_count": sum(item.attempt_count for item in fetches),
+        "robots_request_count": sum(item.attempt_count for item in robots),
+        "sitemap_request_count": sum(item.attempt_count for item in sitemaps),
+        "dns_operation_count": sum(len(item.dns_evidence) for item in fetches),
+        "accepted_byte_count": sum(item.actual_bytes_read for item in fetches),
+        "redirect_count": sum(len(item.redirect_chain) for item in fetches),
+        "rejected_destination_count": sum(code in rejection_codes for code in codes),
+        "scope_denial_count": sum(
+            code in {"scope_denied", "redirect_scope_denied"} for code in codes
+        ),
+        "retry_count": sum(max(0, item.attempt_count - 1) for item in fetches),
+        "timeout_count": sum(code in timeout_codes for code in codes),
+        "response_size_rejection_count": sum(code == "response_too_large" for code in codes),
+        "resolved_address_fingerprints": fingerprints,
+        "robots_outcomes": _outcomes(robots),
+        "sitemap_outcomes": _outcomes(sitemaps),
+    }
+
+
+def _outcomes(fetches: tuple[FetchResult, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in fetches:
+        key = item.outcome.value
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _empty_parsed(finding: SitemapFinding) -> ParsedSitemap:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -27,6 +28,30 @@ class SpecialistEvidence:
     artifact_count: int = 0
     documents: tuple[dict[str, Any], ...] = ()
     entries: tuple[dict[str, Any], ...] = ()
+    safety_envelope: dict[str, Any] | None = None
+    operational_accounting: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SpecialistSafetyEnvelope:
+    """Immutable parent authority supplied to every specialist resolution."""
+
+    authorization_enabled: bool
+    authorization_version: int | None
+    destination_policy_version: str
+    user_agent: str
+    maximum_urls: int
+    maximum_depth: int
+    maximum_duration_seconds: float
+    maximum_accepted_bytes: int
+    maximum_concurrency: int
+    maximum_queue_size: int
+    minimum_request_delay_seconds: float
+    maximum_redirect_hops: int
+    maximum_response_bytes: int
+    dns_timeout_seconds: float
+    retry_policy: str
+    recovery_policy: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +63,7 @@ class SpecialistRequest:
     associated: dict[str, Any] | None
     configured_audit_id: str | None
     allow_launch: bool
+    safety_envelope: SpecialistSafetyEnvelope
 
 
 class SiteAuditSpecialistGateway(Protocol):
@@ -79,10 +105,10 @@ class SpecialistAuthority:
     def entries(self, audit_id: str) -> tuple[dict[str, Any], ...]:
         return self._paged(self.entry_method, audit_id)
 
-    async def launch_for_run(self, run_id: str) -> dict[str, Any] | None:
+    async def launch_for_request(self, request: SpecialistRequest) -> dict[str, Any] | None:
         if self.launch is None:
             return None
-        value = self.launch(run_id)  # type: ignore[operator]
+        value = self.launch(request)  # type: ignore[operator]
         if inspect.isawaitable(value):
             value = await value
         return None if value is None else _mapping(value)
@@ -165,8 +191,9 @@ class SQLAlchemySiteAuditSpecialistGateway:
                     lifecycle_state="accepted",
                     partial=False,
                     evidence_count=0,
+                    safety_envelope=asdict(request.safety_envelope),
                 )
-            candidate = await authority.launch_for_run(run_id)
+            candidate = await authority.launch_for_request(request)
             source = "linked_child"
         if candidate is None:
             return _unavailable(module, "no_compatible_specialist_audit")
@@ -210,6 +237,15 @@ class SQLAlchemySiteAuditSpecialistGateway:
         )
         partial = bool(candidate.get("partial", False)) or lifecycle == "partially_completed"
         reason = "same_crawl_run" if source == "eligible_prior" else "linked_specialist_audit"
+        configuration: dict[str, Any] = {}
+        raw_configuration = candidate.get("configuration_json")
+        if isinstance(raw_configuration, str):
+            try:
+                decoded = json.loads(raw_configuration)
+            except json.JSONDecodeError:
+                decoded = {}
+            if isinstance(decoded, dict):
+                configuration = decoded
         return SpecialistEvidence(
             module,
             audit_id,
@@ -222,6 +258,17 @@ class SQLAlchemySiteAuditSpecialistGateway:
             count,
             documents=documents,
             entries=entries,
+            safety_envelope={
+                key: value
+                for key, value in configuration.items()
+                if key != "operational_accounting"
+            }
+            or None,
+            operational_accounting=(
+                configuration.get("operational_accounting")
+                if isinstance(configuration.get("operational_accounting"), dict)
+                else None
+            ),
         )
 
 

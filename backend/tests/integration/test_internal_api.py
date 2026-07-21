@@ -974,6 +974,8 @@ def test_end_to_end_api_uses_accepted_job_and_run_services() -> None:
         assert result.status_code == 200
         assert result.json()["data"]["crawl_counts"] == [
             {"name": "urls_discovered", "count": 1},
+            {"name": "urls_admitted", "count": 1},
+            {"name": "urls_over_limit", "count": 0},
             {"name": "urls_fetched", "count": 1},
             {"name": "urls_parsed", "count": 0},
             {"name": "accepted_bytes", "count": 10},

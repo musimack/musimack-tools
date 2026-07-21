@@ -440,6 +440,7 @@ def _api_error(code: str, explanation: str) -> InternalApiError:
             ApiErrorCode.SITE_AUDIT_STATE_CONFLICT,
             ApiErrorCode.SITE_AUDIT_RETRY_NOT_ALLOWED,
             ApiErrorCode.SITE_AUDIT_CANCELLATION_NOT_ALLOWED,
+            ApiErrorCode.SITE_AUDIT_REAL_SITE_OPERATIONS_SUSPENDED,
         }
         else 503
         if mapped
@@ -471,6 +472,9 @@ _ERROR_CODES = {
     "site_audit_retry_not_allowed": ApiErrorCode.SITE_AUDIT_RETRY_NOT_ALLOWED,
     "site_audit_cancellation_not_allowed": ApiErrorCode.SITE_AUDIT_CANCELLATION_NOT_ALLOWED,
     "site_audit_settings_unavailable": ApiErrorCode.SITE_AUDIT_SETTINGS_DISABLED,
+    "site_audit_real_site_operations_suspended": (
+        ApiErrorCode.SITE_AUDIT_REAL_SITE_OPERATIONS_SUSPENDED
+    ),
     "site_audit_global_settings_version_not_found": ApiErrorCode.SITE_AUDIT_SETTINGS_INVALID,
     "site_audit_preset_version_not_found": ApiErrorCode.SITE_AUDIT_PRESET_NOT_FOUND,
     "site_audit_preset_not_found": ApiErrorCode.SITE_AUDIT_PRESET_NOT_FOUND,

@@ -141,12 +141,61 @@ def test_request_headers_are_identifiable_and_do_not_include_credentials() -> No
     _, _, fetcher = _run_fetch(handler)
 
     assert observed == {
-        "user_agent": "MusimackSEOToolkit/0.1",
+        "user_agent": "Musimack SEO Toolkit/1.0",
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "cookie": None,
         "authorization": None,
     }
     assert fetcher.trusts_environment_proxies is False
+
+
+def test_connection_uses_validated_address_with_original_host_and_tls_name() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == _SAFE_ADDRESS
+        assert request.headers["host"] == "example.test"
+        assert request.extensions["sni_hostname"] == "example.test"
+        assert request.headers["connection"] == "close"
+        return httpx.Response(200)
+
+    result, _, _ = _run_fetch(handler)
+
+    assert result.outcome is FetchOutcome.SUCCESS
+
+
+def test_public_ipv6_answer_is_bound_to_connection_without_hostname_reresolution() -> None:
+    address = "2001:4860:4860::8888"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == address
+        assert request.headers["host"] == "example.test"
+        return httpx.Response(200)
+
+    result, resolver, _ = _run_fetch(handler, resolver=_FakeResolver((address,)))
+
+    assert result.outcome is FetchOutcome.SUCCESS
+    assert resolver.calls == ["example.test"]
+
+
+def test_validated_public_answer_prevents_dns_rebinding_at_connection_time() -> None:
+    observed_connection_hosts: list[str] = []
+
+    class RebindingResolver(_FakeResolver):
+        async def resolve(self, hostname: str, *, maximum_answers: int) -> DnsEvidence:
+            del maximum_answers
+            self.calls.append(hostname)
+            answers = (_SAFE_ADDRESS,) if len(self.calls) == 1 else ("127.0.0.1",)
+            return DnsEvidence(hostname, answers)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed_connection_hosts.append(request.url.host)
+        return httpx.Response(200)
+
+    resolver = RebindingResolver()
+    result, _, _ = _run_fetch(handler, resolver=resolver)
+
+    assert result.outcome is FetchOutcome.SUCCESS
+    assert resolver.calls == ["example.test"]
+    assert observed_connection_hosts == [_SAFE_ADDRESS]
 
 
 def test_empty_body_is_successful() -> None:

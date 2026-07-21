@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 CRAWL_RUN_ORCHESTRATION_VERSION = "crawl-run-orchestration-v1"
 DEFAULT_ROBOTS_PRODUCT = "MusimackSEOToolkit"
+MAXIMUM_EXECUTION_IDENTITY_LENGTH = 256
 
 
 class RunStage(StrEnum):
@@ -167,6 +168,7 @@ class CrawlRunRequest:
     publication_configuration: SitemapPublicationConfiguration | None = None
     summary_configuration: RunSummaryConfiguration | None = None
     caller_label: str | None = None
+    execution_identity: str | None = None
     robots_product_token: str = DEFAULT_ROBOTS_PRODUCT
     orchestration_version: str = CRAWL_RUN_ORCHESTRATION_VERSION
 
@@ -201,6 +203,15 @@ class CrawlRunRequest:
             raise ValueError(message)
         if self.caller_label is not None and not self.caller_label.strip():
             message = "caller label cannot be blank"
+            raise ValueError(message)
+        if self.execution_identity is not None and (
+            not self.execution_identity.strip()
+            or len(self.execution_identity) > MAXIMUM_EXECUTION_IDENTITY_LENGTH
+        ):
+            message = (
+                "execution identity must be non-blank and at most "
+                f"{MAXIMUM_EXECUTION_IDENTITY_LENGTH} characters"
+            )
             raise ValueError(message)
         if not self.robots_product_token.strip():
             message = "robots product token cannot be blank"

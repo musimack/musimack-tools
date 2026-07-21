@@ -90,6 +90,9 @@ def canonical_identity_bytes(request: CrawlRunRequest) -> bytes:
 
 
 def run_identity(request: CrawlRunRequest) -> tuple[str, str]:
-    """Return the display ID and full lowercase SHA-256 digest."""
-    digest = hashlib.sha256(canonical_identity_bytes(request)).hexdigest()
+    """Return the execution ID while keeping configuration identity independently stable."""
+    identity = canonical_identity_bytes(request)
+    if request.execution_identity is not None:
+        identity += b"execution-identity\0" + request.execution_identity.encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()
     return f"run-{digest[:12]}", digest

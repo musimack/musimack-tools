@@ -7,6 +7,8 @@ from typing import Annotated
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from musimack_tools.domain.fetching import CRAWLER_USER_AGENT
+
 
 class Environment(StrEnum):
     """Recognized deployment environment labels."""
@@ -48,7 +50,7 @@ class Settings(BaseSettings):
     environment: Environment = Environment.DEVELOPMENT
     log_level: LogLevel = LogLevel.INFO
     crawler_user_agent: str = Field(
-        default="MusimackSEOToolkit/0.1",
+        default=CRAWLER_USER_AGENT,
         min_length=3,
         max_length=200,
     )
@@ -63,6 +65,7 @@ class Settings(BaseSettings):
     fetch_maximum_response_body_bytes: int = Field(default=5_000_000, ge=1, le=50_000_000)
     fetch_maximum_response_header_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
     fetch_maximum_dns_answers: int = Field(default=16, ge=1, le=64)
+    fetch_dns_timeout_seconds: PositiveTimeout = 5
     fetch_connect_timeout_seconds: PositiveTimeout = 10
     fetch_read_timeout_seconds: PositiveTimeout = 20
     fetch_write_timeout_seconds: PositiveTimeout = 10
