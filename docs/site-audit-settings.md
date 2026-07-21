@@ -56,26 +56,44 @@ escapes retain structure, query identity is deterministic, empty and repeated va
 and trailing slashes and path case remain significant. Exact URL matching includes canonical query
 ordering. Query match operations inspect the syntax-normalized original before parameter stripping.
 
-Rules resolve by protected boundary, global, accepted preset, site profile, and per-audit source.
-A higher source replaces a lower rule only with an explicit inherited `overrides_rule_ids` target in
-the same decision layer. Overlapping outcomes without an explicit override remain a visible conflict;
-the implementation does not use “most restrictive wins” or “last rule wins.” Discovery, metadata,
-sitemap, and normalization decisions resolve independently, retaining primary and contributing rules.
+Rules resolve by protected boundary, pinned global version, accepted pinned preset, pinned site-profile
+version, disabled inherited-rule IDs, and per-audit source. A higher source replaces a lower rule only
+with an explicit inherited `overrides_rule_ids` target in the same decision layer. Same-layer overlaps
+retain their conflict evidence while selecting one deterministic primary outcome by source hierarchy,
+specificity, explicit priority, and stable rule identity. The implementation does not use a generic
+last-rule-wins policy. Discovery, metadata, sitemap, review, and normalization decisions resolve
+independently, retaining primary, contributing, conflicting, disabled, and overridden rules.
+
+## Effective settings at submission
+
+CSA-06 integrates this resolver into Site Audit validation, preflight, review, and immutable
+submission. The draft pins exact global, preset, and profile versions. Resolution merges those
+versioned inputs with explicit acceptance, disabled inherited-rule IDs, crawl and threshold
+overrides, enabled modules, tracking acceptance, exceptions, and per-audit rules. Missing pinned
+versions or invalid inherited-rule references fail safely before lifecycle transition or snapshot
+persistence; resolution never falls forward to a newer mutable version.
+
+The resolved output includes approved hosts, scope, crawl limits, thresholds, enabled modules,
+tracking behavior, effective and disabled rules, per-source counts, warnings, provenance, and stable
+ordering. Validation and preflight return that same output, the browser reviews it, and submission
+stores it as the immutable snapshot. Accepted tracking parameters become explicit normalization
+rules only after acceptance. Retry and recovery read the submitted snapshot rather than resolving
+current settings again.
 
 ## Bounds
 
-| Input or projection | Bound |
-| --- | ---: |
-| Rules per source | 500 |
-| Rule name | 128 characters |
-| Match value | 2,048 characters |
-| Description / reason | 1,000 characters |
-| Explicit override IDs per rule | 100 |
-| Sample URLs per test | 100 |
-| Retained-evidence preview results | 500 |
-| API page size | 500 |
-| Browser bounded All | 5,000 |
-| Retained/exported audit URLs | 100,000 |
+| Input or projection               |            Bound |
+| --------------------------------- | ---------------: |
+| Rules per source                  |              500 |
+| Rule name                         |   128 characters |
+| Match value                       | 2,048 characters |
+| Description / reason              | 1,000 characters |
+| Explicit override IDs per rule    |              100 |
+| Sample URLs per test              |              100 |
+| Retained-evidence preview results |              500 |
+| API page size                     |              500 |
+| Browser bounded All               |            5,000 |
+| Retained/exported audit URLs      |          100,000 |
 
 Profile crawl overrides are limited by the unchanged application hard maxima. Settings can never
 relax SSRF, DNS, redirect, authentication, authorization, approved-host, artifact, export, or crawl
@@ -95,3 +113,9 @@ Retained-evidence rule preview is explicitly deferred. CSA-02 cannot provide the
 operator-friendly eligible-evidence selector without leaking CSA-03 aggregate ownership or CSA-05
 wizard work. `/rule-previews` therefore returns `site_audit_rule_preview_deferred` rather than
 accepting an internal ID or pretending an empty preview succeeded.
+
+CSA-06 parameter-heavy acceptance retained explicit evidence for all eight built-in tracking
+parameters, repeated and empty values, query-order variants, collisions, and functional parameters.
+Tracking rules were absent before acceptance and present only after explicit acceptance; original
+variants remained inspectable while normalized identities stayed stable and functional parameters
+remained intact.

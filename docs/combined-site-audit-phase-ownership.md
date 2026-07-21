@@ -114,3 +114,9 @@ exclusion review, safe evidence views, and artifact navigation. Its narrow backe
 draft-management and bounded read projections over the accepted CSA-03/CSA-04 schema; it adds no
 migration and changes no orchestration authority. CSA-06 owns controlled real-site acceptance.
 CSA-05 performs no public-network acceptance crawl.
+
+CSA-06 preserves specialist ownership. The combined result retains bounded core metadata, image,
+structured-data, sitemap, canonical, robots, and status facts, but never synthesizes unavailable
+specialist depth or reports it as zero. Full duplicate/length metadata and internal-link topology
+remain specialist-owned; the combined boundary must retain provenance and explicit partial or
+unavailable state.

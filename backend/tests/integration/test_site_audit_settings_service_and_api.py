@@ -207,6 +207,10 @@ def test_effective_settings_and_sample_test_are_stateless_bounded_and_reproducib
         assert any(
             item["rule_id"] == "wordpress.admin" for item in effective["disabled_inherited_rules"]
         )
+        assert any(item["rule_id"] == "tracking.gclid" for item in effective["effective_rules"])
+        assert not any(
+            item["rule_id"] == "tracking.utm_source" for item in effective["effective_rules"]
+        )
         assert effective["protected_boundaries"]["ssrf"] == "enforced"
         tested = service.test_rules(payload, actor="operator")["test"]
         assert tested["network_access"] is False
@@ -214,6 +218,74 @@ def test_effective_settings_and_sample_test_are_stateless_bounded_and_reproducib
         assert tested["result_count"] == 2
         assert tested["results"][0]["normalized_url"] == ("https://www.example.com/private/")
         assert service.profiles(include_disabled=True, offset=0, limit=2)["total"] == 1
+        without_tracking = service.effective_settings(
+            {
+                "preset_id": "wordpress",
+                "preset_version": "wordpress-1",
+                "preset_accepted": True,
+                "tracking_parameters_accepted": False,
+            },
+            actor="operator",
+        )
+        assert not any(
+            str(item["rule_id"]).startswith("tracking.")
+            for item in without_tracking["effective_rules"]
+        )
+    finally:
+        runtime.dispose()
+
+
+def test_effective_settings_pin_global_profile_and_preset_versions(tmp_path: Path) -> None:
+    runtime, service = _runtime(tmp_path)
+    try:
+        global_configuration = dict(cast("dict[str, object]", service.settings()["configuration"]))
+        thresholds = dict(cast("dict[str, object]", global_configuration["metadata_thresholds"]))
+        thresholds["description_minimum"] = 80
+        global_configuration["metadata_thresholds"] = thresholds
+        global_v1 = service.update_settings(global_configuration, expected_version=0, actor="admin")
+        profile_v1 = service.create_profile(_profile(), actor="admin")
+        payload = {
+            "global_settings_version": 1,
+            "profile_id": profile_v1["profile_id"],
+            "profile_version": 1,
+        }
+
+        first = service.effective_settings(
+            payload, actor="operator", resolved_at="2026-01-01T00:00:00+00:00"
+        )
+        changed_global = dict(global_configuration)
+        changed_thresholds = dict(thresholds)
+        changed_thresholds["description_minimum"] = 90
+        changed_global["metadata_thresholds"] = changed_thresholds
+        service.update_settings(changed_global, expected_version=1, actor="admin")
+        changed_profile = _profile("Changed profile")
+        changed_profile["crawl_limit_overrides"] = {"maximum_urls": 300}
+        service.update_profile(
+            str(profile_v1["profile_id"]), changed_profile, expected_version=1, actor="admin"
+        )
+
+        repeated = service.effective_settings(
+            payload, actor="operator", resolved_at="2026-01-01T00:00:00+00:00"
+        )
+        assert first == repeated
+        assert first["global_settings_version"] == global_v1["version"] == 1
+        assert first["site_profile"]["version"] == 1
+        assert first["metadata_thresholds"]["description_minimum"] == 80
+        assert first["crawl_limit_overrides"]["maximum_urls"] == 250
+        assert first["preset"]["version"] == "wordpress-1"
+
+        with pytest.raises(
+            SiteAuditSettingsError, match="site_audit_global_settings_version_not_found"
+        ):
+            service.effective_settings({"global_settings_version": 999}, actor="operator")
+        with pytest.raises(SiteAuditSettingsError, match="site_profile_version_not_found"):
+            service.effective_settings(
+                {
+                    "profile_id": profile_v1["profile_id"],
+                    "profile_version": 999,
+                },
+                actor="operator",
+            )
     finally:
         runtime.dispose()
 

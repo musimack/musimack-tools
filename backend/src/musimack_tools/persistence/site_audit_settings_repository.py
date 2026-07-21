@@ -43,6 +43,15 @@ class SQLAlchemySiteAuditSettingsRepository:
             ).scalar_one_or_none()
             return _global_record(row) if row else None
 
+    def global_settings_version(self, version: int) -> dict[str, Any] | None:
+        """Return one immutable global-settings version without falling forward."""
+
+        if version == 0:
+            return None
+        with self._runtime.transaction() as session:
+            row = session.get(SiteAuditGlobalSettingsVersionModel, version)
+            return _global_record(row) if row else None
+
     def append_global_settings(
         self, configuration: dict[str, Any], *, expected_version: int, created_by: str
     ) -> dict[str, Any]:
@@ -109,6 +118,18 @@ class SQLAlchemySiteAuditSettingsRepository:
                 .order_by(SiteAuditProfileVersionModel.version.desc())
             ).scalars()
             return tuple(_profile_version_record(row) for row in rows)
+
+    def profile_version(self, profile_id: str, version: int) -> dict[str, Any] | None:
+        """Return one immutable profile version without substituting the latest version."""
+
+        with self._runtime.transaction() as session:
+            row = session.execute(
+                select(SiteAuditProfileVersionModel).where(
+                    SiteAuditProfileVersionModel.profile_id == profile_id,
+                    SiteAuditProfileVersionModel.version == version,
+                )
+            ).scalar_one_or_none()
+            return _profile_version_record(row) if row else None
 
     def create_profile(
         self,

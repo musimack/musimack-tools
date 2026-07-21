@@ -6,7 +6,9 @@ import json
 import uuid
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Protocol, cast
+from urllib.parse import urlsplit
 
+from musimack_tools.application.profiles import profile_for
 from musimack_tools.domain.application import (
     ApplicationOutcomeCode,
     CrawlLimitOverrides,
@@ -46,6 +48,7 @@ from musimack_tools.domain.site_audit_settings import (
     RuleMatchType,
     RuleScope,
     RuleSource,
+    SiteAuditSettingsError,
     UrlGovernanceRule,
     normalize_governed_url,
     rule_matches,
@@ -125,6 +128,7 @@ if TYPE_CHECKING:
         SQLAlchemySiteAuditOrchestrationRepository,
     )
     from musimack_tools.persistence.site_audit_repository import SQLAlchemySiteAuditRepository
+    from musimack_tools.site_audit_settings.service import SiteAuditSettingsService
 
 
 class SiteAuditCrawlGateway(Protocol):
@@ -188,6 +192,7 @@ class SiteAuditOrchestrationService:
         crawl: SiteAuditCrawlGateway,
         artifacts: ArtifactService,
         specialists: SiteAuditSpecialistGateway | None = None,
+        settings: SiteAuditSettingsService | None = None,
     ) -> None:
         self._repository = repository
         self._orchestration = orchestration
@@ -195,6 +200,7 @@ class SiteAuditOrchestrationService:
         self._crawl = crawl
         self._artifacts = artifacts
         self._specialists = specialists
+        self._settings = settings
 
     def create_draft(
         self,
@@ -212,6 +218,14 @@ class SiteAuditOrchestrationService:
             else f"audit-{uuid.uuid4().hex[:24]}"
         )
         existing = self._repository.audit(audit_id)
+        if existing is not None and "global_settings_version" not in normalized:
+            normalized["global_settings_version"] = existing["draft"].get(
+                "global_settings_version", 0
+            )
+        else:
+            normalized.setdefault(
+                "global_settings_version", self._current_global_settings_version()
+            )
         if existing is not None:
             if existing["draft_hash"] == _draft_hash(normalized):
                 return existing
@@ -240,6 +254,7 @@ class SiteAuditOrchestrationService:
         current = dict(audit["draft"])
         current.update(patch)
         normalized = _normalized_draft(current)
+        normalized.setdefault("global_settings_version", self._current_global_settings_version())
         return self._repository.update_draft(
             audit_id, normalized, expected_revision=expected_revision
         )
@@ -268,10 +283,24 @@ class SiteAuditOrchestrationService:
 
     def audit_detail(self, audit_id: str) -> dict[str, Any]:
         audit = self._required_audit(audit_id)
+        snapshot = self._repository.snapshot(audit_id)
+        if snapshot is not None:
+            effective_settings = snapshot["configuration"].get("resolution")
+        else:
+            try:
+                effective_settings = self._resolve_configuration(audit)["resolution"]
+            except SiteAuditOrchestrationError as error:
+                effective_settings = {
+                    "effective_rules": [],
+                    "disabled_inherited_rules": [],
+                    "warnings": [],
+                    "resolution_error": {"code": error.code, "explanation": str(error)},
+                }
         return {
             "audit": audit,
-            "snapshot": self._repository.snapshot(audit_id),
+            "snapshot": snapshot,
             "orchestration": self._orchestration.orchestration(audit_id),
+            "effective_settings": effective_settings,
         }
 
     def validate_draft(self, audit_id: str, *, expected_revision: int) -> dict[str, Any]:
@@ -280,10 +309,11 @@ class SiteAuditOrchestrationService:
             raise SiteAuditPersistenceError(
                 "site_audit_revision_conflict", "The draft changed; reload before validating."
             )
+        configuration = self._resolve_configuration(audit)
         validating = self._repository.transition(
             audit_id, AuditLifecycle.VALIDATING, expected_revision=expected_revision
         )
-        report = self._crawl.validate(_draft_crawl_request(validating))
+        report = self._crawl.validate(_draft_crawl_request(validating, configuration))
         target = AuditLifecycle.VALIDATED if report.valid else AuditLifecycle.VALIDATION_FAILED
         updated = self._repository.transition(
             audit_id,
@@ -292,7 +322,11 @@ class SiteAuditOrchestrationService:
             failure_code=None if report.valid else "site_audit_validation_failed",
             failure_explanation=None if report.valid else "The draft has validation errors.",
         )
-        return {"audit": updated, "validation": asdict(report)}
+        return {
+            "audit": updated,
+            "validation": asdict(report),
+            "effective_settings": configuration["resolution"],
+        }
 
     async def preflight_draft(self, audit_id: str, *, expected_revision: int) -> dict[str, Any]:
         audit = self._required_audit(audit_id)
@@ -300,10 +334,11 @@ class SiteAuditOrchestrationService:
             raise SiteAuditPersistenceError(
                 "site_audit_revision_conflict", "The draft changed; reload before preflight."
             )
+        configuration = self._resolve_configuration(audit)
         preflighting = self._repository.transition(
             audit_id, AuditLifecycle.PREFLIGHTING, expected_revision=expected_revision
         )
-        report = await self._crawl.preflight(_draft_crawl_request(preflighting))
+        report = await self._crawl.preflight(_draft_crawl_request(preflighting, configuration))
         ready = report.state.value != "blocked" and report.validation.valid
         updated = self._repository.transition(
             audit_id,
@@ -312,7 +347,11 @@ class SiteAuditOrchestrationService:
             failure_code=None if ready else "site_audit_preflight_failed",
             failure_explanation=None if ready else "The bounded preflight did not pass.",
         )
-        return {"audit": updated, "preflight": asdict(report)}
+        return {
+            "audit": updated,
+            "preflight": asdict(report),
+            "effective_settings": configuration["resolution"],
+        }
 
     async def submit(self, audit_id: str, *, actor: str) -> dict[str, Any]:
         audit = self._required_audit(audit_id)
@@ -322,8 +361,11 @@ class SiteAuditOrchestrationService:
                 raise SiteAuditOrchestrationError(
                     "site_audit_not_ready", "Only a ready Site Audit may be submitted."
                 )
-            configuration = dict(audit["draft"])
+            configuration = self._resolve_configuration(audit)
             configuration.setdefault("application_version", SITE_AUDIT_ORCHESTRATION_VERSION)
+            validate_snapshot_integrity(
+                {"configuration": configuration, "sha256": snapshot_hash(configuration)}
+            )
             snapshot = self._repository.create_snapshot(
                 audit_id,
                 stable_identifier("snapshot", audit_id, str(audit["draft_hash"])),
@@ -332,6 +374,9 @@ class SiteAuditOrchestrationService:
                 rules=_snapshot_rules(configuration),
                 disabled_rules=_disabled_rules(configuration),
             )
+            # The insert result intentionally contains only the parent row. Reload the complete
+            # immutable aggregate so crawl preparation receives its normalized child rules.
+            snapshot = self._required_snapshot(audit_id)
             audit = self._required_audit(audit_id)
         del actor  # Retained only at the authenticated draft boundary.
         validate_snapshot_integrity(snapshot)
@@ -367,6 +412,91 @@ class SiteAuditOrchestrationService:
             )
         self._orchestration.attach_crawl(audit_id, status.job_id, status.run_id)
         return self.status(audit_id)
+
+    def _current_global_settings_version(self) -> int:
+        if self._settings is None:
+            return 0
+        return self._settings.current_global_version()
+
+    def _resolve_configuration(self, audit: dict[str, Any]) -> dict[str, Any]:
+        if self._settings is None:
+            raise SiteAuditOrchestrationError(
+                "site_audit_settings_unavailable",
+                "Effective Site Audit settings cannot be resolved.",
+            )
+        draft = dict(audit["draft"])
+        disabled = draft.get("disabled_inherited_rules", ())
+        disabled_ids = (
+            [
+                str(item.get("stable_rule_id") or item.get("rule_id"))
+                if isinstance(item, dict)
+                else str(item)
+                for item in disabled
+            ]
+            if isinstance(disabled, (list, tuple))
+            else []
+        )
+        payload = {
+            "global_settings_version": draft.get("global_settings_version"),
+            "profile_id": draft.get("site_profile_id"),
+            "profile_version": draft.get("site_profile_version"),
+            "preset_id": draft.get("platform_preset_id"),
+            "preset_version": draft.get("platform_preset_version"),
+            "preset_accepted": draft.get("preset_accepted", False),
+            "preset_rule_states": draft.get("preset_rule_states", {}),
+            "tracking_parameters": draft.get("tracking_parameters", ()),
+            "tracking_parameters_accepted": draft.get("tracking_parameters_accepted", False),
+            "tracking_parameter_exceptions": draft.get("tracking_parameter_exceptions", ()),
+            "overrides": {
+                "crawl_profile": draft.get("crawl_profile", "standard_crawl"),
+                "crawl_limit_overrides": draft.get("crawl_limits", {}),
+                "metadata_thresholds": draft.get("thresholds", {}),
+                "rules": draft.get("rules", ()),
+                "disabled_rule_ids": disabled_ids,
+            },
+        }
+        try:
+            effective = self._settings.effective_settings(
+                payload,
+                actor=str(audit["created_by"]),
+                resolved_at=str(audit["created_at"]),
+            )
+        except SiteAuditSettingsError as error:
+            raise SiteAuditOrchestrationError(error.code, str(error)) from None
+        crawl_profile = str(effective["crawl_profile"])
+        selected_profile = profile_for(crawl_profile)
+        if selected_profile is None:
+            raise SiteAuditOrchestrationError(
+                "site_audit_crawl_profile_invalid", "Crawl profile is invalid."
+            )
+        crawl_limits = asdict(selected_profile.limits)
+        crawl_limits.update(cast("dict[str, Any]", effective["crawl_limit_overrides"]))
+        effective = dict(effective)
+        effective.update(
+            {
+                "approved_hosts": draft.get("approved_hosts", []),
+                "scope_policy": draft.get("scope_policy", {"mode": "exact_host"}),
+                "crawl_limits": crawl_limits,
+                "enabled_modules": draft.get("enabled_modules", []),
+            }
+        )
+        configuration = dict(draft)
+        configuration.update(
+            {
+                "global_settings_version": effective["global_settings_version"],
+                "global_settings_hash": effective["global_settings_hash"],
+                "crawl_profile": crawl_profile,
+                "crawl_limits": crawl_limits,
+                "thresholds": effective["metadata_thresholds"],
+                "rules": effective["effective_rules"],
+                "disabled_inherited_rules": effective["disabled_inherited_rules"],
+                "tracking_parameters": effective["tracking_parameters"],
+                "tracking_parameters_accepted": effective["tracking_parameters_accepted"],
+                "tracking_parameter_exceptions": effective["tracking_parameter_exceptions"],
+                "resolution": effective,
+            }
+        )
+        return configuration
 
     async def reconcile(self, audit_id: str) -> dict[str, Any]:  # noqa: PLR0911
         parent = self._required_orchestration(audit_id)
@@ -881,12 +1011,31 @@ class SiteAuditOrchestrationService:
         )
         urls = self._all_urls(audit_id)
         for index, url in enumerate(urls):
+            observed = _observed_rule_urls(
+                url,
+                self._repository.discovery_sources(audit_id, str(url["url_id"])),
+            )
             matched = [
-                (rule, record)
+                (rule, record, original)
                 for rule, record in zip(rules, stored, strict=True)
-                if rule.enabled and rule_matches(rule, str(url["original_url"]))
+                if rule.enabled
+                and (
+                    original := next(
+                        (candidate for candidate in observed if rule_matches(rule, candidate)),
+                        None,
+                    )
+                )
+                is not None
             ]
-            decisions = _governance_decisions(matched)
+            overridden_ids = {
+                target for rule, _record, _original in matched for target in rule.overrides_rule_ids
+            }
+            active_matches = [
+                (rule, record)
+                for rule, record, _original in matched
+                if rule.rule_id not in overridden_ids
+            ]
+            decisions = _governance_decisions(active_matches)
             if url.get("failure_code") == "scope_denied":
                 decisions["discovery_decision"] = "scope_denied"
             elif (
@@ -895,20 +1044,24 @@ class SiteAuditOrchestrationService:
             ):
                 decisions["enqueued_state"] = "not_enqueued"
             self._orchestration.update_url(audit_id, str(url["url_id"]), decisions)
-            by_layer: dict[str, list[tuple[UrlGovernanceRule, dict[str, Any]]]] = {}
-            for rule, record in matched:
-                by_layer.setdefault(str(record["decision_layer"]), []).append((rule, record))
+            by_layer: dict[str, list[tuple[UrlGovernanceRule, dict[str, Any], str]]] = {}
+            for rule, record, original in matched:
+                by_layer.setdefault(str(record["decision_layer"]), []).append(
+                    (rule, record, original)
+                )
             for layer, matches in by_layer.items():
                 ordered = sorted(
                     matches,
                     key=lambda item: (
-                        -int(item[1]["priority"]),
-                        -int(item[1]["specificity"]),
+                        int(item[1]["stable_order"]),
                         str(item[1]["stable_rule_id"]),
                     ),
                 )
-                conflict = len({item[0].action.value for item in ordered}) > 1
-                for position, (rule, record) in enumerate(ordered):
+                active_ordered = [item for item in ordered if item[0].rule_id not in overridden_ids]
+                conflict = len({item[0].action.value for item in active_ordered}) > 1
+                primary_rule_id = active_ordered[0][0].rule_id if active_ordered else None
+                for position, (rule, record, original) in enumerate(ordered):
+                    overridden = rule.rule_id in overridden_ids
                     match_id = stable_identifier(
                         audit_id, url["url_id"], record["snapshot_rule_id"], layer
                     )
@@ -920,14 +1073,15 @@ class SiteAuditOrchestrationService:
                                 "match_id": match_id,
                                 "snapshot_rule_id": record["snapshot_rule_id"],
                                 "decision_layer": layer,
-                                "primary_rule": position == 0 and not conflict,
-                                "contributed": True,
+                                "primary_rule": rule.rule_id == primary_rule_id,
+                                "contributed": not overridden,
+                                "overridden": overridden,
                                 "specificity": record["specificity"],
                                 "priority": record["priority"],
                                 "precedence_key": f"{position:04d}:{record['stable_rule_id']}",
                                 "conflict_code": ("site_audit_rule_conflict" if conflict else None),
                                 "reason": rule.reason,
-                                "matched_original_url": url["original_url"],
+                                "matched_original_url": original,
                                 "matched_normalized_url": url["normalized_url"],
                             },
                         )
@@ -1677,10 +1831,11 @@ def _crawl_request(audit: dict[str, Any], snapshot: dict[str, Any]) -> RawApplic
     scope = configuration.get("scope_policy", {})
     scope_name = scope.get("mode", "exact_host") if isinstance(scope, dict) else str(scope)
     approved = configuration.get("approved_hosts", [])
+    request_approved_hosts = approved if scope_name == ScopeProfile.APPROVED_HOSTS.value else []
     return RawApplicationCrawlRequest(
         seed_url=str(audit["normalized_seed_url"]),
         scope_profile=ScopeProfile(scope_name),
-        approved_hosts=tuple(str(item) for item in approved),
+        approved_hosts=tuple(str(item) for item in request_approved_hosts),
         crawl_profile=CrawlProfileName(
             str(configuration.get("crawl_profile", CrawlProfileName.STANDARD_CRAWL.value))
         ),
@@ -1707,13 +1862,17 @@ def _crawl_request(audit: dict[str, Any], snapshot: dict[str, Any]) -> RawApplic
     )
 
 
-def _draft_crawl_request(audit: dict[str, Any]) -> RawApplicationCrawlRequest:
-    draft = audit.get("draft")
-    if not isinstance(draft, dict):
+def _draft_crawl_request(
+    audit: dict[str, Any], configuration: dict[str, Any]
+) -> RawApplicationCrawlRequest:
+    if not isinstance(audit.get("draft"), dict):
         raise SiteAuditOrchestrationError(
             "site_audit_evidence_unavailable", "The Site Audit draft is unavailable."
         )
-    return _crawl_request(audit, {"configuration": draft, "rules": _snapshot_rules(draft)})
+    return _crawl_request(
+        audit,
+        {"configuration": configuration, "rules": _snapshot_rules(configuration)},
+    )
 
 
 def _normalized_draft(value: dict[str, Any]) -> dict[str, Any]:
@@ -1728,8 +1887,14 @@ def _normalized_draft(value: dict[str, Any]) -> dict[str, Any]:
     result["normalized_seed_url"] = normalized
     result["audit_name"] = str(value.get("audit_name") or f"Site Audit: {normalized}")[:200]
     result["site_label"] = _string_or_none(value.get("site_label"))
-    result.setdefault("approved_hosts", [])
     result.setdefault("scope_policy", {"mode": "exact_host"})
+    scope = result["scope_policy"]
+    scope_mode = scope.get("mode") if isinstance(scope, dict) else str(scope)
+    if scope_mode == "exact_host":
+        seed_host = urlsplit(normalized).hostname
+        result["approved_hosts"] = [seed_host] if seed_host else []
+    else:
+        result.setdefault("approved_hosts", [])
     result.setdefault("crawl_profile", CrawlProfileName.STANDARD_CRAWL.value)
     result.setdefault("crawl_limits", {})
     result.setdefault("rules", [])
@@ -1770,13 +1935,33 @@ def _snapshot_rules(configuration: dict[str, Any]) -> tuple[dict[str, Any], ...]
             continue
         action = str(item.get("action", ""))
         match_type = str(item.get("match_type", ""))
+        source = str(item.get("source") or "per_audit")
+        source_id = (
+            configuration.get("platform_preset_id")
+            if source == RuleSource.PRESET.value
+            else configuration.get("site_profile_id")
+            if source == RuleSource.SITE_PROFILE.value
+            else "global-settings"
+            if source == RuleSource.GLOBAL.value
+            else "audit-draft"
+        )
+        source_version = (
+            configuration.get("platform_preset_version")
+            if source == RuleSource.PRESET.value
+            else configuration.get("site_profile_version")
+            if source == RuleSource.SITE_PROFILE.value
+            else configuration.get("global_settings_version")
+            if source == RuleSource.GLOBAL.value
+            else item.get("version", 1)
+        )
         result.append(
             {
                 "stable_rule_id": str(
                     item.get("rule_id") or stable_identifier("rule", index, item)
                 ),
-                "rule_source": str(item.get("source") or "per_audit"),
-                "source_version": str(item.get("source_version") or "1"),
+                "rule_source": source,
+                "source_id": str(source_id) if source_id is not None else None,
+                "source_version": str(source_version),
                 "decision_layer": str(item.get("scope") or actions.get(action, "discovery")),
                 "match_type": match_type,
                 "match_value": str(item.get("match_value", "")),
@@ -1800,16 +1985,29 @@ def _disabled_rules(configuration: dict[str, Any]) -> tuple[dict[str, Any], ...]
     raw = configuration.get("disabled_inherited_rules", ())
     if not isinstance(raw, (list, tuple)):
         return ()
-    return tuple(
-        {
-            "stable_rule_id": str(item.get("stable_rule_id") or item.get("rule_id")),
-            "rule_source": str(item.get("rule_source") or item.get("source") or "preset"),
-            "source_version": str(item.get("source_version") or "1"),
-            "reason_code": str(item.get("reason_code") or "disabled_by_override"),
-        }
-        for item in raw
-        if isinstance(item, dict) and (item.get("stable_rule_id") or item.get("rule_id"))
-    )
+    result: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not (item.get("stable_rule_id") or item.get("rule_id")):
+            continue
+        source = str(item.get("rule_source") or item.get("source") or "preset")
+        source_version = (
+            configuration.get("platform_preset_version")
+            if source == RuleSource.PRESET.value
+            else configuration.get("site_profile_version")
+            if source == RuleSource.SITE_PROFILE.value
+            else configuration.get("global_settings_version")
+            if source == RuleSource.GLOBAL.value
+            else item.get("version", 1)
+        )
+        result.append(
+            {
+                "stable_rule_id": str(item.get("stable_rule_id") or item.get("rule_id")),
+                "rule_source": source,
+                "source_version": str(source_version),
+                "reason_code": str(item.get("reason_code") or "disabled_by_override"),
+            }
+        )
+    return tuple(result)
 
 
 def _draft_hash(value: dict[str, Any]) -> str:
@@ -1830,6 +2028,24 @@ def _inventory_url(snapshot: dict[str, Any], url: str) -> str:
             "normalized_url"
         ]
     )
+
+
+def _observed_rule_urls(
+    url: dict[str, Any], discoveries: tuple[dict[str, Any], ...]
+) -> tuple[str, ...]:
+    values: list[str] = [
+        str(url[key]) for key in ("original_url", "requested_url", "normalized_url") if url.get(key)
+    ]
+    for discovery in discoveries:
+        relationship = discovery.get("relationship_json")
+        if isinstance(relationship, str):
+            try:
+                relationship = json.loads(relationship)
+            except json.JSONDecodeError:
+                relationship = {}
+        if isinstance(relationship, dict) and relationship.get("resolved_url"):
+            values.append(str(relationship["resolved_url"]))
+    return tuple(dict.fromkeys(values))
 
 
 def _tracking_parameters(snapshot: dict[str, Any]) -> tuple[str, ...]:
@@ -1953,26 +2169,23 @@ def _snapshot_rule(record: dict[str, Any]) -> UrlGovernanceRule:
     )
 
 
-def _governance_decisions(  # noqa: C901
+def _governance_decisions(
     matched: list[tuple[UrlGovernanceRule, dict[str, Any]]],
 ) -> dict[str, Any]:
-    by_layer: dict[str, list[RuleAction]] = {}
+    by_layer: dict[str, list[tuple[RuleAction, int, str]]] = {}
     for rule, record in matched:
-        by_layer.setdefault(str(record["decision_layer"]), []).append(rule.action)
+        by_layer.setdefault(str(record["decision_layer"]), []).append(
+            (
+                rule.action,
+                int(record["stable_order"]),
+                str(record["stable_rule_id"]),
+            )
+        )
     discovery = "enqueue"
     metadata = "include_in_metadata_scoring"
     sitemap = "evidence_derived"
-    for layer, actions in by_layer.items():
-        unique = set(actions)
-        if len(unique) > 1:
-            if layer == "discovery":
-                discovery = "mark_review_before_enqueue"
-            elif layer == "metadata":
-                metadata = "indeterminate_for_metadata_scoring"
-            elif layer == "sitemap":
-                sitemap = "review"
-            continue
-        action = next(iter(unique))
+    for layer, records in by_layer.items():
+        action = min(records, key=lambda item: (item[1], item[2]))[0]
         if action is RuleAction.EXCLUDE_FROM_DISCOVERY:
             discovery = "exclude_from_discovery"
         elif action is RuleAction.EXCLUDE_FROM_METADATA:

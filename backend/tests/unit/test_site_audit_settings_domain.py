@@ -213,7 +213,7 @@ def test_explicit_inherited_override_resolves_without_last_rule_wins() -> None:
     assert decision["overridden_rules"] == ["global.shop"]
 
 
-def test_ambiguous_cross_source_overlap_is_visible_conflict() -> None:
+def test_cross_source_overlap_is_visible_and_resolved_by_precedence() -> None:
     global_rule = _rule(
         RuleMatchType.PATH_STARTS_WITH,
         "/shop/",
@@ -230,7 +230,8 @@ def test_ambiguous_cross_source_overlap_is_visible_conflict() -> None:
     result = evaluate_rule_set((global_rule, audit_rule), ("https://example.com/shop/item",))
     decision = result["results"][0]["decisions"]["discovery"]
     assert decision["conflict"] is True
-    assert decision["outcome"] == "indeterminate"
+    assert decision["outcome"] == "mark_review_before_enqueue"
+    assert decision["primary_rule"] == "audit.shop"
 
 
 def test_same_source_tie_breaking_is_stable_and_broad_rules_warn() -> None:

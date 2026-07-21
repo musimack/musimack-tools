@@ -36,3 +36,13 @@ No blocking accessibility barrier was found for the internal release candidate. 
 with every screen reader/browser pair, browser restart, populated very-large tables, and an external
 scanner was outside this dependency-free, local-only phase. This is recorded as KL-005 and must be
 reassessed before materially expanding the audience or UI complexity.
+
+## CSA-06 Combined Site Audit review
+
+Forty loaded screen/viewport combinations at 1440, 1024, 768, and 390 CSS pixels passed one-H1,
+main-landmark, duplicate-ID, page-overflow, and bounded-table checks. Wizard controls retain labels;
+the skip link targets the focusable main landmark; loading and lifecycle states are textual;
+external crawl links have accessible names and `noopener noreferrer`; focus-visible and
+reduced-motion CSS are present. Automated tests cover keyboard wizard/filter behavior, validation
+errors, dialogs, direct routes, and role-restricted controls. A dedicated screen reader was not
+available, so this is not represented as assistive-technology certification.

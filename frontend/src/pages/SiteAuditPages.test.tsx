@@ -133,6 +133,135 @@ test('wizard persists a draft, survives route context, and exposes all seven ste
   expect(await screen.findByText('Saved route')).toBeVisible();
 });
 
+test('wizard exposes the production request-delay floor and reports failed validation', async () => {
+  api.detail.mockResolvedValue({ audit, snapshot: null, orchestration: null });
+  api.validate.mockResolvedValue({
+    audit: {
+      ...audit,
+      lifecycle: 'validation_failed',
+      revision: 3,
+      failure_code: 'site_audit_validation_failed',
+      failure_explanation: 'The draft has validation errors.',
+    },
+    validation: {
+      valid: false,
+      issues: [
+        {
+          code: 'override_below_minimum',
+          field: 'minimum_request_delay_seconds',
+          explanation: 'minimum_request_delay_seconds is outside the accepted application boundary',
+        },
+      ],
+    },
+  });
+  render(
+    <MemoryRouter initialEntries={['/site-audits/audit-1/edit?step=4']}>
+      <Routes>
+        <Route path="/site-audits/:auditId/edit" element={<NewSiteAuditPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  const delay = await screen.findByLabelText('Minimum request delay (seconds)');
+  expect(delay).toHaveAttribute('min', '0.1');
+  await userEvent.click(screen.getByRole('button', { name: '7 Review and Submit' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate' }));
+  expect(
+    await screen.findByText(
+      'minimum_request_delay_seconds is outside the accepted application boundary',
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Run preflight' })).toBeDisabled();
+  expect(screen.queryByText('Validation completed.')).not.toBeInTheDocument();
+});
+
+test('review shows the resolved rule count, sources, disabled rules, and tracking behavior', async () => {
+  api.detail.mockResolvedValue({
+    audit: {
+      ...audit,
+      draft: {
+        ...audit.draft,
+        platform_preset_id: 'wordpress',
+        platform_preset_version: 'wordpress-1',
+        preset_accepted: true,
+      },
+    },
+    snapshot: null,
+    orchestration: null,
+    effective_settings: {
+      effective_rules: [
+        {
+          rule_id: 'wordpress.cdn_cgi',
+          name: 'Exclude /cdn-cgi/ from discovery',
+          source: 'preset',
+          action: 'exclude_from_discovery',
+        },
+        {
+          rule_id: 'audit.review',
+          name: 'Review fixture path',
+          source: 'per_audit',
+          action: 'crawl_and_mark_for_review',
+        },
+      ],
+      disabled_inherited_rules: [{ rule_id: 'wordpress.wp_json' }],
+      tracking_parameters_accepted: true,
+      tracking_parameters: ['utm_source'],
+      warnings: [],
+    },
+  });
+  render(
+    <MemoryRouter initialEntries={['/site-audits/audit-1/edit?step=7']}>
+      <Routes>
+        <Route path="/site-audits/:auditId/edit" element={<NewSiteAuditPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByText('Effective URL-governance rules')).toBeVisible();
+  expect(screen.getByText('Exclude /cdn-cgi/ from discovery')).toBeVisible();
+  expect(screen.getByText('{"preset":1,"per_audit":1}')).toBeVisible();
+  expect(screen.getByText('["utm_source"]')).toBeVisible();
+  const disabled = screen.getByText('Disabled inherited rules').parentElement;
+  expect(disabled).not.toBeNull();
+  expect(within(disabled!).getByText('1')).toBeVisible();
+});
+
+test('summary renders bounded metrics without a request loop or raw projection', async () => {
+  api.detail.mockResolvedValue({
+    audit: { ...audit, lifecycle: 'completed' },
+    snapshot: {},
+    orchestration: {},
+  });
+  api.summary.mockResolvedValue({
+    urls_discovered: 132,
+    urls_fetched: 131,
+    html_urls: 128,
+    metadata_scoring_eligible_urls: 125,
+    partial_urls: 1,
+    failed_urls: 1,
+    indeterminate_urls: 7,
+    recommendation_include: 30,
+    recommendation_exclude: 18,
+    recommendation_review: 2,
+    recommendation_indeterminate: 0,
+    high_issue_groups: 3,
+    projection_version: 'site-audit-summary-v1',
+  });
+  render(
+    <MemoryRouter initialEntries={['/site-audits/audit-1/results/summary']}>
+      <Routes>
+        <Route path="/site-audits/:auditId/results/:tab" element={<SiteAuditResultsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(await screen.findByText('132')).toBeVisible();
+  expect(screen.getByText('131 fetched')).toBeVisible();
+  expect(screen.getByText('30')).toBeVisible();
+  await waitFor(() => {
+    expect(api.summary).toHaveBeenCalledTimes(1);
+  });
+  expect(document.querySelector('pre.safe-projection')).not.toBeInTheDocument();
+});
+
 test('pages preserve bounded pagination context and open internal detail first', async () => {
   api.detail.mockResolvedValue({
     audit: { ...audit, lifecycle: 'completed' },

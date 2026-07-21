@@ -65,3 +65,14 @@ trusted local storage, supervision, log handling, and off-host backup policy. Ca
 assistive-technology testing remain bounded as described in `known-limitations.md`. No unresolved
 authentication bypass, authorization bypass, SSRF bypass, arbitrary filesystem access, secret
 exposure, data-corruption, or public-route exposure was found.
+
+## CSA-06 final security acceptance
+
+The final focused security, authentication, network, orchestration, artifact, recovery, and
+operations gate passed 245 tests. Live checks confirmed administrator/operator mutation boundaries,
+viewer read-only access and artifact download, anonymous 401 responses, and operator/viewer 403
+responses for settings mutation. Production SSRF behavior was unchanged: unsafe schemes,
+loopback/private/link-local addresses, rebinding, redirects, host/port, response, byte, and crawl
+bounds remain enforced. The temporary fixture adapter permits one exact origin only and cannot be
+enabled through production configuration. Artifact and browser scans found no raw HTML, response
+body, local path, secret, token, certificate, private key, stack trace, or database detail.

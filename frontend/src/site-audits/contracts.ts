@@ -29,6 +29,8 @@ export type SiteAuditDraft = {
   platform_preset_id?: string | null;
   platform_preset_version?: string | null;
   preset_accepted?: boolean;
+  global_settings_version?: number;
+  preset_rule_states?: Record<string, boolean>;
   scope_policy: { mode: string };
   approved_hosts: string[];
   crawl_profile: string;
@@ -48,6 +50,7 @@ export type AuditDetail = {
   audit: AuditRecord;
   snapshot: Record<string, unknown> | null;
   orchestration: Record<string, unknown> | null;
+  effective_settings?: Record<string, unknown> | null;
 };
 
 export type AuditPage<T = Record<string, unknown>> = {

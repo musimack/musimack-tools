@@ -30,3 +30,14 @@
 - [ ] Rollback owner and decision threshold are recorded.
 
 Do not infer authorization for a later checkbox from completion of an earlier one.
+
+## CSA-06 product-owner gate
+
+- [x] Deterministic WordPress, Custom, No preset, and parameter-heavy audits retained.
+- [x] Corrected Aluma audit retained; no additional public crawl submitted.
+- [x] Roles, sessions, SSRF, exposure, evidence security, and hard bounds validated.
+- [x] Responsive/accessibility and bounded large-table behavior reviewed.
+- [x] Restart, recovery, backup/restore, and ten-artifact integrity validated.
+- [x] Initial bundle reduced by lazy Site Audit route splitting without a dependency.
+- [ ] David has reviewed and accepted CSA-06.
+- [ ] Separate authorization exists for staging, commit, release, publication, or deployment.

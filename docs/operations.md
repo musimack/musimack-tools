@@ -56,3 +56,12 @@ Before backup, run reconciliation and resolve missing, corrupt, unsafe, bounded,
 - Authentication failures: verify mode, secure HTTPS origin, cookie flags, user status/role, and proxy/network allowlists. Never log or echo bearer credentials or passwords.
 
 Preflight performs no DNS or public-network lookup. It probes only configured local files, SQLite, migration scripts, and the frontend build. Its failure exit code is 2. Operational failures are intentionally generic when the underlying exception could contain sensitive context.
+
+## CSA-06 backup and recovery evidence
+
+The final rehearsal interrupted a fixture audit during `crawl_inventory`, restarted web and worker,
+and completed with the same job/run identifiers and ten artifacts. Offline backup copied a
+26,091,520-byte database and 121 artifact files; isolated restore preserved all 120 table counts,
+every artifact path and SHA-256, roles, immutable snapshots, associations, summaries, and migration
+head `0018_combined_site_audit_orchestration`. The restored private composition authenticated
+retained users, enforced viewer denial, and downloaded hash-matching artifacts.

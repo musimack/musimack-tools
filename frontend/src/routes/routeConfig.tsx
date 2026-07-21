@@ -10,7 +10,7 @@ import { InternalLinksPage } from '../pages/InternalLinkPages';
 import { ImageAuditsPage } from '../pages/ImageAuditPages';
 import { StructuredDataAuditsPage } from '../pages/StructuredDataAuditPages';
 import { MigrationQaProjectsPage } from '../pages/MigrationQaPages';
-import { SiteAuditHistoryPage } from '../pages/SiteAuditPages';
+import { SiteAuditHistoryPage } from './SiteAuditRoutePages';
 
 export type WorkspaceRoute = {
   path: string;

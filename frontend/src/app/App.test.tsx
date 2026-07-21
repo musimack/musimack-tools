@@ -111,6 +111,29 @@ describe('authenticated application routing', () => {
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
   });
 
+  test('loads the split Site Audit route after authentication', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      return Promise.resolve(
+        url.endsWith('/auth/me')
+          ? jsonResponse(principalJson())
+          : jsonResponse({
+              data: { items: [], offset: 0, page_size: 50, total: 0, ordering: 'stable' },
+            }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('/site-audits');
+    expect(await screen.findByRole('heading', { name: 'Audit History' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'No Site Audits found' }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/internal/v1/site-audits?offset=0&page_size=50',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+
   test('renders the users page with users.view', async () => {
     vi.stubGlobal(
       'fetch',

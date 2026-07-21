@@ -28,3 +28,16 @@ owned foreign keys, so freshness and eligibility reconciliation remain orchestra
 | KL-010 | CSA-02 provides deterministic sample-URL rule testing but not preview against retained crawl evidence. The operator-friendly selector and aggregate context belong to later CSA phases. | Operators can verify hypothetical URLs but cannot estimate a rule across a retained run from the settings screen. Accepting a pasted internal ID would violate the approved interaction contract. | Test up to 100 representative URLs and review resolved sources/conflicts. The private preview endpoint reports an explicit deferred state. | Low | No | Implement bounded retained-evidence preview with the shared selector during CSA-03/CSA-05 integration. |
 | KL-011 | CSA-05 provides the complete Combined Site Audit browser workflow, but browser-only All views intentionally stop after 5,000 rows and continue to use bounded 500-row API requests. | Very large audits require filters, pagination, or retained exports rather than loading an unbounded collection into browser memory. | Use stable page sizes, narrow the result set, or retrieve an authorized bounded artifact. | Informational | No | Revisit only with measured operator need and a bounded virtualization contract. |
 | KL-012 | CSA-04 can reuse or launch the accepted specialist authorities, but optional link depth may still be unavailable when no compatible audit is retained or authorized. | Optional modules remain explicit rather than being reported as empty success; base image/schema summaries do not impersonate specialist detail. | Inspect module availability, lifecycle, freshness, and provenance; authorize the specialist in the immutable snapshot when deeper evidence is required. | Low | No | Evaluate broader default specialist launch policy only from measured CSA usage; do not fold it into CSA-05 presentation work. |
+
+## CSA-06 classification
+
+- Safe follow-up: deep duplicate/length metadata and full internal-link topology remain in
+  specialist views; the combined result intentionally exposes bounded facts and provenance.
+- Environment limitation: final browser review used semantic, keyboard-smoke, responsive, and
+  automated checks but no dedicated screen-reader product.
+- Deferred feature: sitemap XML remains authenticated retained output only. Automatic publication,
+  manual sitemap overrides, regex rules, and priority overrides remain out of scope.
+- Operational limit: SQLite and one supervised durable worker remain the supported private posture;
+  clustered execution is not implied by recovery acceptance.
+
+None is a CSA-06 release blocker.

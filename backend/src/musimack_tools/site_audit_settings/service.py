@@ -24,7 +24,6 @@ from musimack_tools.domain.site_audit_settings import (
     MAXIMUM_RULES_PER_SOURCE,
     SITE_AUDIT_PRECEDENCE_VERSION,
     SITE_AUDIT_SETTINGS_API_VERSION,
-    TRACKING_PARAMETERS,
     ProfileState,
     RuleSource,
     SiteAuditSettingsError,
@@ -91,6 +90,11 @@ class SiteAuditSettingsService:
             "created_at": None,
             "settings_version": default_global_settings().to_dict()["settings_version"],
         }
+
+    def current_global_version(self) -> int:
+        """Return the version a new audit draft must pin."""
+
+        return int(self.settings()["version"])
 
     def update_settings(
         self, payload: Mapping[str, Any], *, expected_version: int, actor: str
@@ -176,30 +180,89 @@ class SiteAuditSettingsService:
         rule = rule_from_mapping(payload, source=RuleSource.PER_AUDIT, created_by=actor, now=_now())
         return {"valid": True, "rule": rule.to_dict()}
 
-    def effective_settings(self, payload: Mapping[str, Any], *, actor: str) -> dict[str, Any]:
+    def effective_settings(  # noqa: C901, PLR0912, PLR0915 - explicit precedence pipeline.
+        self,
+        payload: Mapping[str, Any],
+        *,
+        actor: str,
+        resolved_at: str | None = None,
+    ) -> dict[str, Any]:
         self._require_enabled()
-        global_record = self.settings()
+        resolution_time = resolved_at or _now()
+        requested_global_version = payload.get("global_settings_version")
+        if requested_global_version is None:
+            global_record = self.settings()
+        else:
+            try:
+                global_version = int(requested_global_version)
+            except (TypeError, ValueError) as error:
+                raise SiteAuditSettingsError(
+                    "site_audit_global_settings_version_not_found",
+                    "Global settings version was not found.",
+                ) from error
+            stored_global = self._repository.global_settings_version(global_version)
+            if global_version == 0:
+                global_record = {
+                    "version": 0,
+                    "configuration": default_global_settings().to_dict(),
+                    "configuration_hash": None,
+                    "created_by": "builtin",
+                    "created_at": None,
+                    "settings_version": default_global_settings().to_dict()["settings_version"],
+                }
+            elif stored_global is None:
+                raise SiteAuditSettingsError(
+                    "site_audit_global_settings_version_not_found",
+                    "Global settings version was not found.",
+                )
+            else:
+                global_record = stored_global
         global_configuration = global_settings_from_mapping(
-            _mapping(global_record["configuration"]), created_by=actor, now=_now()
+            _mapping(global_record["configuration"]), created_by=actor, now=resolution_time
         )
         profile_id = str(payload["profile_id"]) if payload.get("profile_id") else None
         profile = self.profile(profile_id, include_disabled=False) if profile_id else None
-        profile_config = _mapping(profile["configuration"]) if profile else {}
+        requested_profile_version = payload.get("profile_version")
+        if profile and requested_profile_version is not None:
+            if profile_id is None:
+                raise SiteAuditSettingsError(
+                    "site_profile_not_found", "Site profile was not found."
+                )
+            try:
+                pinned_version = int(requested_profile_version)
+            except (TypeError, ValueError) as error:
+                raise SiteAuditSettingsError(
+                    "site_profile_version_not_found", "Site profile version was not found."
+                ) from error
+            resolved_profile_version: int | None = pinned_version
+            pinned_profile = self._repository.profile_version(profile_id, pinned_version)
+            if pinned_profile is None:
+                raise SiteAuditSettingsError(
+                    "site_profile_version_not_found", "Site profile version was not found."
+                )
+            profile_config = _mapping(pinned_profile["configuration"])
+        else:
+            resolved_profile_version = int(profile["current_version"]) if profile else None
+            pinned_profile = None
+            profile_config = _mapping(profile["configuration"]) if profile else {}
 
-        selected_preset = payload.get(
-            "preset_id",
-            profile_config.get(
+        selected_preset = (
+            payload.get("preset_id")
+            if "preset_id" in payload
+            else profile_config.get(
                 "preset_id",
                 (
                     global_configuration.default_platform_preset.value
                     if global_configuration.default_platform_preset
                     else None
                 ),
-            ),
+            )
         )
         selected_version = payload.get("preset_version", profile_config.get("preset_version"))
         preset_accepted = bool(
-            payload.get("preset_accepted", profile_config.get("preset_accepted", False))
+            payload.get("preset_accepted")
+            if "preset_accepted" in payload
+            else profile_config.get("preset_accepted", False)
         )
         preset = (
             preset_for(str(selected_preset), str(selected_version) if selected_version else None)
@@ -226,9 +289,15 @@ class SiteAuditSettingsService:
             RuleSource.SITE_PROFILE,
             actor,
             site_profile_id=profile_id,
+            now=resolution_time,
         )
         override_payload = _mapping(payload.get("overrides", {}))
-        per_audit_rules = _rules(override_payload.get("rules", ()), RuleSource.PER_AUDIT, actor)
+        per_audit_rules = _rules(
+            override_payload.get("rules", ()),
+            RuleSource.PER_AUDIT,
+            actor,
+            now=resolution_time,
+        )
         states = dict(_mapping(profile_config.get("preset_rule_states", {})))
         states.update(
             {
@@ -314,16 +383,69 @@ class SiteAuditSettingsService:
             profile_config.get("tracking_parameter_exceptions", ()),
         )
         exceptions = validate_tracking_parameter_names(raw_exceptions)
+        supplied_tracking_parameters = payload.get("tracking_parameters")
+        raw_tracking_parameters = (
+            supplied_tracking_parameters
+            if isinstance(supplied_tracking_parameters, (list, tuple))
+            and supplied_tracking_parameters
+            else preset.tracking_parameters
+            if preset
+            else global_configuration.default_tracking_parameters
+        )
+        tracking_parameters = validate_tracking_parameter_names(raw_tracking_parameters)
+        tracking_enabled = tracking_accepted and preset_accepted
+        effective_rule_values = [item.to_dict() for item in effective_rules]
+        if tracking_enabled:
+            for parameter in tracking_parameters:
+                if parameter in exceptions:
+                    continue
+                effective_rule_values.append(
+                    {
+                        "rule_id": f"tracking.{parameter}",
+                        "name": f"Strip accepted tracking parameter {parameter}",
+                        "description": "Explicitly accepted tracking normalization rule.",
+                        "enabled": True,
+                        "match_type": "query_parameter_exists",
+                        "match_value": parameter,
+                        "case_sensitive": True,
+                        "action": "strip_query_parameter",
+                        "reason": f"The accepted {parameter} tracking parameter is normalized.",
+                        "reason_code": "tracking_parameter_strip",
+                        "source": "preset",
+                        "priority": 100,
+                        "scope": "normalization",
+                        "overrides_rule_ids": [],
+                        "created_by": "builtin",
+                        "created_at": resolution_time,
+                        "updated_at": resolution_time,
+                        "version": 1,
+                        "preset_id": preset.preset_id.value if preset else None,
+                        "preset_version": preset.version if preset else None,
+                        "site_profile_id": None,
+                        "decision_layers": ["normalization"],
+                        "broad_rule_warning": None,
+                    }
+                )
+        rule_source_counts = {
+            source.value: sum(item["source"] == source.value for item in effective_rule_values)
+            for source in RuleSource
+        }
         return {
             "protected_boundaries": protected_boundaries(),
             "global_settings_version": global_record["version"],
+            "global_settings_hash": global_record["configuration_hash"],
             "preset": preset.to_dict() if preset else None,
             "preset_accepted": preset_accepted,
             "site_profile": (
                 {
                     "profile_id": profile["profile_id"],
-                    "site_label": profile["site_label"],
-                    "version": profile["current_version"],
+                    "site_label": profile_config["site_label"],
+                    "version": resolved_profile_version,
+                    "configuration_hash": (
+                        pinned_profile["configuration_hash"]
+                        if pinned_profile
+                        else profile["configuration_hash"]
+                    ),
                 }
                 if profile
                 else None
@@ -332,13 +454,14 @@ class SiteAuditSettingsService:
             "crawl_limit_overrides": crawl_limits,
             "metadata_thresholds": thresholds,
             "enabled_modules": modules,
-            "tracking_parameters": list(
-                preset.tracking_parameters if preset else TRACKING_PARAMETERS
-            ),
-            "tracking_parameters_accepted": tracking_accepted and preset_accepted,
+            "tracking_parameters": list(tracking_parameters),
+            "tracking_parameters_accepted": tracking_enabled,
             "tracking_parameter_exceptions": list(exceptions),
-            "effective_rules": [item.to_dict() for item in effective_rules],
+            "effective_rules": effective_rule_values,
             "disabled_inherited_rules": [item.to_dict() for item in disabled_rules],
+            "effective_rule_count": len(effective_rule_values),
+            "rule_source_counts": rule_source_counts,
+            "disabled_inherited_rule_count": len(disabled_rules),
             "warnings": list(warnings),
             "sources": ["protected", "global", "preset", "site_profile", "per_audit"],
             "precedence_version": SITE_AUDIT_PRECEDENCE_VERSION,
@@ -423,6 +546,7 @@ def _rules(
     actor: str,
     *,
     site_profile_id: str | None = None,
+    now: str | None = None,
 ) -> tuple[UrlGovernanceRule, ...]:
     if not isinstance(value, (list, tuple)):
         raise SiteAuditSettingsError("site_audit_rule_invalid", "URL rules are invalid.")
@@ -432,13 +556,13 @@ def _rules(
         )
     if any(not isinstance(item, Mapping) for item in value):
         raise SiteAuditSettingsError("site_audit_rule_invalid", "URL rules are invalid.")
-    now = _now()
+    effective_now = now or _now()
     return tuple(
         rule_from_mapping(
             item,
             source=source,
             created_by=actor,
-            now=now,
+            now=effective_now,
             site_profile_id=site_profile_id,
         )
         for item in value

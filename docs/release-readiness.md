@@ -47,3 +47,11 @@ nonblocking limitations** only when every blocking gate passes and each remainin
 impact, workaround, severity, and treatment. Any security bypass, corruption/recovery failure,
 public exposure, migration incompatibility, broken primary workflow, major accessibility/responsive
 barrier, or CI failure requires **Not ready**.
+
+## CSA-06 engineering recommendation
+
+The evidence in `combined-site-audit-csa06-acceptance.md` is **ready for final product-owner
+acceptance** after deterministic and bounded real-site data-quality review, role/security gates, 40
+responsive combinations, restart/recovery, isolated backup/restore, all-ten-artifact verification,
+and initial-bundle reduction. This does not declare human acceptance or grant commit, publication,
+migration, release, or deployment authority.

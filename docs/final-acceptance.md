@@ -68,3 +68,13 @@ Human acceptance requires the green gates in `release-readiness.md`, review of
 `security-review.md`, `accessibility-review.md`, and `known-limitations.md`, confirmation that no
 blocking item remains, verification of the candidate checksums, and explicit separate authorization
 for any later tag, release, migration, or deployment.
+
+The later Combined Site Audit CSA-06 real-site evidence is tracked separately in
+`combined-site-audit-csa06-acceptance.md`. Its effective-rule correction is ready for human review,
+but this document does not convert that evidence into CSA-06 acceptance or publication authority.
+
+CSA-06 final engineering work now covers deterministic WordPress, Custom, No preset,
+parameter-heavy, role, security, responsive, accessibility, recovery, backup/restore, artifact,
+performance, error, and data-quality gates. The engineering recommendation is **ready for final
+product-owner acceptance**. David's acceptance and any staging, commit, publication, release, or
+deployment authorization remain separate and outstanding.

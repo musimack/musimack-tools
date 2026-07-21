@@ -49,3 +49,9 @@ grids collapse at tablet and phone widths; reduced-motion preferences remain hon
 CSA-06 retains ownership of an explicitly authorized, bounded real-website acceptance crawl.
 CSA-05 must not submit a public-network crawl. Remaining limits are recorded in
 `docs/known-limitations.md`.
+
+CSA-06 browser acceptance covered the wizard, lifecycle, every result tab, URL and issue detail,
+and artifacts at 1440, 1024, 768, and 390 CSS pixels. Views retain one H1 and main landmark,
+bounded tables, wrapped URLs/hashes, reachable actions, labeled new-tab links, durable route state,
+and explicit partial/unavailable labels. Site Audit pages load behind the standard `Suspense`
+loading screen and preserve refresh and direct-route behavior.

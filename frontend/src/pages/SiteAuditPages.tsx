@@ -383,6 +383,7 @@ export function NewSiteAuditPage() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [effective, setEffective] = useState<Record<string, unknown> | null>(null);
   const step = Math.min(7, Math.max(1, Number(parameters.get('step') ?? 1) || 1));
 
   useEffect(() => {
@@ -403,6 +404,7 @@ export function NewSiteAuditPage() {
         if (!live) return;
         setAudit(value.audit);
         setDraft(value.audit.draft);
+        setEffective(value.effective_settings ?? null);
         setDirty(false);
       },
       (caught: unknown) => {
@@ -459,7 +461,31 @@ export function NewSiteAuditPage() {
       const updated = result.audit as AuditRecord;
       setAudit(updated);
       setDraft(updated.draft);
-      setNotice(operation === 'validate' ? 'Validation completed.' : 'Preflight completed.');
+      const resolved = result.effective_settings;
+      if (typeof resolved === 'object' && resolved !== null && !Array.isArray(resolved))
+        setEffective(resolved as Record<string, unknown>);
+      if (updated.lifecycle === 'validation_failed' || updated.lifecycle === 'preflight_failed') {
+        const report = result[operation === 'validate' ? 'validation' : 'preflight'] as
+          Record<string, unknown> | undefined;
+        const issues = Array.isArray(report?.issues) ? report.issues : [];
+        const firstIssue = issues.find(
+          (issue): issue is Record<string, unknown> =>
+            typeof issue === 'object' && issue !== null && !Array.isArray(issue),
+        );
+        const explanation =
+          firstIssue && typeof firstIssue.explanation === 'string'
+            ? firstIssue.explanation
+            : updated.failure_explanation;
+        setNotice(null);
+        setError(
+          explanation ??
+            (operation === 'validate'
+              ? 'Validation did not pass. Review the bounded request values.'
+              : 'Preflight did not pass. Review the target and network evidence.'),
+        );
+      } else {
+        setNotice(operation === 'validate' ? 'Validation passed.' : 'Preflight passed.');
+      }
     } catch (caught) {
       setError(messageFor(caught));
     } finally {
@@ -541,6 +567,7 @@ export function NewSiteAuditPage() {
             patch={patch}
             presets={presets}
             profiles={profiles}
+            effective={effective}
           />
           <div className="wizard-actions">
             <Button type="button" disabled={step === 1 || busy} onClick={() => void go(step - 1)}>
@@ -597,12 +624,14 @@ function WizardStep({
   patch,
   presets,
   profiles,
+  effective,
 }: {
   step: number;
   draft: SiteAuditDraft;
   patch: (value: Partial<SiteAuditDraft>) => void;
   presets: Preset[];
   profiles: SiteProfile[];
+  effective: Record<string, unknown> | null;
 }) {
   if (step === 1)
     return (
@@ -653,6 +682,15 @@ function WizardStep({
                       site_profile_version: profile.current_version,
                       site_label: profile.site_label,
                       seed_url: profile.authorized_seed,
+                      approved_hosts: profile.configuration.approved_hosts,
+                      platform_preset_id: profile.configuration.preset_id,
+                      platform_preset_version: profile.configuration.preset_version,
+                      preset_accepted: profile.configuration.preset_accepted,
+                      preset_rule_states: profile.configuration.preset_rule_states,
+                      tracking_parameters_accepted:
+                        profile.configuration.tracking_parameters_accepted,
+                      tracking_parameter_exceptions:
+                        profile.configuration.tracking_parameter_exceptions,
                     }
                   : { site_profile_id: null, site_profile_version: null },
               );
@@ -682,6 +720,9 @@ function WizardStep({
                 platform_preset_id: preset?.preset_id ?? null,
                 platform_preset_version: preset?.version ?? null,
                 preset_accepted: false,
+                preset_rule_states: {},
+                tracking_parameters: preset?.tracking_parameters ?? [],
+                tracking_parameters_accepted: false,
               });
             }}
           >
@@ -795,7 +836,7 @@ function WizardStep({
               {label}
               <input
                 type="number"
-                min={key === 'minimum_request_delay_seconds' ? 0 : 1}
+                min={key === 'minimum_request_delay_seconds' ? 0.1 : 1}
                 step={key.includes('seconds') ? '0.1' : '1'}
                 value={draft.crawl_limits[key] ?? ''}
                 onChange={(event) => {
@@ -897,7 +938,72 @@ function WizardStep({
         />
         <Review label="Publication" value="Disabled" />
       </dl>
+      <EffectiveRuleReview value={effective} />
     </>
+  );
+}
+
+function EffectiveRuleReview({ value }: { value: Record<string, unknown> | null }) {
+  const resolutionError =
+    typeof value?.resolution_error === 'object' &&
+    value.resolution_error !== null &&
+    !Array.isArray(value.resolution_error)
+      ? (value.resolution_error as Record<string, unknown>)
+      : null;
+  const rules = Array.isArray(value?.effective_rules)
+    ? value.effective_rules.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === 'object' && item !== null && !Array.isArray(item),
+      )
+    : [];
+  const disabled = Array.isArray(value?.disabled_inherited_rules)
+    ? value.disabled_inherited_rules.length
+    : 0;
+  const warnings = Array.isArray(value?.warnings) ? value.warnings.map(String) : [];
+  const sources = rules.reduce<Record<string, number>>((counts, rule) => {
+    const source = typeof rule.source === 'string' ? rule.source : 'unknown';
+    counts[source] = (counts[source] ?? 0) + 1;
+    return counts;
+  }, {});
+  if (!value)
+    return (
+      <Alert tone="warning">
+        Validate the draft to review the effective immutable rule configuration.
+      </Alert>
+    );
+  if (resolutionError)
+    return (
+      <Alert tone="error">
+        {typeof resolutionError.explanation === 'string'
+          ? resolutionError.explanation
+          : 'Effective settings could not be resolved.'}
+      </Alert>
+    );
+  return (
+    <section aria-labelledby="effective-rule-review">
+      <h3 id="effective-rule-review">Effective URL-governance rules</h3>
+      <dl className="settings-breakdown">
+        <Review label="Effective rule count" value={rules.length} />
+        <Review label="Rules by source" value={sources} />
+        <Review label="Disabled inherited rules" value={disabled} />
+        <Review
+          label="Tracking rules"
+          value={value.tracking_parameters_accepted ? value.tracking_parameters : 'Not accepted'}
+        />
+        <Review label="Resolution warnings" value={warnings.length ? warnings : 'None'} />
+      </dl>
+      {rules.length ? (
+        <ul>
+          {rules.map((rule) => (
+            <li key={String(rule.rule_id)}>
+              <strong>{String(rule.name)}</strong> — {String(rule.source)} · {String(rule.action)}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>No effective URL-governance rules apply.</p>
+      )}
+    </section>
   );
 }
 
@@ -1083,19 +1189,18 @@ function ResultTab({ auditId, tab }: { auditId: string; tab: string }) {
   if (tab === 'evidence') return <EvidenceResult auditId={auditId} />;
   if (tab === 'settings') return <SettingsSnapshotResult auditId={auditId} />;
   if (tab === 'artifacts') return <ArtifactsResult auditId={auditId} />;
-  if (tab === 'summary')
-    return <ProjectionResult title="Summary" load={() => siteAuditsApi.summary(auditId)} />;
+  if (tab === 'summary') return <SummaryResult auditId={auditId} />;
   return (
     <EmptyState title="Unknown result view">Choose one of the available result tabs.</EmptyState>
   );
 }
 
-function ProjectionResult({ title, load }: { title: string; load: () => Promise<unknown> }) {
-  const [value, setValue] = useState<unknown>(null);
+function SummaryResult({ auditId }: { auditId: string }) {
+  const [value, setValue] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    void load().then(
+    void siteAuditsApi.summary(auditId).then(
       (result) => {
         if (live) setValue(result);
       },
@@ -1106,14 +1211,52 @@ function ProjectionResult({ title, load }: { title: string; load: () => Promise<
     return () => {
       live = false;
     };
-  }, [load]);
+  }, [auditId]);
   if (error) return <LoadFailure error={error} />;
   if (value === null) return <LoadingAudit />;
   return (
-    <Card>
-      <h2>{title}</h2>
-      <SafeProjection value={value} />
-    </Card>
+    <div className="result-stack">
+      <Card>
+        <h2>Summary</h2>
+        <p>Bounded executive counts retain partial and unavailable evidence explicitly.</p>
+        <div className="metric-grid">
+          <Card>
+            <span>Discovered</span>
+            <strong>{display(value.urls_discovered)}</strong>
+            <small>{display(value.urls_fetched)} fetched</small>
+          </Card>
+          <Card>
+            <span>HTML pages</span>
+            <strong>{display(value.html_urls)}</strong>
+            <small>{display(value.metadata_scoring_eligible_urls)} metadata eligible</small>
+          </Card>
+          <Card>
+            <span>Partial / failed</span>
+            <strong>
+              {display(value.partial_urls)} / {display(value.failed_urls)}
+            </strong>
+            <small>{display(value.indeterminate_urls)} indeterminate</small>
+          </Card>
+        </div>
+      </Card>
+      <Card>
+        <h3>Recommendations and issue groups</h3>
+        <dl className="settings-breakdown">
+          <Review label="Include" value={value.recommendation_include} />
+          <Review label="Exclude" value={value.recommendation_exclude} />
+          <Review label="Review" value={value.recommendation_review} />
+          <Review label="Indeterminate" value={value.recommendation_indeterminate} />
+          <Review label="Critical issue groups" value={value.critical_issue_groups} />
+          <Review label="High issue groups" value={value.high_issue_groups} />
+          <Review label="Medium issue groups" value={value.medium_issue_groups} />
+          <Review label="Low issue groups" value={value.low_issue_groups} />
+          <Review label="Image summary" value={value.image_summary_json} />
+          <Review label="Structured-data summary" value={value.structured_data_summary_json} />
+          <Review label="Module completeness" value={value.module_counts_json} />
+          <Review label="Projection version" value={value.projection_version} />
+        </dl>
+      </Card>
+    </div>
   );
 }
 

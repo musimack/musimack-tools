@@ -7,10 +7,14 @@ DNS, redirect, robots, timeout, size, concurrency, or scope protections.
 
 ## Submission and stage graph
 
-Submission validates the immutable snapshot identity and eligibility, initializes a durable parent,
-and submits exactly one crawl request. The request carries accepted tracking-parameter removals and
-discovery exclusions from that snapshot into the existing frontier. Each parsed link is normalized
-and stripped before frontier identity, then scope and protected fetch controls remain authoritative.
+Validation and preflight first resolve the draft's exact pinned global settings, accepted preset,
+eligible profile version, disabled inherited-rule IDs, and per-audit overrides. Submission persists
+that fully resolved result as the immutable snapshot, verifies its integrity, reloads the complete
+snapshot aggregate including child rules, initializes a durable parent, and submits exactly one
+crawl request. No snapshot or lifecycle transition occurs when resolution fails. The request carries
+accepted tracking-parameter removals and discovery exclusions from that snapshot into the existing
+frontier. Each parsed link is normalized and stripped before frontier identity, then scope and
+protected fetch controls remain authoritative.
 Excluded links are not enqueued or fetched, but their retained link occurrence is projected as a
 real discovery with its source, original form, normalized identity, rule provenance, decision, and
 unfetched state. Preview samples never enter this path. Repeating the same submission returns the
@@ -106,3 +110,12 @@ the default application stays health-only.
 CSA-05 owns the complete browser wizard and results interface. CSA-06 owns controlled fixture and
 explicitly authorized real-site acceptance. CSA-04 adds no manual sitemap or priority override and
 its automated validation uses no public HTTP or DNS.
+
+The bounded CSA-06 effective-rule correction and its retained real-site comparison are documented in
+[`combined-site-audit-csa06-acceptance.md`](combined-site-audit-csa06-acceptance.md). That record is
+evidence for David's review and does not itself declare CSA-06 accepted.
+
+Final CSA-06 rehearsal confirmed draft durability, same-job/same-run completion after interruption
+during `crawl_inventory`, idempotent artifact generation, immutable snapshot retrieval after
+restart, and logical/cryptographic equality after isolated backup and restore. Detailed counts and
+the product-owner recommendation remain in the linked acceptance record.

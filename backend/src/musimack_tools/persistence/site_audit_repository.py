@@ -734,6 +734,22 @@ class SQLAlchemySiteAuditRepository:
             )
             return int(value) + 1 if value is not None else 0
 
+    def discovery_sources(self, audit_id: str, url_id: str) -> tuple[dict[str, Any], ...]:
+        """Return bounded original-discovery evidence for governance evaluation."""
+
+        with self._runtime.transaction() as session:
+            self._require_url(session, audit_id, url_id)
+            rows = session.execute(
+                select(SiteAuditDiscoverySourceModel)
+                .where(SiteAuditDiscoverySourceModel.url_id == url_id)
+                .order_by(
+                    SiteAuditDiscoverySourceModel.sequence,
+                    SiteAuditDiscoverySourceModel.discovery_id,
+                )
+                .limit(500)
+            ).scalars()
+            return tuple(_model_dict(row) for row in rows)
+
     def set_populations(
         self, audit_id: str, url_id: str, populations: tuple[Population, ...]
     ) -> tuple[str, ...]:

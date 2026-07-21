@@ -799,3 +799,11 @@ submission snapshots, lifecycle inspection, and bounded result projections all u
 same-origin routes. Browser tables request 50, 100, or 500 rows; the optional All view walks
 500-row pages and stops at 5,000. The interface does not retain or render response bodies, raw
 HTML, secrets, or filesystem paths. Controlled real-site acceptance remains CSA-06.
+
+## CSA-06 acceptance architecture
+
+Final acceptance confirms that durable execution uses only the fully resolved immutable rule
+snapshot. Drafts and active audits survive web/worker restart without changing their job/run
+association. Site Audit pages now form a lazy frontend route boundary, reducing initial JavaScript
+while preserving the private API and persistence architecture. See
+`combined-site-audit-csa06-acceptance.md`.

@@ -55,6 +55,14 @@ if TYPE_CHECKING:
 _TOKEN = "integration-test-token"  # noqa: S105 - inert test credential.
 _UNUSED_SERVICE_CALL = "not used by this security boundary test"
 _VALID_BODY = {"seed_url": "https://example.com", "crawl_profile": "quick_audit"}
+_RESERVED_DOCUMENTATION_PATHS = (
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/internal/v1/docs",
+    "/api/internal/v1/redoc",
+    "/api/internal/v1/openapi.json",
+)
 _INTERNAL_PATHS = (
     ("POST", "/api/internal/v1/requests/validate"),
     ("POST", "/api/internal/v1/requests/preflight"),
@@ -455,7 +463,15 @@ def test_unexpected_error_is_safe_correlated_and_header_protected() -> None:
 def test_openapi_is_disabled_by_default_and_explicit_when_enabled() -> None:
     hidden = _client(_SecurityTestService())
     shown = _client(_SecurityTestService(), _settings(include_openapi=True))
-    assert hidden.get("/openapi.json").status_code == 404
+    for path in _RESERVED_DOCUMENTATION_PATHS:
+        for headers in ({}, {"Authorization": f"Bearer {_TOKEN}"}):
+            response = hidden.get(path, headers=headers)
+            assert response.status_code == 404
+            assert response.headers["content-type"].startswith("application/json")
+            assert '<div id="root">' not in response.text
+            assert "swagger-ui" not in response.text.lower()
+            assert "redoc" not in response.text.lower()
+            assert '"openapi"' not in response.text
     document = shown.get("/openapi.json").json()
     assert len([path for path in document["paths"] if path.startswith("/api/internal/v1")]) == 12
     assert _TOKEN not in str(document)

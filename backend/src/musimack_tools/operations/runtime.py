@@ -234,6 +234,7 @@ def compose_web_runtime(settings: RuntimeSettings) -> WebRuntime:
     internal_link_audits = _internal_link_service(configuration, runtime, artifact_service)
     image_audits = _image_service(configuration, runtime, artifact_service)
     structured_data_audits = _structured_service(configuration, runtime, artifact_service)
+    site_audit_settings = _site_audit_settings_service(runtime)
     site_audit_orchestration = SiteAuditOrchestrationService(
         SQLAlchemySiteAuditRepository(runtime),
         SQLAlchemySiteAuditOrchestrationRepository(runtime),
@@ -250,6 +251,7 @@ def compose_web_runtime(settings: RuntimeSettings) -> WebRuntime:
             structured_data_audits=structured_data_audits,
             launch_enabled=False,
         ),
+        settings=site_audit_settings,
     )
     app = create_production_app(
         service,
@@ -267,7 +269,7 @@ def compose_web_runtime(settings: RuntimeSettings) -> WebRuntime:
         image_audits=image_audits,
         structured_data_audits=structured_data_audits,
         migration_qa=_migration_qa_service(configuration, runtime, artifact_service),
-        site_audit_settings=_site_audit_settings_service(runtime),
+        site_audit_settings=site_audit_settings,
         site_audit_orchestration=site_audit_orchestration,
     )
     app.add_middleware(
@@ -371,6 +373,7 @@ async def run_worker(settings: RuntimeSettings | None = None) -> None:
     internal_link_audits = _internal_link_service(configuration, runtime, artifact_service)
     image_audits = _image_service(configuration, runtime, artifact_service)
     structured_data_audits = _structured_service(configuration, runtime, artifact_service)
+    site_audit_settings = _site_audit_settings_service(runtime)
     site_audit_orchestration = SiteAuditOrchestrationService(
         SQLAlchemySiteAuditRepository(runtime),
         SQLAlchemySiteAuditOrchestrationRepository(runtime),
@@ -387,6 +390,7 @@ async def run_worker(settings: RuntimeSettings | None = None) -> None:
             structured_data_audits=structured_data_audits,
             launch_enabled=True,
         ),
+        settings=site_audit_settings,
     )
     stop = asyncio.Event()
     _install_stop_signals(stop)

@@ -569,9 +569,9 @@ def rule_from_mapping(
             int(value.get("priority", 0)),
             scope,
             tuple(str(item) for item in override_value),
-            created_by,
+            str(value.get("created_by", created_by)),
             str(value.get("created_at", now)),
-            now,
+            str(value.get("updated_at", now)),
             int(value.get("version", 1)),
             preset_id,
             preset_version,
@@ -799,8 +799,15 @@ def resolve_effective_rules(
             "site_audit_disabled_rule_invalid",
             "Disabled rule IDs must identify inherited rules.",
         )
-    effective = tuple(item for item in rules if item.enabled and item.rule_id not in disabled)
-    disabled_rules = tuple(item for item in rules if not item.enabled or item.rule_id in disabled)
+    effective = _ordered_rules(
+        item for item in rules if item.enabled and item.rule_id not in disabled
+    )
+    disabled_rules = tuple(
+        sorted(
+            (item for item in rules if not item.enabled or item.rule_id in disabled),
+            key=lambda item: (item.source.value, item.rule_id),
+        )
+    )
     warnings = validate_rule_set(tuple(rules))
     return effective, disabled_rules, warnings
 
@@ -1292,8 +1299,8 @@ def _ordered_rules(rules: Iterable[UrlGovernanceRule]) -> tuple[UrlGovernanceRul
             rules,
             key=lambda item: (
                 -_SOURCE_ORDER[item.source],
-                -item.priority,
                 -_SPECIFICITY[item.match_type],
+                -item.priority,
                 item.rule_id,
             ),
         )
@@ -1312,7 +1319,7 @@ def _resolve_decisions(rules: Sequence[UrlGovernanceRule]) -> dict[str, dict[str
         outcomes = {_outcome(rule, layer) for rule in contributors}
         conflict = len(outcomes) > 1
         result[layer.value] = {
-            "outcome": "indeterminate" if conflict else next(iter(outcomes)),
+            "outcome": _outcome(ordered[0], layer),
             "primary_rule": ordered[0].rule_id,
             "contributing_rules": [rule.rule_id for rule in ordered],
             "overridden_rules": sorted(overridden.intersection({rule.rule_id for rule in rules})),

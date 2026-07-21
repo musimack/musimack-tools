@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Never, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from sqlalchemy import select
@@ -15,19 +15,31 @@ from musimack_tools.domain.application import (
     ApplicationCancellationResult,
     ApplicationJobStatus,
     ApplicationOutcomeCode,
+    ApplicationPreflightResult,
     ApplicationRecommendationPage,
     ApplicationResultProjection,
     ApplicationSubmissionResult,
     ApplicationValidationReport,
+    PreflightState,
     RecommendationItemProjection,
 )
 from musimack_tools.domain.artifacts import (
     ArtifactStorageConfiguration,
     ArtifactStorageRootConfiguration,
 )
+from musimack_tools.domain.job_registry import (
+    JobRegistryConfiguration,
+    JobRegistryCounters,
+    JobRegistrySnapshot,
+    RegistryState,
+)
 from musimack_tools.domain.page_evidence import PageEvidenceConfiguration
 from musimack_tools.domain.persistence import PersistenceConfiguration
-from musimack_tools.domain.site_audit_orchestration import OrchestrationState, SiteAuditStage
+from musimack_tools.domain.site_audit_orchestration import (
+    OrchestrationState,
+    SiteAuditOrchestrationError,
+    SiteAuditStage,
+)
 from musimack_tools.domain.site_audit_persistence import AuditLifecycle
 from musimack_tools.persistence.engine import create_persistence_runtime
 from musimack_tools.persistence.migrations import upgrade_to_head
@@ -38,8 +50,15 @@ from musimack_tools.persistence.site_audit_orchestration_repository import (
     SQLAlchemySiteAuditOrchestrationRepository,
 )
 from musimack_tools.persistence.site_audit_repository import SQLAlchemySiteAuditRepository
+from musimack_tools.persistence.site_audit_settings_repository import (
+    SQLAlchemySiteAuditSettingsRepository,
+)
 from musimack_tools.site_audit.orchestration import SiteAuditOrchestrationService
 from musimack_tools.site_audit.specialists import SpecialistEvidence, SpecialistRequest
+from musimack_tools.site_audit_settings.service import (
+    SiteAuditSettingsConfiguration,
+    SiteAuditSettingsService,
+)
 from page_evidence_helpers import PageRecordOptions, crawl_result, page_record
 from persistence_helpers import BACKEND_ROOT, sample_request, sample_snapshot
 
@@ -57,8 +76,10 @@ class _Gateway:
         self.run_id = run_id
         self.submissions = 0
         self.cancellations = 0
+        self.requests: list[RawApplicationCrawlRequest] = []
 
     def validate(self, request: RawApplicationCrawlRequest) -> ApplicationValidationReport:
+        self.requests.append(request)
         return ApplicationValidationReport(
             True,
             (),
@@ -73,12 +94,27 @@ class _Gateway:
             (),
         )
 
-    async def preflight(self, request: RawApplicationCrawlRequest) -> Never:
-        del request
-        raise NotImplementedError
+    async def preflight(self, request: RawApplicationCrawlRequest) -> ApplicationPreflightResult:
+        self.requests.append(request)
+        return ApplicationPreflightResult(
+            PreflightState.READY,
+            self.validate(request),
+            (),
+            JobRegistrySnapshot(
+                RegistryState.RUNNING,
+                JobRegistryConfiguration(),
+                JobRegistryCounters(*(0 for _ in range(13))),
+                (),
+                (),
+                (),
+            ),
+            None,
+            None,
+        )
 
     async def submit(self, request: RawApplicationCrawlRequest) -> ApplicationSubmissionResult:
         self.submissions += 1
+        self.requests.append(request)
         return ApplicationSubmissionResult(
             ApplicationOutcomeCode.ACCEPTED,
             ApplicationValidationReport(
@@ -359,6 +395,10 @@ def service(
     )
     assert artifacts.readiness()[0].ready
     try:
+        settings = SiteAuditSettingsService(
+            SiteAuditSettingsConfiguration(enabled=True),
+            SQLAlchemySiteAuditSettingsRepository(runtime),
+        )
         yield (
             SiteAuditOrchestrationService(
                 site,
@@ -367,6 +407,7 @@ def service(
                 gateway,
                 artifacts,
                 _Specialists(),
+                settings=settings,
             ),
             site,
             gateway,
@@ -421,6 +462,175 @@ def _ready_snapshot(site: SQLAlchemySiteAuditRepository) -> None:
 
 
 @pytest.mark.anyio
+async def test_exact_host_draft_derives_snapshot_approved_host(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, repository, gateway, _runtime = service
+    audit = orchestration.create_draft(
+        {
+            "audit_name": "Exact-host fixture",
+            "seed_url": "https://Example.com/path",
+            "scope_policy": {"mode": "exact_host"},
+            "approved_hosts": [],
+        },
+        actor="operator",
+    )
+    assert audit["draft"]["approved_hosts"] == ["example.com"]
+    validation = orchestration.validate_draft(
+        str(audit["audit_id"]), expected_revision=cast("int", audit["revision"])
+    )
+    assert validation["validation"]["valid"] is True
+    audit = validation["audit"]
+    for lifecycle in (
+        AuditLifecycle.PREFLIGHTING,
+        AuditLifecycle.READY,
+    ):
+        audit = repository.transition(
+            str(audit["audit_id"]),
+            lifecycle,
+            expected_revision=cast("int", audit["revision"]),
+        )
+
+    submitted = await orchestration.submit(str(audit["audit_id"]), actor="operator")
+
+    assert submitted["audit"]["lifecycle"] == AuditLifecycle.QUEUED.value
+    assert gateway.submissions == 1
+    snapshot = repository.snapshot(str(audit["audit_id"]))
+    assert snapshot is not None
+    assert snapshot["configuration"]["approved_hosts"] == ["example.com"]
+
+
+@pytest.mark.anyio
+async def test_wordpress_rules_resolve_before_validation_preflight_and_submission(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, repository, gateway, _runtime = service
+    audit = orchestration.create_draft(
+        {
+            "audit_name": "WordPress effective rules",
+            "seed_url": "https://example.com/",
+            "platform_preset_id": "wordpress",
+            "platform_preset_version": "wordpress-1",
+            "preset_accepted": True,
+            "tracking_parameters_accepted": True,
+            "scope_policy": {"mode": "exact_host"},
+        },
+        actor="operator",
+    )
+
+    validation = orchestration.validate_draft(
+        str(audit["audit_id"]), expected_revision=cast("int", audit["revision"])
+    )
+    validation_rules = validation["effective_settings"]["effective_rules"]
+    assert len(validation_rules) == 19
+    assert sum(item["source"] == "preset" for item in validation_rules) == 19
+    assert any(item["rule_id"] == "wordpress.cdn_cgi" for item in validation_rules)
+    assert not any(item["rule_id"] == "wordpress.wp_json" for item in validation_rules)
+    assert any(item["rule_id"] == "tracking.utm_source" for item in validation_rules)
+
+    validated = validation["audit"]
+    preflight = await orchestration.preflight_draft(
+        str(audit["audit_id"]), expected_revision=cast("int", validated["revision"])
+    )
+    assert preflight["effective_settings"]["effective_rules"] == validation_rules
+    assert preflight["audit"]["lifecycle"] == AuditLifecycle.READY.value
+
+    await orchestration.submit(str(audit["audit_id"]), actor="operator")
+    snapshot = repository.snapshot(str(audit["audit_id"]))
+    assert snapshot is not None
+    assert snapshot["configuration"]["resolution"]["effective_rules"] == validation_rules
+    assert len(snapshot["rules"]) == 19
+    cdn = next(item for item in snapshot["rules"] if item["stable_rule_id"] == "wordpress.cdn_cgi")
+    assert cdn["rule_source"] == "preset"
+    assert cdn["source_id"] == "wordpress"
+    assert cdn["source_version"] == "wordpress-1"
+    submitted_request = gateway.requests[-1]
+    assert any(item.value == "/cdn-cgi/" for item in submitted_request.exclusion_rules)
+    assert not any(item.value == "/wp-json/" for item in submitted_request.exclusion_rules)
+    assert "utm_source" in submitted_request.strip_query_parameters
+
+
+def test_invalid_version_fails_before_validation_transition_or_snapshot(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, repository, gateway, _runtime = service
+    audit = orchestration.create_draft(
+        {
+            "audit_name": "Invalid preset version",
+            "seed_url": "https://example.com/",
+            "platform_preset_id": "wordpress",
+            "platform_preset_version": "wordpress-missing",
+            "preset_accepted": True,
+        },
+        actor="operator",
+    )
+
+    with pytest.raises(SiteAuditOrchestrationError, match="site_audit_preset_version_not_found"):
+        orchestration.validate_draft(
+            str(audit["audit_id"]), expected_revision=cast("int", audit["revision"])
+        )
+
+    retained = repository.audit(str(audit["audit_id"]))
+    assert retained is not None
+    assert retained["lifecycle"] == AuditLifecycle.DRAFT.value
+    assert repository.snapshot(str(audit["audit_id"])) is None
+    assert gateway.requests == []
+
+
+@pytest.mark.anyio
+async def test_invalid_snapshot_configuration_is_rejected_before_persistence(
+    service: tuple[
+        SiteAuditOrchestrationService,
+        SQLAlchemySiteAuditRepository,
+        _Gateway,
+        PersistenceRuntime,
+    ],
+) -> None:
+    orchestration, repository, gateway, _runtime = service
+    audit = orchestration.create_draft(
+        {
+            "audit_name": "Missing approved hosts",
+            "seed_url": "https://example.com/",
+            "scope_policy": {"mode": "approved_hosts"},
+            "approved_hosts": [],
+        },
+        actor="operator",
+    )
+    for lifecycle in (
+        AuditLifecycle.VALIDATING,
+        AuditLifecycle.VALIDATED,
+        AuditLifecycle.PREFLIGHTING,
+        AuditLifecycle.READY,
+    ):
+        audit = repository.transition(
+            str(audit["audit_id"]),
+            lifecycle,
+            expected_revision=cast("int", audit["revision"]),
+        )
+
+    with pytest.raises(SiteAuditOrchestrationError, match="At least one approved host"):
+        await orchestration.submit(str(audit["audit_id"]), actor="operator")
+
+    assert repository.snapshot(str(audit["audit_id"])) is None
+    assert gateway.submissions == 0
+
+
+@pytest.mark.anyio
 async def test_submission_projection_restart_and_artifacts_are_idempotent(
     service: tuple[
         SiteAuditOrchestrationService,
@@ -453,6 +663,7 @@ async def test_submission_projection_restart_and_artifacts_are_idempotent(
         gateway,
         orchestration._artifacts,  # noqa: SLF001 - explicit cross-process test boundary.
         _Specialists(),
+        settings=orchestration._settings,  # noqa: SLF001 - restart uses the same authority.
     )
     again = await restarted.reconcile("audit-service")
     assert again["orchestration"]["state"] == completed["orchestration"]["state"]
@@ -537,7 +748,11 @@ async def test_frontier_excluded_link_remains_a_durable_unfetched_discovery(
                     "https://example.com/",
                     PageRecordOptions(
                         body=(
-                            "<html><title>Seed</title><a href='/missing-title'>Excluded</a></html>"
+                            "<html><title>Seed</title>"
+                            "<a href='/missing-title'>Excluded</a>"
+                            "<a href='/tracked?utm_source=fixture&amp;id=7'>Tracked</a>"
+                            "<a href='/tag/news/'>Overridden tag archive</a>"
+                            "</html>"
                         ),
                         x_robots=(),
                     ),
@@ -589,6 +804,49 @@ async def test_frontier_excluded_link_remains_a_durable_unfetched_discovery(
                 "reason_code": "fixture_exclusion",
                 "explanation": "The fixture path is excluded before enqueue.",
             },
+            {
+                "stable_rule_id": "tracking.utm_source",
+                "rule_source": "preset",
+                "source_version": "wordpress-1",
+                "decision_layer": "normalization",
+                "match_type": "query_parameter_exists",
+                "match_value": "utm_source",
+                "action": "strip_query_parameter",
+                "enabled": True,
+                "priority": 100,
+                "specificity": 4,
+                "reason_code": "tracking_parameter_strip",
+                "explanation": "The accepted tracking parameter is normalized.",
+            },
+            {
+                "stable_rule_id": "wordpress.tag.metadata",
+                "rule_source": "preset",
+                "source_version": "wordpress-1",
+                "decision_layer": "metadata",
+                "match_type": "path_starts_with",
+                "match_value": "/tag/",
+                "action": "crawl_but_exclude_from_metadata_scoring",
+                "enabled": True,
+                "priority": 100,
+                "specificity": 3,
+                "reason_code": "wordpress_tag_metadata",
+                "explanation": "The inherited tag rule is retained.",
+            },
+            {
+                "stable_rule_id": "audit.tag.review",
+                "rule_source": "per_audit",
+                "source_version": "1",
+                "decision_layer": "discovery",
+                "match_type": "path_starts_with",
+                "match_value": "/tag/",
+                "action": "crawl_and_mark_for_review",
+                "enabled": True,
+                "priority": 500,
+                "specificity": 3,
+                "reason_code": "fixture_tag_review",
+                "explanation": "The per-audit rule overrides the inherited tag rule.",
+                "overrides_rule_ids": ("wordpress.tag.metadata",),
+            },
         ),
     )
     root = tmp_path / "excluded-artifacts"
@@ -629,7 +887,28 @@ async def test_frontier_excluded_link_remains_a_durable_unfetched_discovery(
             )
             assert source is not None
             assert source.original_observed_url == "/missing-title"
-            assert source.source_evidence_id is not None
+        assert source.source_evidence_id is not None
+        tracked = next(
+            item
+            for item in service.pages("audit-excluded")["items"]
+            if item["normalized_url"].endswith("/tracked?id=7")
+        )
+        detail = service.page_detail("audit-excluded", int(tracked["sequence"]))
+        assert any(
+            item["original_observed_url"].endswith("utm_source=fixture&id=7")
+            for item in detail["discoveries"]
+        )
+        assert any(item["decision_layer"] == "normalization" for item in detail["rule_matches"])
+        tag = next(
+            item
+            for item in service.pages("audit-excluded")["items"]
+            if item["normalized_url"].endswith("/tag/news/")
+        )
+        assert tag["discovery_decision"] == "mark_review_before_enqueue"
+        assert tag["metadata_scoring_decision"] == "include_in_metadata_scoring"
+        tag_detail = service.page_detail("audit-excluded", int(tag["sequence"]))
+        assert any(item["primary_rule"] for item in tag_detail["rule_matches"])
+        assert any(item["overridden"] for item in tag_detail["rule_matches"])
     finally:
         runtime.dispose()
 
